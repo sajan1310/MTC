@@ -306,6 +306,9 @@
 <div class="mb-sheet" id="sheet-production-sheet" role="dialog" aria-modal="true" aria-labelledby="production-sheet-title">
   <div class="mb-sheet-header">
     <h2 id="production-sheet-title">Production sheet</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Download or print" onclick="MApp.ProductionSheet.printSheet()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 20h16"/></svg>
+    </button>
     <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.ProductionSheet.close()">
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
     </button>
@@ -372,24 +375,27 @@
          down the More tab. Static markup, not rendered into #dashboard-body,
          so the actions are there while the figures are still loading. -->
     <div class="mb-quick-actions">
-      <button type="button" class="mb-quick-action" onclick="MApp.Dashboard.act('production')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5-6-3.5z"/></svg>
-        <span>Log Lot</span>
-      </button>
-      <button type="button" class="mb-quick-action" onclick="MApp.Dashboard.act('dispatch')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1" y="7" width="14" height="10" rx="1"/><path d="M15 10h4l3 3v4h-7z"/><circle cx="6" cy="19" r="1.6"/><circle cx="17.5" cy="19" r="1.6"/></svg>
-        <span>Dispatch</span>
+      <button type="button" class="mb-quick-action" onclick="MApp.Dashboard.act('po')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2h9l3 3v17H6z"/><path d="M9 9h6M9 13h6M9 17h4"/></svg>
+        <span>New PO</span>
       </button>
       <button type="button" class="mb-quick-action" onclick="MApp.Dashboard.act('bill')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2h9l3 3v17l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>
-        <span>New Bill</span>
+        <span>Receive Bill</span>
       </button>
-      <button type="button" class="mb-quick-action" onclick="MApp.Dashboard.act('return')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7v6h6"/><path d="M3 13a9 9 0 1 0 3-6.7L3 9"/></svg>
-        <span>Return</span>
+      <button type="button" class="mb-quick-action" onclick="MApp.Dashboard.act('production')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5-6-3.5z"/></svg>
+        <span>New Lot</span>
+      </button>
+      <button type="button" class="mb-quick-action" onclick="MApp.Dashboard.act('stock')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>
+        <span>Stock</span>
+      </button>
+      <button type="button" class="mb-quick-action" onclick="MApp.Dashboard.act('issue')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>
+        <span>Issue Stock</span>
       </button>
     </div>
-    <div id="dashboard-body"></div>
   </div>
 </div>
 
@@ -723,7 +729,11 @@
      TAB 2 — STOCK
      ═══════════════════════════════════════════════════════════════════ -->
 <template id="tpl-stock">
-  <h1 class="mapp-screen-title" id="stock-screen-title">Stock</h1>
+  <div class="mapp-title-row">
+    <h1 class="mapp-screen-title" id="stock-screen-title">Stock</h1>
+    <button type="button" class="mb-btn-text" id="stock-print-btn"
+            onclick="MApp.Stock.printCurrentView()">Download / print</button>
+  </div>
 
   <!-- Two answers to one question -- "how much of this do we have" -- kept
        on one tab because that is how it gets asked on the floor. Stock is
@@ -1593,6 +1603,9 @@
 <div class="mb-sheet" id="sheet-issue-log" role="dialog" aria-modal="true">
   <div class="mb-sheet-header">
     <h2>Issued Stock</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Download or print" onclick="MApp.Issue.printReport()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 20h16"/></svg>
+    </button>
     <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Issue.close()">
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
     </button>
@@ -1630,6 +1643,9 @@
 <div class="mb-sheet" id="sheet-wastage-log" role="dialog" aria-modal="true">
   <div class="mb-sheet-header">
     <h2>Wastage</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Download or print" onclick="MApp.Wastage.printReport()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 20h16"/></svg>
+    </button>
     <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Wastage.close()">
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
     </button>

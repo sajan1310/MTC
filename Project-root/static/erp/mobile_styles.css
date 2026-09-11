@@ -987,6 +987,49 @@ textarea:focus-visible,
   height: 104px;
 }
 
+/* A screen title with an action beside it. The top bar is shared by every
+   tab, so a per-screen action cannot live there -- it would appear on Home
+   and Dispatch too, where it means nothing. */
+.mapp-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--mb-sp-3);
+}
+
+.mapp-title-row .mapp-screen-title { margin-bottom: var(--mb-sp-2); }
+
+/* ── Small-multiple donuts (Process WIP pipeline) ────────────────────────
+   One ring per Process Type. auto-fit rather than a fixed count for the
+   same reason the stat grid uses it: two across a portrait phone, four
+   across a landscape one, no breakpoint to maintain. */
+.mapp-donut-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--mb-sp-4);
+}
+
+.mapp-donut-card {
+  min-width: 0;
+}
+
+.mapp-donut {
+  display: block;
+  width: 100%;
+  max-width: 132px;
+  height: auto;
+  margin: var(--mb-sp-2) auto;
+}
+
+/* The band total sits in the hole. Its SIZE is an SVG attribute, not a
+   CSS px value: inside a viewBox that is user units, which scale with the
+   drawing, and the stylesheet's no-absolute-px rule exists to keep OS text
+   scaling working on real text. Only colour and weight belong here. */
+.mapp-donut-total {
+  font-weight: 700;
+  fill: var(--mb-ink);
+}
+
 .mapp-pie-legend {
   flex: 1 1 11rem;
   min-width: 0;

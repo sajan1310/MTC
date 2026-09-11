@@ -2021,6 +2021,50 @@ MApp.Print = {
     if (picked.value === 'print') { this.trigger(containerId, filename); return; }
     if (picked.value === 'download') { await this.download(containerId, filename, { landscape }); return; }
     await this.share(containerId, filename, { landscape });
+  },
+
+  // ── Reports ──────────────────────────────────────────────────────────
+  // Stock, the low-stock report, the Warehouse Pool, returns, issued stock
+  // and wastage are the same document -- a title, what it was taken from,
+  // and a table -- so they share one template rather than six near-copies
+  // that drift. Desktop prints all of these; mobile could print none of
+  // them, which is the gap this closes.
+  //
+  // Landscape by default: these tables are wider than they are tall, and a
+  // six-column report squeezed onto portrait A4 is a report nobody reads.
+  report({ title, subtitle, columns, rows, filename, footer, landscape }) {
+    const esc = MApp.Util.escapeHtml;
+    const cols = columns || [];
+
+    const populate = () => {
+      const set = (id, html) => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = html;
+      };
+      set('print-report-title', esc(title || 'Report'));
+      set('print-report-subtitle', esc(subtitle || ''));
+      set('print-report-head', `<tr>${cols.map(c => `
+        <th style="border:1px solid #bbb;padding:4px 6px;background:#eef3fb;text-align:${c.align || 'left'};">
+          ${esc(c.label)}
+        </th>`).join('')}</tr>`);
+
+      set('print-report-body', (rows || []).length
+        ? rows.map(r => `<tr>${cols.map(c => `
+            <td style="border:1px solid #ddd;padding:3px 6px;text-align:${c.align || 'left'};">
+              ${esc(String(c.get(r) ?? ''))}
+            </td>`).join('')}</tr>`).join('')
+        : `<tr><td colspan="${cols.length || 1}" style="border:1px solid #ddd;padding:8px;text-align:center;color:#666;">Nothing to report.</td></tr>`);
+
+      set('print-report-footer', footer ? esc(footer) : '');
+    };
+
+    return this.chooseAction({
+      containerId: 'print-report-container',
+      filename: filename || 'Report',
+      title: title || 'Report',
+      landscape: landscape !== false,
+      populate
+    });
   }
 };
 
@@ -2110,6 +2154,19 @@ MApp.HomeLayout = {
     { key: 'dispatchTrend', group: 'Charts', label: 'Dispatch, last 30 days',
       source: 'full', kind: 'chart', chart: 'sparkline',
       series: d => d.dispatchTrend || [] },
+    // The desktop dashboard's Process WIP Pipeline, drawn here rather than
+    // ported: desktop reaches for Chart.js from a CDN, and this app has no
+    // charting library on purpose -- it runs on factory LANs with no
+    // reliable internet and the worker only caches same-origin URLs. Same
+    // question, same numbers, inline SVG.
+    //
+    // Small multiples, one ring per Process Type, because the two
+    // questions asked of this section are different sizes: which part of
+    // the shop is loaded, and which process inside it. A single ring
+    // answers the first and buries the second.
+    { key: 'wipPipeline', group: 'Charts', label: 'Process WIP pipeline',
+      source: 'full', kind: 'chart', chart: 'donuts',
+      series: d => MApp.Home._stageBands(d.pipeline, d.upcoming) },
     // A pie is a claim that the slices add up to something -- so each of
     // these three is parts of a whole, and each says what its whole is.
     // The two whose rows the server truncates pass a `total` as well, and
@@ -2408,9 +2465,11 @@ MApp.Home = {
       ? '<div class="mb-skel mb-skel-line" style="width:100%;height:48px;"></div>'
       : (b.chart === 'sparkline'
         ? this._sparkline(b.series(data))
-        // `total` is how a block declares that its rows are a top-N and
-        // names the real whole they came out of.
-        : this._pie(b.series(data), { money: b.money, total: b.total ? b.total(data) : 0 }));
+        : b.chart === 'donuts'
+          ? this._donuts(b.series(data))
+          // `total` is how a block declares that its rows are a top-N and
+          // names the real whole they came out of.
+          : this._pie(b.series(data), { money: b.money, total: b.total ? b.total(data) : 0 }));
     return `
       <div class="mb-card mapp-chart" style="grid-column:1 / -1;"${attrs}>
         <div class="mb-stat-tile-label">${MApp.Util.escapeHtml(b.label)}</div>
@@ -2465,6 +2524,109 @@ MApp.Home = {
    * of the top five drawn as if it were everything is not a simplified
    * chart, it is a wrong one -- every percentage on it would be inflated.
    */
+  // Process WIP, folded into one band per Process Type.
+  //
+  // Mirrors desktop's App.Dashboard._stageBands deliberately, including the
+  // two judgements that are easy to get wrong: a process whose type was
+  // never set still appears, under "Other", because dropping it would
+  // silently lose stock from the totals; and the busiest band comes first,
+  // because the question this answers is which part of the shop is loaded
+  // and the answer belongs where the eye starts.
+  _stageBands(pipeline, upcoming) {
+    const byProcess = new Map();
+    const merge = (stages, key) => (stages || []).forEach(stage => {
+      const id = stage.processId;
+      const row = byProcess.get(id) || {
+        processId: id,
+        processName: stage.processName || id,
+        processType: String(stage.processType || '').trim(),
+        sequence: MApp.Util.toNumber(stage.sequence),
+        wip: 0,
+        queued: 0
+      };
+      row.processType = row.processType || String(stage.processType || '').trim();
+      row[key] = MApp.Util.toNumber(stage.totalQty);
+      byProcess.set(id, row);
+    });
+    merge(pipeline, 'wip');
+    merge(upcoming, 'queued');
+
+    const bands = new Map();
+    [...byProcess.values()]
+      .filter(r => r.wip + r.queued > 0)
+      .sort((a, b) => a.sequence - b.sequence)
+      .forEach(row => {
+        const name = row.processType || 'Other';
+        if (!bands.has(name)) bands.set(name, { name, total: 0, slices: [] });
+        const band = bands.get(name);
+        band.slices.push({ label: row.processName, value: row.wip + row.queued });
+        band.total += row.wip + row.queued;
+      });
+
+    return [...bands.values()].sort((a, b) => b.total - a.total);
+  },
+
+  // One ring per band, its processes as the slices.
+  //
+  // A ring rather than a pie because each carries a number in the middle:
+  // the band's own total is the thing being compared BETWEEN cards, and a
+  // solid pie has nowhere to put it.
+  _donuts(bands) {
+    const rows = (bands || []).filter(b => b && b.total > 0);
+    if (!rows.length) {
+      return '<div class="mb-text-sm mb-text-steel">No open production lots at any stage.</div>';
+    }
+
+    const R = 42, HOLE = 26, C = 46;
+    const point = (frac, radius) => {
+      const a = frac * Math.PI * 2 - Math.PI / 2;
+      return [(C + radius * Math.cos(a)).toFixed(3), (C + radius * Math.sin(a)).toFixed(3)];
+    };
+
+    return `<div class="mapp-donut-grid">${rows.map(band => {
+      let acc = 0;
+      const arcs = band.slices.map((s, i) => {
+        const frac = s.value / band.total;
+        const fill = this.PIE_COLOURS[i % this.PIE_COLOURS.length];
+        // One process filling the band: start and end coincide and an arc
+        // between identical points draws nothing, so draw the ring itself.
+        if (frac >= 0.9999) {
+          return `<path d="M${C},${C - R} A${R},${R} 0 1,1 ${C - 0.01},${C - R} Z
+                           M${C},${C - HOLE} A${HOLE},${HOLE} 0 1,0 ${C + 0.01},${C - HOLE} Z"
+                        fill="${fill}" fill-rule="evenodd"/>`;
+        }
+        const [ox1, oy1] = point(acc, R);
+        const [ih1, iv1] = point(acc, HOLE);
+        acc += frac;
+        const [ox2, oy2] = point(acc, R);
+        const [ih2, iv2] = point(acc, HOLE);
+        const large = frac > 0.5 ? 1 : 0;
+        return `<path d="M${ox1},${oy1} A${R},${R} 0 ${large},1 ${ox2},${oy2} L${ih2},${iv2} A${HOLE},${HOLE} 0 ${large},0 ${ih1},${iv1} Z" fill="${fill}"/>`;
+      }).join('');
+
+      // The existing pie legend classes, not new ones: these rows are the
+      // same object and should not drift apart visually.
+      const legend = band.slices.map((s, i) => `
+        <div class="mapp-pie-row">
+          <span class="mapp-pie-swatch" style="background:${this.PIE_COLOURS[i % this.PIE_COLOURS.length]};"></span>
+          <span class="mapp-pie-label">${MApp.Util.escapeHtml(s.label)}</span>
+          <span class="mapp-pie-value">${MApp.Util.formatQty(s.value)}</span>
+        </div>`).join('');
+
+      return `
+        <div class="mapp-donut-card">
+          <div class="mb-stat-tile-label">${MApp.Util.escapeHtml(band.name)}</div>
+          <svg viewBox="0 0 ${C * 2} ${C * 2}" class="mapp-donut" role="img"
+               aria-label="${MApp.Util.escapeHtml(band.name)}: ${MApp.Util.formatQty(band.total)} in progress or pending">
+            ${arcs}
+            <text x="${C}" y="${C}" text-anchor="middle" dominant-baseline="central"
+                  class="mapp-donut-total" font-size="18">${MApp.Util.formatQty(band.total)}</text>
+          </svg>
+          <div class="mapp-pie-legend">${legend}</div>
+        </div>`;
+    }).join('')}</div>`;
+  },
+
   _pie(series, opts) {
     const o = opts || {};
     const fmt = v => (o.money ? MApp.Util.formatCurrency(v) : MApp.Util.formatQty(v));
@@ -2923,6 +3085,37 @@ MApp.Stock = {
     this._paintDeadToggle();
 
     MApp.Sheet.open('sheet-stock-adjust');
+  },
+
+  // The tab shows Stock or the Warehouse Pool; one button prints whichever
+  // is in front of you. A single control that quietly printed the other
+  // pane would be worse than two.
+  printCurrentView() {
+    if (this.view === 'pool') { MApp.Pool.printReport(); return; }
+    this.printReport();
+  },
+
+  // Desktop prints the stock list and the low-stock report; the phone
+  // could print neither. Prints what is ON SCREEN -- the current search and
+  // the low-stock filter included -- because a report that silently ignores
+  // the filter you set is a different document from the one you are looking
+  // at.
+  printReport() {
+    const rows = this.filtered || [];
+    const low = !!this._lowStockOnly;
+    MApp.Print.report({
+      title: low ? 'Low Stock Report' : 'Stock List',
+      subtitle: `${rows.length} item(s)${this.searchTerm ? ` matching "${this.searchTerm}"` : ''} \u00b7 ${MApp.Util.formatDateDisplay(new Date().toISOString())}`,
+      filename: low ? 'Low_Stock_Report' : 'Stock_List',
+      columns: [
+        { label: 'Item', get: r => r.name },
+        { label: 'Size', get: r => r.size || 'General' },
+        { label: 'Unit', get: r => r.unit || '' },
+        { label: 'In stock', align: 'right', get: r => MApp.Util.formatQty(r.currentStock) },
+        { label: 'Threshold', align: 'right', get: r => (r.threshold == null || r.threshold === '' ? '' : MApp.Util.formatQty(r.threshold)) }
+      ],
+      rows
+    });
   },
 
   closeAdjustSheet() {
@@ -6356,6 +6549,30 @@ MApp.Issue = {
     }
   },
 
+  // Desktop prints this log; the phone could not. One row per LINE, not
+  // per record: a record can carry several items and a report that hides
+  // them behind a count cannot be reconciled against the shelf.
+  printReport() {
+    const rows = [];
+    (this.filtered || []).forEach(rec => {
+      (rec.items || []).forEach(it => rows.push({ rec, it }));
+    });
+    MApp.Print.report({
+      title: 'Issued Stock',
+      subtitle: `${rows.length} line(s)${this.searchTerm ? ` matching "${this.searchTerm}"` : ''}`,
+      filename: 'Issued_Stock',
+      columns: [
+        { label: 'Date', get: r => MApp.Util.formatDateDisplay(r.rec.dateRaw) },
+        { label: 'Issued to', get: r => MApp.Util.formatNameCase(r.rec.issuedTo || '') },
+        { label: 'Item', get: r => (r.it && r.it.name) || '' },
+        { label: 'Size', get: r => (r.it && r.it.size) || '' },
+        { label: 'Qty', align: 'right', get: r => MApp.Util.formatQty(r.it && r.it.qty) },
+        { label: 'Remarks', get: r => r.rec.remarks || '' }
+      ],
+      rows
+    });
+  },
+
   close() {
     MApp.Sheet.close('sheet-issue-log');
   },
@@ -6652,6 +6869,30 @@ MApp.Wastage = {
     } catch (err) {
       MApp.Util.renderError(listEl, err && err.message, () => this.open());
     }
+  },
+
+  // Desktop prints this log; the phone could not. One row per LINE, not
+  // per record: a record can carry several items and a report that hides
+  // them behind a count cannot be reconciled against the shelf.
+  printReport() {
+    const rows = [];
+    (this.filtered || []).forEach(rec => {
+      (rec.items || []).forEach(it => rows.push({ rec, it }));
+    });
+    MApp.Print.report({
+      title: 'Wastage Log',
+      subtitle: `${rows.length} line(s)${this.searchTerm ? ` matching "${this.searchTerm}"` : ''}`,
+      filename: 'Wastage_Log',
+      columns: [
+        { label: 'Date', get: r => MApp.Util.formatDateDisplay(r.rec.dateRaw) },
+        { label: 'Vendor', get: r => MApp.Util.formatNameCase(r.rec.vendor || '') },
+        { label: 'Item', get: r => (r.it && r.it.name) || '' },
+        { label: 'Size', get: r => (r.it && r.it.size) || '' },
+        { label: 'Qty', align: 'right', get: r => MApp.Util.formatQty(r.it && r.it.qty) },
+        { label: 'Remarks', get: r => r.rec.remarks || '' }
+      ],
+      rows
+    });
   },
 
   close() {
@@ -10862,9 +11103,10 @@ MApp.ClientOrders = {
 // it -- nothing is lost, and a wide editable grid is the wrong shape for
 // a phone held in one hand.
 //
-// Not ported: printing the sheet. That is desktop's own layout work and
-// is tracked separately; the data is the part that could not be entered
-// anywhere else.
+// Printing it WAS the one thing left out, on the grounds that desktop's
+// layout was its own work. It is back: the sheet is what goes out to the
+// floor with the lot, and a sheet you can fill in on a phone but only
+// print from a desk is half a feature.
 // ================================================================
 MApp.ProductionSheet = {
   lot: null,
@@ -10914,6 +11156,37 @@ MApp.ProductionSheet = {
 
     this.render();
     MApp.Sheet.open('sheet-production-sheet');
+  },
+
+  // One row per component, grouped by colour down the page the same way
+  // the screen groups them -- the printed sheet and the screen it came
+  // from have to be the same document.
+  printSheet() {
+    const lot = this.lot || {};
+    const rows = (this.rows || []).map(r => ({
+      ...r,
+      colorLabel: r.color || 'Common'
+    })).sort((a, b) => a.colorLabel.localeCompare(b.colorLabel));
+
+    MApp.Print.report({
+      title: `Production Sheet \u2014 ${lot.lotNumber || ''}`,
+      subtitle: [
+        lot.processName || lot.processId || '',
+        lot.assignedTo ? `Assigned to ${MApp.Util.formatNameCase(lot.assignedTo)}` : '',
+        MApp.Util.formatDateDisplay(lot.dateRaw)
+      ].filter(Boolean).join(' \u00b7 '),
+      filename: `Production_Sheet_${lot.lotNumber || 'lot'}`,
+      landscape: false,
+      columns: [
+        { label: 'Colour', get: r => r.colorLabel },
+        { label: 'Item', get: r => r.itemName },
+        { label: 'Size', get: r => r.size || '' },
+        { label: 'Narration', get: r => r.narration || '' },
+        { label: 'Required', align: 'right', get: r => MApp.Util.formatQty(r.requiredQty) }
+      ],
+      rows,
+      footer: this.remarks ? `Remarks: ${this.remarks}` : ''
+    });
   },
 
   close() { MApp.Sheet.close('sheet-production-sheet'); },
@@ -11152,11 +11425,15 @@ MApp.Dashboard = {
   // pop by surprise. The cost is returning to Home rather than to the
   // dashboard, which is one tap and the figures would be stale anyway --
   // logging a lot is precisely what changes them.
+  // The five jobs somebody starts straight off the dashboard. `stock` is
+  // the odd one out -- a screen rather than a form -- and belongs here
+  // anyway: "check stock" is what the low-stock figure above it provokes.
   ACTIONS: {
-    production: () => MApp.Production.openLogLotSheet(),
-    dispatch: () => MApp.Dispatch.openNewDispatchSheet(),
+    po: () => MApp.PO.openNewSheet(),
     bill: () => MApp.Bill.openForm(null),
-    return: () => MApp.Returns.openNewReturnSheet()
+    production: () => MApp.Production.openLogLotSheet(),
+    stock: () => MApp.Shell.showTab('stock'),
+    issue: () => MApp.Issue.openForm()
   },
 
   act(kind) {
@@ -11858,6 +12135,33 @@ MApp.Pool = {
   },
 
   closeLedger() { MApp.Sheet.close('sheet-pool-ledger'); },
+
+  // Desktop has bulkPrintWarehousePool; the phone had nothing. Counts
+  // toward total is a column rather than a filter: a sub-group bucket is
+  // still stock movement somebody may need to see, it simply is not units,
+  // and a report that dropped those rows would not reconcile against the
+  // screen that lists them.
+  printReport() {
+    const rows = this.filtered || [];
+    const units = rows.filter(r => r.countsTowardTotal !== false);
+    const total = units.reduce((a, r) => a + (Number(r.availableQty) || 0), 0);
+    MApp.Print.report({
+      title: 'Warehouse Pool',
+      subtitle: `${rows.length} bucket(s)${this.searchTerm ? ` matching "${this.searchTerm}"` : ''}`,
+      filename: 'Warehouse_Pool',
+      columns: [
+        { label: 'Output item', get: r => r.outputItemName },
+        { label: 'Tag', get: r => r.productTag || '' },
+        { label: 'Colour', get: r => r.color || '' },
+        { label: 'Produced', align: 'right', get: r => MApp.Util.formatQty(r.producedQty) },
+        { label: 'Consumed', align: 'right', get: r => MApp.Util.formatQty(r.consumedQty) },
+        { label: 'Available', align: 'right', get: r => MApp.Util.formatQty(r.availableQty) },
+        { label: 'Counts', align: 'center', get: r => (r.countsTowardTotal === false ? 'Sub-group' : 'Units') }
+      ],
+      rows,
+      footer: `Total available (units only): ${MApp.Util.formatQty(total)}`
+    });
+  },
 
   // ── Manual correction ────────────────────────────────────────────────
   // adjustWarehousePoolManually does not set the bucket directly: it

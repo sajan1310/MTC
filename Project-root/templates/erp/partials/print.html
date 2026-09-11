@@ -1199,3 +1199,42 @@
 <div id="print-bulk-container" class="print-container" style="display:none;background:#fff;">
   <div id="print-bulk-body"></div>
 </div>
+
+<!-- ─────────────────────────────────────────────────────────────────── -->
+<!-- PRINT TEMPLATE: GENERIC REPORT (mobile)                             -->
+<!--                                                                     -->
+<!-- Stock, the low-stock report, the Warehouse Pool, returns, issued     -->
+<!-- stock and wastage are all the same document: a title, what it was    -->
+<!-- taken from, and a table. One template rather than six near-copies,   -->
+<!-- filled by MApp.Print.report().                                       -->
+<!-- ─────────────────────────────────────────────────────────────────── -->
+<div id="print-report-container" class="print-container"
+     style="display:none;
+            background:#fff;
+            color:#1a1a1a;
+            font-family:'Segoe UI',Arial,sans-serif;
+            font-size:12px;
+            line-height:1.5;
+            padding:14px 20px 12px 20px;
+            margin:0;
+            box-sizing:border-box;
+            width:100%;
+            border-top:5px solid #0D6EFD;
+            border-bottom:3px solid #0D6EFD;
+            -webkit-print-color-adjust:exact;
+            print-color-adjust:exact;">
+
+  <div style="text-align:center;padding:4px 0 8px 0;">
+    <div class="print-brand-text" style="font-size:28px;font-weight:800;color:#0D6EFD;
+                letter-spacing:2px;text-transform:uppercase;">MAHARAJA CYCLE INDUSTRIES</div>
+    <div id="print-report-title" style="font-size:16px;font-weight:700;margin-top:4px;"></div>
+    <div id="print-report-subtitle" style="font-size:11px;color:#555;"></div>
+  </div>
+
+  <table style="width:100%;border-collapse:collapse;font-size:11px;">
+    <thead id="print-report-head"></thead>
+    <tbody id="print-report-body"></tbody>
+  </table>
+
+  <div id="print-report-footer" style="margin-top:10px;font-size:11px;font-weight:700;"></div>
+</div>
