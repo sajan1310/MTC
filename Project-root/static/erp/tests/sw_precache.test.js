@@ -108,10 +108,29 @@ function install(worker) {
   return captured;
 }
 
+/**
+ * The URL a worker actually precaches a shell asset under.
+ *
+ * mobile-sw.js appends ?v=<n> (from its own CACHE_NAME) to the scripts and
+ * stylesheet, matching what pages.py renders into mobile.html -- that is
+ * what stops a deploy pairing new HTML with an old cached script. The
+ * critical-asset check is an exact-string membership test, so a test naming
+ * the bare path would stop matching and quietly assert nothing.
+ *
+ * Derived from the worker's own source rather than restated here, so this
+ * keeps testing the real URL whether or not a given worker versions.
+ */
+function precachedUrl(file, pathname) {
+  const src = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+  const version = (src.match(/CACHE_NAME\s*=\s*['"][a-z-]+-v(\d+)['"]/) || ['', null])[1];
+  return src.includes('ASSET_V') && version ? `${pathname}?v=${version}` : pathname;
+}
+
 describe.each([
   ['sw.js', '/erp/offline.html', '/static/erp/styles.css'],
   ['mobile-sw.js', '/erp/mobile/offline.html', '/static/erp/mobile_styles.css'],
-])('%s install', (file, offlinePage, offlineStyles) => {
+])('%s install', (file, offlinePage, stylesPath) => {
+  const offlineStyles = precachedUrl(file, stylesPath);
   test('installs cleanly when every asset is available', async () => {
     const worker = loadWorker(file);
     await expect(install(worker)).resolves.toBeUndefined();  // i.e. it resolves
@@ -281,5 +300,77 @@ describe('sw.js static assets are revalidated', () => {
     const { responded } = fireFetch(worker, 'https://erp.test/api/erp/rpc/getWarehousePoolLedger',
       { method: 'POST' });
     expect(responded).toBeUndefined();
+  });
+});
+// ── The shell and its worker must agree on the asset URLs ──────────────
+//
+// A deploy used to leave every installed phone running NEW HTML against OLD
+// JavaScript. The two halves of the shell are cached differently and always
+// have been: navigations are network-first, so the markup updates the
+// instant it ships, while /static/erp/* is cache-first with no
+// revalidation, so the script does not. The phone then ran new markup
+// through a script that had never heard of it -- one good deploy presenting
+// as four separate bugs (a dead add-bill form, missing charts, a missing
+// threshold editor) until the operator happened to accept a reload prompt.
+//
+// ?v=<n> fixes that only while three things stay in step: the worker's
+// CACHE_NAME, the URLs the worker precaches, and the URLs mobile.html asks
+// for. Any two of them agreeing is not enough, so all three are asserted.
+describe('the mobile shell is cache-busted in step with its worker', () => {
+  const SHELL_ASSETS = ['mobile.js', 'api.js', 'offline-cache.js', 'mobile_styles.css'];
+  const readRepo = (...parts) =>
+    fs.readFileSync(path.join(__dirname, '..', ...parts), 'utf8');
+
+  const SW = readRepo('mobile-sw.js');
+  const HTML = readRepo('..', '..', 'templates', 'erp', 'mobile.html');
+  const PAGES = readRepo('..', '..', 'app', 'erp', 'pages.py');
+  const VERSION = (SW.match(/CACHE_NAME\s*=\s*['"][a-z-]+-v(\d+)['"]/) || ['', null])[1];
+
+  test('the version is readable at all', () => {
+    // Everything below is vacuous without it.
+    expect(VERSION).toMatch(/^\d+$/);
+  });
+
+  test('the worker precaches its scripts and stylesheet under ?v=', async () => {
+    const worker = loadWorker('mobile-sw.js');
+    await install(worker);
+    SHELL_ASSETS.forEach(asset => {
+      expect(worker.added).toContain(`/static/erp/${asset}?v=${VERSION}`);
+    });
+  });
+
+  test('and never under the bare path, which nothing would request', async () => {
+    // A bare entry is not harmless: it fills the cache with a file the page
+    // never asks for, while the versioned URL it DOES ask for is absent --
+    // so the shell stops working offline.
+    const worker = loadWorker('mobile-sw.js');
+    await install(worker);
+    SHELL_ASSETS.forEach(asset => {
+      expect(worker.added).not.toContain(`/static/erp/${asset}`);
+    });
+  });
+
+  test('mobile.html asks for every one of them with the same query', () => {
+    // One un-busted script is enough to reintroduce the bug.
+    SHELL_ASSETS.forEach(asset => {
+      expect(HTML).toContain(`erp/${asset}') }}?v={{ asset_v }}`);
+    });
+  });
+
+  test('pages.py reads that version from the worker, not a second copy', () => {
+    // One number to bump. A hand-maintained constant here would drift from
+    // CACHE_NAME silently, and the symptom would be the original bug back
+    // again -- with the cache-bump CI job still green.
+    expect(PAGES).toContain('mobile-sw.js');
+    expect(PAGES).toMatch(/CACHE_NAME/);
+    expect(PAGES).toMatch(/asset_v/);
+  });
+
+  test('the icons stay unversioned -- they are not part of the shell', async () => {
+    // They are referenced from the web manifest, which this version has no
+    // say over, so busting them here would only guarantee a cache miss.
+    const worker = loadWorker('mobile-sw.js');
+    await install(worker);
+    expect(worker.added).toContain('/static/erp/icons/icon-192.png');
   });
 });

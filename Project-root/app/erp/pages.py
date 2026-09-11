@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 from flask import (
     Response,
@@ -18,6 +19,43 @@ from flask_login import current_user, login_required
 
 from . import erp_bp
 from .services.roles_service import get_role_permissions
+
+# Cache-busting version for the shell's own JS/CSS, read from the service
+# worker's CACHE_NAME so there is exactly one number to bump.
+#
+# Without it a deploy leaves every installed phone running NEW HTML against
+# OLD JavaScript, for as long as the operator ignores the reload prompt. The
+# two halves of the shell are cached differently and always have been:
+# navigations are network-first (the HTML arrives immediately), while
+# /static/erp/* is cache-first with no revalidation (the JavaScript does
+# not). That mismatch is what made a good deploy look like four separate
+# bugs -- an add-bill form that did nothing, missing charts, a missing
+# threshold editor -- because the markup referenced a build the cached
+# script had never heard of.
+#
+# Appending ?v=<n> makes the new HTML ask for a URL the old cache cannot
+# satisfy, so it misses and goes to the network. mobile-sw.js precaches the
+# same versioned URLs, so offline still works. The reload prompt stays: it
+# is about swapping assets under a half-filled form, which is a different
+# problem from serving the wrong ones.
+_SW_CACHE_RE = re.compile(r"CACHE_NAME\s*=\s*['\"][a-z-]+-v(\d+)['\"]")
+
+
+def _asset_version(filename: str, fallback: str) -> str:
+    """The vN from a service worker's CACHE_NAME, or `fallback` if it cannot
+    be read. Never raises: a missing or unreadable worker must not take the
+    page down with it -- an un-busted URL is a stale asset, an exception here
+    is a 500.
+    """
+    try:
+        path = os.path.join(current_app.static_folder, "erp", filename)
+        with open(path, encoding="utf-8") as fh:
+            match = _SW_CACHE_RE.search(fh.read(4096))
+        if match:
+            return match.group(1)
+    except OSError:
+        pass
+    return fallback
 
 
 def _permitted_tabs_for(user):
@@ -70,7 +108,10 @@ def mobile():
     pending = _pending_approval_redirect()
     if pending:
         return pending
-    return render_template("erp/mobile.html")
+    return render_template(
+        "erp/mobile.html",
+        asset_v=_asset_version("mobile-sw.js", "0"),
+    )
 
 
 @erp_bp.route("/erp/pending-approval")

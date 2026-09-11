@@ -30,7 +30,7 @@
        only same-origin /static/erp/ URLs. Shares one file with index.html. -->
   <link rel="stylesheet" href="{{ url_for('static', filename='erp/vendor/google-fonts.css') }}">
 
-  <link rel="stylesheet" href="{{ url_for('static', filename='erp/mobile_styles.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='erp/mobile_styles.css') }}?v={{ asset_v }}">
 
   <!-- Theme choice, stamped BEFORE first paint. MApp.Theme owns this
        setting, but mobile.js loads at the end of <body> and even its
@@ -148,14 +148,14 @@
   <script>window.MOBILE_CURRENT_USER = {{ { 'email': current_user.email, 'role': current_user.role } | tojson }};</script>
 
   <!-- Shared google.script.run-equivalent wrapper (same as desktop's Api.call) -->
-  <script src="{{ url_for('static', filename='erp/api.js') }}"></script>
+  <script src="{{ url_for('static', filename='erp/api.js') }}?v={{ asset_v }}"></script>
 
   <!-- Offline read cache (Phase 6 Round 1) -- loaded before mobile.js since
        MApp.Api.callCached references OfflineCache directly. -->
-  <script src="{{ url_for('static', filename='erp/offline-cache.js') }}"></script>
+  <script src="{{ url_for('static', filename='erp/offline-cache.js') }}?v={{ asset_v }}"></script>
 
   <!-- Mobile app logic -->
-  <script src="{{ url_for('static', filename='erp/mobile.js') }}"></script>
+  <script src="{{ url_for('static', filename='erp/mobile.js') }}?v={{ asset_v }}"></script>
 </body>
 
 </html>

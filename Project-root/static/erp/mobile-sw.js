@@ -16,17 +16,46 @@
 // open. This does NOT import mobile.js itself -- that file is full of
 // DOM/UI code that assumes a live page and would throw immediately in
 // a worker.
-importScripts('/static/erp/offline-cache.js', '/static/erp/api.js');
+const CACHE_NAME = 'erp-mobile-shell-v46';
 
-const CACHE_NAME = 'erp-mobile-shell-v45';
+// The shell's own scripts and stylesheet carry ?v=<n>, matching what
+// pages.py renders into mobile.html (it reads this same CACHE_NAME, so
+// there is one number to bump, and CI already gates on bumping it).
+//
+// This is what stops a deploy serving NEW HTML against OLD JavaScript. The
+// two halves are cached differently: navigations are network-first, so the
+// markup updates the instant it deploys, while /static/erp/* is cache-first
+// with no revalidation, so the script does not. An installed phone would
+// then run new markup through a script that had never heard of it -- which
+// is exactly how one good deploy presented as four separate bugs (a dead
+// add-bill form, missing charts, a missing threshold editor, "modules not
+// up to date"), for as long as the operator left the reload prompt
+// unanswered.
+//
+// With the query string, new HTML asks for a URL the old cache cannot
+// satisfy: it misses, goes to the network, and HTML and script are in step
+// on the very first load. Precached here under the SAME versioned URLs so
+// offline keeps working -- a bare '/static/erp/mobile.js' would never be
+// requested again, and caching it would just fill the cache with a file
+// nothing asks for.
+const ASSET_V = (CACHE_NAME.match(/-v(\d+)$/) || ['', '0'])[1];
 
+// Imported AFTER the version is known, and under it, so a background-sync
+// replay runs the same api.js the page does. These are ordinary HTTP
+// requests and can sit in the browser's own cache -- a worker quietly
+// replaying the outbox through a stale api.js is the same class of bug as
+// the stale mobile.js, and harder to notice because no page is open.
+importScripts(
+  `/static/erp/offline-cache.js?v=${ASSET_V}`,
+  `/static/erp/api.js?v=${ASSET_V}`
+);
 
 const PRECACHE_URLS = [
   '/erp/mobile/offline.html',
-  '/static/erp/api.js',
-  '/static/erp/offline-cache.js',
-  '/static/erp/mobile.js',
-  '/static/erp/mobile_styles.css',
+  `/static/erp/api.js?v=${ASSET_V}`,
+  `/static/erp/offline-cache.js?v=${ASSET_V}`,
+  `/static/erp/mobile.js?v=${ASSET_V}`,
+  `/static/erp/mobile_styles.css?v=${ASSET_V}`,
   '/static/erp/icons/icon-192.png',
   '/static/erp/icons/icon-512.png'
 ];
@@ -35,7 +64,15 @@ const PRECACHE_URLS = [
 // falls back to, and the stylesheet that makes it legible. Everything else in
 // PRECACHE_URLS is an optimisation -- absent from the cache, the fetch handler
 // simply fetches it on demand and caches it then.
-const CRITICAL_URLS = ['/erp/mobile/offline.html', '/static/erp/mobile_styles.css'];
+//
+// Must name the SAME versioned URL that PRECACHE_URLS uses. The check below
+// is an exact-string membership test against the list of failures, so an
+// unversioned entry here would silently never match -- turning the critical
+// guard into a no-op and letting a worker activate with no stylesheet.
+const CRITICAL_URLS = [
+  '/erp/mobile/offline.html',
+  `/static/erp/mobile_styles.css?v=${ASSET_V}`
+];
 
 // One request per URL instead of cache.addAll (REL-002).
 //
