@@ -3510,25 +3510,34 @@ MApp.Production = {
               <div>
                 <div class="mb-card-title">${MApp.Util.escapeHtml(l.lotNumber)}</div>
                 <div class="mb-card-sub">${MApp.Util.escapeHtml(processName)}</div>
-                <!-- The date was searchable (see the 'date' search key
-                     above) but never shown, so a lot could be found by a
-                     date the card then refused to display. On a floor
-                     where "which lot did we run Tuesday" is an ordinary
-                     question, that is the first thing being looked for. -->
-                <div class="mb-card-sub">${MApp.Util.escapeHtml(MApp.Util.formatDateDisplay(l.dateRaw) || '—')}</div>
               </div>
               <div style="text-align:right;">
                 <div class="mb-card-number">${l.qty}</div>
                 <div class="mb-card-sub">${MApp.Util.escapeHtml(MApp.Util.formatNameCase(l.assignedTo) || '—')}</div>
               </div>
             </div>
-            <div class="mb-mt-2">
-              <button type="button" class="mb-chip ${MApp.Util.statusChipClass(l.status)}" style="border:none;cursor:pointer;min-height:var(--mb-tap-min);" data-lot-action="status" data-lot-index="${i}">${MApp.Util.escapeHtml(l.status || 'Pending')} ▾</button>
-            </div>
-            <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
-              <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-lot-action="edit" data-lot-index="${i}">Edit</button>
-              <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-lot-action="sheet" data-lot-index="${i}">Sheet</button>
-              <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-lot-action="delete" data-lot-index="${i}">Delete</button>
+            <!-- Status and date together on the left, actions on the right.
+                 The date was stacked under the process name, which left
+                 everything hugging the left edge with the quantity marooned
+                 opposite it; it belongs beside the status because the two
+                 are read as one thought -- what state is this lot in, and
+                 since when. -->
+            <div class="mapp-lot-footer mb-mt-2">
+              <div class="mapp-lot-meta">
+                <button type="button" class="mb-chip ${MApp.Util.statusChipClass(l.status)}" style="border:none;cursor:pointer;" data-lot-action="status" data-lot-index="${i}">${MApp.Util.escapeHtml(l.status || 'Pending')} ▾</button>
+                <span class="mapp-lot-date">${MApp.Util.escapeHtml(MApp.Util.formatDateDisplay(l.dateRaw) || '—')}</span>
+              </div>
+              <div class="mapp-lot-actions">
+                <button type="button" class="mapp-lot-action" title="Edit lot" aria-label="Edit lot" data-lot-action="edit" data-lot-index="${i}">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+                </button>
+                <button type="button" class="mapp-lot-action" title="Production sheet" aria-label="Production sheet" data-lot-action="sheet" data-lot-index="${i}">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2h9l3 3v17H6z"/><path d="M9 9h6M9 13h6M9 17h4"/></svg>
+                </button>
+                <button type="button" class="mapp-lot-action mapp-lot-action-danger" title="Delete lot" aria-label="Delete lot" data-lot-action="delete" data-lot-index="${i}">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg>
+                </button>
+              </div>
             </div>
           </div>`;
       }).join('') + MApp.Paging.moreHtml(page);
