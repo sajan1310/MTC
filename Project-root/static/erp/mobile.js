@@ -1797,6 +1797,29 @@ MApp.Print = {
     });
   },
 
+  // ── Canonical A4 page geometry ─────────────────────────────────────
+  // Must stay in step with the @page rule in mobile_styles.css AND with
+  // App.Print's copy in print.js -- the shared production-sheet renderer
+  // measures its auto-fit against these to decide whether the sheet fits
+  // one page, and a phone and a desk disagreeing about the page would
+  // produce two different documents from one builder.
+  PAGE_MARGIN_MM: 6,
+  get PAGE_WIDTH_PX() { return Math.floor((210 - 2 * this.PAGE_MARGIN_MM) * 96 / 25.4); },
+  get PAGE_HEIGHT_PX() { return Math.floor((297 - 2 * this.PAGE_MARGIN_MM) * 96 / 25.4); },
+
+  // Same readability palette desktop prints with (production.js's
+  // PRINT_PALETTE). Duplicated rather than imported because the two shells
+  // share no module system -- mobile_contrast.test.js pins them equal.
+  PRINT_PALETTE: Object.freeze({
+    HEAD_BG: '#cfe8d5',
+    HEAD_INK: '#0b5132',
+    ZEBRA: '#eef4ef',
+    RULE: '#c8d3ca',
+    GRID_STRONG: '#8fae99',
+    INK_PRIMARY: '#111',
+    INK_MUTED: '#5b6b60'
+  }),
+
   // The masthead for a document built in JS rather than cloned from a
   // static template. Mirrors desktop's App.Print.brandHeaderHtml exactly,
   // because PrintTemplates renders the same document from either shell and
@@ -11246,30 +11269,68 @@ MApp.ProductionSheet = {
   // componentsConsumed: this screen exists to correct that list, and
   // printing the uncorrected one would hand the floor the numbers the
   // operator had just finished changing.
+  // The SAME document desktop prints, from the shared renderer.
+  //
+  // It used to use a second, simpler builder that desktop had already
+  // abandoned -- production.js recorded why: "one lot printed with a
+  // different table layout depending on whether it was reached through
+  // Print Sheet or Print Selected." Printing it from a phone was a third
+  // way of getting that same wrong answer.
+  //
+  // #print-production-sheet-container lives in the shared
+  // partials/print.html that mobile.html already includes, so this fills
+  // desktop's own element. What desktop reads out of its sheet dialog, this
+  // supplies from the rows on screen -- there is no dialog on a phone.
+  //
+  // The rows are the EDITED ones: this screen exists to correct that list,
+  // and printing the uncorrected copy would hand the floor the numbers the
+  // operator had just finished changing.
   printSheet() {
     const lot = this.lot || {};
-    const html = PrintTemplates.productionSheetPage({
-      ...lot,
-      componentsConsumed: (this.rows || []).map(r => ({
-        itemName: r.itemName,
-        size: r.size,
-        narration: r.narration,
-        sourceType: r.sourceType,
-        qty: r.requiredQty,
-        color: r.color
-      })),
-      sheetRemarks: this.remarks || ''
+    const rows = this.rows || [];
+
+    // This screen groups components by colour down the page rather than
+    // across it, so a row belongs either to Common (no colour) or to the
+    // matrix under its own colour.
+    const common = rows.filter(r => !r.color).map(r => ({
+      name: r.narration ? `${r.itemName}(${r.narration})` : r.itemName,
+      qty: r.requiredQty,
+      unit: r.unit || ''
+    }));
+
+    const coloured = rows.filter(r => r.color);
+    const groups = [...new Set(coloured.map(r => r.color))];
+    const matrix = coloured.map(r => ({
+      name: r.narration ? `${r.itemName}(${r.narration})` : r.itemName,
+      unit: r.unit || '',
+      qtyByGroup: { [r.color]: r.requiredQty },
+      tagByGroup: {}
+    }));
+
+    PrintTemplates.productionSheet({
+      title: `${lot.processName || lot.processId || ''} Requirement Sheet`.trim(),
+      date: MApp.Util.formatDateDisplay(lot.dateRaw) || lot.date || '',
+      productId: lot.productId || '',
+      productName: lot.productName || '',
+      qty: MApp.Util.formatQty(lot.qty),
+      lotColor: lot.color || '',
+      remarks: this.remarks || '',
+      landscape: false,
+      excluded: [],
+      colors: groups,
+      subGroups: [],
+      common,
+      matrix
     }, {
       formatQty: v => MApp.Util.formatQty(v),
-      brandHeaderHtml: colour => MApp.Print.brandHeaderHtml(colour),
-      requirementSheetTitle: () => `${lot.processName || lot.processId || ''} Material Requirement Sheet`.trim()
+      sameColor: (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase(),
+      palette: MApp.Print.PRINT_PALETTE,
+      pageHeightPx: MApp.Print.PAGE_HEIGHT_PX,
+      pageWidthPx: MApp.Print.PAGE_WIDTH_PX
     });
 
-    const host = document.getElementById('print-report-container');
-    if (host) host.innerHTML = html;
-
     return MApp.Print.chooseAction({
-      containerId: 'print-report-container',
+      containerId: 'print-production-sheet-container',
       filename: `Production_Sheet_${lot.lotNumber || 'lot'}`,
       title: `Production Sheet ${lot.lotNumber || ''}`.trim(),
       landscape: false

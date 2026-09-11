@@ -32,24 +32,48 @@ function loadTemplates() {
   ].join('\n'));
 }
 
-const LOT = {
-  lotNumber: 'LOT-1',
-  date: '01/09/2026',
-  productId: 'PRD-1',
-  productName: 'Kalpi 26',
-  qty: 40,
-  processId: 'PRC-1',
-  sheetRemarks: 'handle with care',
-  componentsConsumed: [
-    { itemName: 'Rim', size: '20 inch', narration: 'Chrome', sourceType: 'POOL', qty: 40 },
-    { itemName: 'Spoke', size: '', narration: '', sourceType: 'ITEM', qty: 320 },
-  ],
-};
+/** The print container both shells fill -- it lives in the shared
+ *  partials/print.html, so this mirrors the ids the renderer writes. */
+function printContainerDom() {
+  document.body.innerHTML = `
+    <div id="print-production-sheet-container">
+      <div id="print-prod-title"></div><div id="print-prod-date"></div>
+      <div id="print-prod-id"></div><div id="print-prod-name"></div>
+      <div id="print-prod-qty"></div>
+      <div id="print-prod-color-wrapper"><span id="print-prod-color"></span></div>
+      <div id="print-prod-common-section"><div id="print-production-sheet-common-tables"></div></div>
+      <div id="print-prod-matrix-section"><div id="print-production-sheet-matrix-tables"></div></div>
+      <div id="print-prod-subgroup-section"><div id="print-production-sheet-subgroup-tables"></div></div>
+      <div id="print-prod-remarks-section"><div id="print-prod-remarks"></div></div>
+    </div>`;
+}
 
 const DEPS = {
   formatQty: v => String(v),
-  brandHeaderHtml: colour => `<div data-brand="${colour}">Maharaja Bikes</div>`,
-  requirementSheetTitle: () => 'Rim Fitting Material Requirement Sheet',
+  sameColor: (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase(),
+  palette: {
+    HEAD_BG: '#cfe8d5', HEAD_INK: '#0b5132', ZEBRA: '#eef4ef', RULE: '#c8d3ca',
+    GRID_STRONG: '#8fae99', INK_PRIMARY: '#111', INK_MUTED: '#5b6b60',
+  },
+  pageHeightPx: 1077,
+  pageWidthPx: 748,
+};
+
+const SHEET = {
+  title: 'Packing Requirement Sheet',
+  date: '01/09/2026',
+  productId: 'PRD-1',
+  productName: 'Kalpi 26',
+  qty: '40',
+  remarks: 'handle with care',
+  colors: ['Red', 'Blue'],
+  subGroups: [],
+  excluded: [],
+  common: [{ name: 'Primer', qty: 5, unit: 'L' }],
+  matrix: [
+    { name: 'Paint(Gloss)', unit: 'L', qtyByGroup: { Red: 2 }, tagByGroup: {} },
+    { name: 'Lacquer', unit: 'L', qtyByGroup: { Blue: 3 }, tagByGroup: {} },
+  ],
 };
 
 const STOCK = [
@@ -66,64 +90,81 @@ const POOL = [
 beforeEach(loadTemplates);
 
 describe('the production sheet', () => {
-  test('carries the lot, its components and its remarks', () => {
-    const html = PrintTemplates.productionSheetPage(LOT, DEPS);
+  beforeEach(printContainerDom);
 
-    expect(html).toContain('Kalpi 26');
-    expect(html).toContain('PRD-1');
-    expect(html).toContain('Rim');
-    expect(html).toContain('Spoke');
-    expect(html).toContain('handle with care');
+  const common = () => document.getElementById('print-production-sheet-common-tables').innerHTML;
+  const matrix = () => document.getElementById('print-production-sheet-matrix-tables').innerHTML;
+
+  test('fills the header the shared container carries', () => {
+    PrintTemplates.productionSheet(SHEET, DEPS);
+
+    expect(document.getElementById('print-prod-title').innerText).toBe('Packing Requirement Sheet');
+    expect(document.getElementById('print-prod-name').innerText).toBe('Kalpi 26');
+    expect(document.getElementById('print-prod-qty').innerText).toBe('40');
   });
 
-  test('identifies the lot by product and date, as desktop does', () => {
-    // Not by lot number: the desktop document has no such field, and this
-    // is that document. Pinned because it is surprising, and because a
-    // well-meaning addition here would change what the floor receives.
-    const html = PrintTemplates.productionSheetPage(LOT, DEPS);
-    expect(html).toContain('01/09/2026');
-    expect(html).toContain('Product Name');
-    expect(html).not.toContain('LOT-1');
+  test('puts uncoloured rows in Common and coloured ones in the matrix', () => {
+    PrintTemplates.productionSheet(SHEET, DEPS);
+
+    expect(common()).toContain('Primer');
+    expect(matrix()).toContain('Paint(Gloss)');
+    expect(common()).not.toContain('Paint(Gloss)');
   });
 
-  test('shows narration in brackets after the item name', () => {
-    // The printed sheet and the lot form name the same part the same way.
-    const html = PrintTemplates.productionSheetPage(LOT, DEPS);
-    expect(html).toContain('Rim(Chrome)');
+  test('columns that never share a row split into separate tables', () => {
+    // The clustering rule desktop relies on: Red and Blue are used by
+    // different rows, so doubling every row with dashes would be wrong.
+    PrintTemplates.productionSheet(SHEET, DEPS);
+    expect((matrix().match(/<table/g) || []).length).toBeGreaterThan(1);
   });
 
-  test('names the source of every row', () => {
-    // A POOL draw and an ITEM draw come off different shelves.
-    const html = PrintTemplates.productionSheetPage(LOT, DEPS);
-    expect(html).toContain('Pool');
-    expect(html).toContain('Item');
+  test('a group unticked in Print options is dropped from the sheet', () => {
+    PrintTemplates.productionSheet({ ...SHEET, excluded: ['Blue'] }, DEPS);
+
+    expect(matrix()).toContain('Paint(Gloss)');
+    expect(matrix()).not.toContain('Lacquer');
   });
 
-  test('a lot with no components says so rather than printing a bare table', () => {
-    const html = PrintTemplates.productionSheetPage({ ...LOT, componentsConsumed: [] }, DEPS);
-    expect(html).toContain('No components recorded');
+  test('the colour line only appears for a lot that has one', () => {
+    PrintTemplates.productionSheet(SHEET, DEPS);
+    expect(document.getElementById('print-prod-color-wrapper').style.display).toBe('none');
+
+    PrintTemplates.productionSheet({ ...SHEET, lotColor: 'Red' }, DEPS);
+    expect(document.getElementById('print-prod-color-wrapper').style.display).toBe('');
+  });
+
+  test('a sheet with no matrix rows hides that section', () => {
+    PrintTemplates.productionSheet({ ...SHEET, matrix: [], colors: [] }, DEPS);
+    expect(document.getElementById('print-prod-matrix-section').style.display).toBe('none');
+  });
+
+  test('quantities carry their unit', () => {
+    PrintTemplates.productionSheet(SHEET, DEPS);
+    expect(common()).toContain('5 L');
   });
 
   test('it escapes what it prints', () => {
-    const html = PrintTemplates.productionSheetPage({
-      ...LOT,
-      componentsConsumed: [{ itemName: '<img src=x onerror=alert(1)>', qty: 1 }],
+    PrintTemplates.productionSheet({
+      ...SHEET,
+      common: [{ name: '<img src=x onerror=alert(1)>', qty: 1, unit: '' }],
     }, DEPS);
 
-    expect(html).not.toContain('<img src=x');
-    expect(html).toContain('&lt;img');
-  });
-
-  test('the masthead comes from the shell, so each uses its own logo', () => {
-    const html = PrintTemplates.productionSheetPage(LOT, DEPS);
-    expect(html).toContain('data-brand="#198754"');
+    expect(common()).not.toContain('<img src=x');
   });
 
   test('missing deps degrade rather than throw', () => {
-    // A shell that forgets to pass one should print a slightly barer
-    // document, not fail at the moment somebody needs the paper.
-    expect(() => PrintTemplates.productionSheetPage(LOT, {})).not.toThrow();
-    expect(() => PrintTemplates.productionSheetPage(LOT)).not.toThrow();
+    // A shell that forgets one should print a barer document, not fail at
+    // the moment somebody needs the paper.
+    expect(() => PrintTemplates.productionSheet(SHEET, {})).not.toThrow();
+    expect(() => PrintTemplates.productionSheet({}, DEPS)).not.toThrow();
+  });
+
+  test('the abandoned second renderer is gone', () => {
+    // production.js: "one lot printed with a different table layout
+    // depending on whether it was reached through Print Sheet or Print
+    // Selected. There is one layout now." It must not come back.
+    expect(PrintTemplates.productionSheetPage).toBeUndefined();
+    expect(read('production.js')).not.toContain('buildProductionSheetPrintPageHtml(p) {');
   });
 });
 
@@ -191,18 +232,19 @@ describe('both shells reach the same builder', () => {
   test('desktop delegates rather than keeping its own copy', () => {
     expect(DESKTOP_STOCK).toContain('PrintTemplates.computeStockPivot');
     expect(DESKTOP_STOCK).toContain('PrintTemplates.stockPivotMarkup');
-    expect(DESKTOP_PRODUCTION).toContain('PrintTemplates.productionSheetPage');
+    expect(DESKTOP_PRODUCTION).toContain('PrintTemplates.productionSheet(');
   });
 
   test('mobile calls the same three', () => {
     expect(MOBILE).toContain('PrintTemplates.stockPivotMarkup');
-    expect(MOBILE).toContain('PrintTemplates.productionSheetPage');
+    expect(MOBILE).toContain('PrintTemplates.productionSheet(');
   });
 
   test('mobile fills desktop\'s containers, not one of its own', () => {
     // The container IS the layout. Filling a different one would put the
     // same numbers in a different document again.
     expect(MOBILE).toContain("'print-low-stock-container'");
+    expect(MOBILE).toContain("'print-production-sheet-container'");
   });
 
   test('both shells load the shared file', () => {

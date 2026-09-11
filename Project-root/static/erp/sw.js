@@ -289,7 +289,14 @@
 // as a four-high stack with its action button stranded beside it. Markup
 // only, but the partials are server-rendered while the scripts are
 // precached, so the pair moves together.
-const CACHE_NAME = 'erp-shell-v62';
+// v63: the Production Sheet's real renderer moves into the shared
+// print-templates.js, so the phone prints the same document a desk does --
+// the per-colour matrix, the clustering and the one-page fit, not a
+// simplified table. The second, abandoned builder is deleted so it cannot
+// be reached for again. production.js keeps only the step that gathers
+// what the sheet dialog is showing. LOAD-BEARING: it decides what the
+// floor receives on paper.
+const CACHE_NAME = 'erp-shell-v63';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
