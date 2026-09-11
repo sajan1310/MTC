@@ -840,11 +840,45 @@
     <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" onclick="MApp.MoreGroups.setAll(false)">Collapse all</button>
   </div>
 
+  <details class="mapp-group" data-group="master">
+    <summary class="mapp-group-summary">
+      <span class="mapp-section-label">Master data</span>
+      <svg class="mapp-group-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </summary>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Shortcuts.go('colors')">
+      <div class="mb-card-row"><span class="mb-card-title">Colours</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
+    </button>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Shortcuts.go('models')">
+      <div class="mb-card-row"><span class="mb-card-title">Models</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
+    </button>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Shortcuts.go('processTypes')">
+      <div class="mb-card-row"><span class="mb-card-title">Process Types</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
+    </button>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Shortcuts.go('units')">
+      <div class="mb-card-row"><span class="mb-card-title">Units</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
+      <div class="mb-card-sub">Conversion factors</div>
+    </button>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Shortcuts.go('stockGroups')">
+      <div class="mb-card-row"><span class="mb-card-title">Stock Groups</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
+      <div class="mb-card-sub">Named sets of item/size rows, for the Low Stock Report</div>
+    </button>
+  </details>
+
   <details class="mapp-group" data-group="appearance">
     <summary class="mapp-group-summary">
       <span class="mapp-section-label">Appearance</span>
       <svg class="mapp-group-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
     </summary>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;width:100%;text-align:left;" onclick="MApp.TabBar.open()">
+      <div class="mb-card-row"><span class="mb-card-title">Choose your tabs</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
+      <div class="mb-card-sub">Which five sit in the bottom bar</div>
+    </button>
     <!-- System is the default and stays first. The two overrides exist
          because a phone walks from a dark shed into full glare faster
          than any OS schedule accounts for. -->
@@ -900,34 +934,6 @@
     </button>
   </details>
 
-  <details class="mapp-group" data-group="master">
-    <summary class="mapp-group-summary">
-      <span class="mapp-section-label">Master data</span>
-      <svg class="mapp-group-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
-    </summary>
-    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Shortcuts.go('colors')">
-      <div class="mb-card-row"><span class="mb-card-title">Colours</span>
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
-    </button>
-    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Shortcuts.go('models')">
-      <div class="mb-card-row"><span class="mb-card-title">Models</span>
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
-    </button>
-    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Shortcuts.go('processTypes')">
-      <div class="mb-card-row"><span class="mb-card-title">Process Types</span>
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
-    </button>
-    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Shortcuts.go('units')">
-      <div class="mb-card-row"><span class="mb-card-title">Units</span>
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
-      <div class="mb-card-sub">Conversion factors</div>
-    </button>
-    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Shortcuts.go('stockGroups')">
-      <div class="mb-card-row"><span class="mb-card-title">Stock Groups</span>
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
-      <div class="mb-card-sub">Named sets of item/size rows, for the Low Stock Report</div>
-    </button>
-  </details>
 
   <details class="mapp-group" data-group="warehouse">
     <summary class="mapp-group-summary">
@@ -1900,5 +1906,34 @@
       desktop UI in a new tab, on the right screen.
     </div>
     <div id="desktop-only-list"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — CUSTOMISE THE TAB BAR. Five slots under the thumb are the
+     most valuable space in the app, and until now nobody could spend
+     them: a storeman lives in Bills and Items and visits Production
+     never, a supervisor the reverse. Home is pinned -- it is where the
+     hash resolves and what the app opens on.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-tabbar" role="dialog" aria-modal="true" aria-labelledby="tabbar-heading">
+  <div class="mb-sheet-header">
+    <h2 id="tabbar-heading">Choose your tabs</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.TabBar.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-field-hint mb-mb-4">
+      Pick up to five. A <strong>screen</strong> is a tab of its own; a
+      <strong>module</strong> opens over whatever you are looking at.
+      Everything else stays one tap away in the menu.
+    </div>
+    <div class="mb-field-hint mb-mb-4" id="tabbar-note"></div>
+    <div id="tabbar-choices"></div>
+  </div>
+  <div class="mb-sheet-footer" style="display:flex; gap:var(--mb-sp-3);">
+    <button type="button" class="mb-btn mb-btn-secondary" style="flex:1;" onclick="MApp.TabBar.reset()">Reset</button>
+    <button type="button" class="mb-btn mb-btn-primary" style="flex:2;" onclick="MApp.TabBar.save()">Save tabs</button>
   </div>
 </div>

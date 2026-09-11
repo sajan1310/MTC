@@ -532,6 +532,83 @@ textarea:focus-visible,
   z-index: 40;
 }
 
+/* ── Side drawer ─────────────────────────────────────────────────────────
+   Every module, one tap from any screen. Slides from the left so the
+   gesture matches the hamburger that opens it, and sits above the tab bar
+   (z-index 40) and below a sheet (101): a sheet opened FROM the drawer
+   must cover it, or the operator is looking at two navigation surfaces at
+   once. */
+.mapp-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 45%);
+  z-index: 60;
+}
+
+.mapp-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: min(20rem, 86vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--mb-surface);
+  box-shadow: var(--mb-shadow-sheet, 0 0 24px rgb(0 0 0 / 30%));
+  z-index: 61;
+  transform: translateX(-100%);
+  transition: transform var(--mb-motion-base);
+  overscroll-behavior: contain;
+}
+
+.mapp-drawer.open { transform: translateX(0); }
+
+@media (prefers-reduced-motion: reduce) {
+  .mapp-drawer { transition: none; }
+}
+
+.mapp-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mb-sp-3);
+  padding: max(var(--mb-sp-4), env(safe-area-inset-top)) var(--mb-sp-3) var(--mb-sp-3) var(--mb-sp-4);
+  border-bottom: 1px solid var(--mb-steel-faint);
+}
+
+.mapp-drawer-title {
+  font-size: 1.0625rem;
+  font-weight: 700;
+  color: var(--mb-ink);
+}
+
+.mapp-drawer-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: var(--mb-sp-3) var(--mb-sp-3) calc(var(--mb-sp-6) + env(safe-area-inset-bottom));
+}
+
+/* Full-width rows rather than cards: a drawer is a list of destinations,
+   and the tap target is the row. min-height keeps it thumb-sized even
+   though the label is a single line. */
+.mapp-drawer-item {
+  display: block;
+  width: 100%;
+  min-height: var(--mb-tap-min);
+  padding: var(--mb-sp-3) var(--mb-sp-3) var(--mb-sp-3) var(--mb-sp-5);
+  border: none;
+  background: none;
+  color: var(--mb-ink);
+  font: inherit;
+  font-size: 0.9375rem;
+  text-align: left;
+  border-radius: var(--mb-radius-sm);
+  cursor: pointer;
+}
+
+.mapp-drawer-item:active { background: var(--mb-surface-sunk); }
+
 /* Sliding indicator under the active tab — width/position set inline by
    MApp.Shell.showTab() since it depends on tab count/index, not just CSS. */
 .mapp-tab-indicator {

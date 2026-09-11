@@ -16,7 +16,7 @@
 // open. This does NOT import mobile.js itself -- that file is full of
 // DOM/UI code that assumes a live page and would throw immediately in
 // a worker.
-const CACHE_NAME = 'erp-mobile-shell-v46';
+const CACHE_NAME = 'erp-mobile-shell-v47';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

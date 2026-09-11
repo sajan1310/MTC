@@ -1318,6 +1318,34 @@ MApp.Shell = {
     this.showTab(tab);
   },
 
+  // Which tab reads as selected, and where the indicator sits.
+  //
+  // Split out of showTab because the bar is rebuilt whenever the operator
+  // changes which tabs they want (MApp.TabBar.render), and the new buttons
+  // have to be painted without navigating anywhere.
+  //
+  // The indicator is positioned against the tabs ACTUALLY SHOWN, not
+  // against the full screen list: a hidden Stock tab must not leave a gap
+  // the indicator slides into. A screen reached while its tab is hidden --
+  // by hash, or from the drawer -- simply has no indicator to show, which
+  // is honest.
+  paintTabs(tab) {
+    const shown = MApp.TabBar.visible();
+    shown.forEach(t => {
+      const btn = document.getElementById('mapp-tab-' + t);
+      if (!btn) return;
+      const active = t === tab;
+      btn.classList.toggle('active', active);
+      if (btn.hasAttribute('role')) btn.setAttribute('aria-selected', String(active));
+    });
+
+    const indicator = document.getElementById('mapp-tab-indicator');
+    if (!indicator) return;
+    const idx = shown.indexOf(tab);
+    indicator.style.visibility = idx === -1 ? 'hidden' : '';
+    if (idx > -1) indicator.style.transform = `translateX(${idx * 100}%)`;
+  },
+
   showTab(tab, opts) {
     if (this.TABS.indexOf(tab) === -1) return;
     const changed = tab !== this.current;
@@ -1328,16 +1356,7 @@ MApp.Shell = {
     const titleEl = document.getElementById('mapp-topbar-title');
     if (titleEl) titleEl.textContent = this.TITLES[tab];
 
-    const idx = this.TABS.indexOf(tab);
-    this.TABS.forEach(t => {
-      const btn = document.getElementById('mapp-tab-' + t);
-      if (!btn) return;
-      const active = t === tab;
-      btn.classList.toggle('active', active);
-      btn.setAttribute('aria-selected', String(active));
-    });
-    const indicator = document.getElementById('mapp-tab-indicator');
-    if (indicator) indicator.style.transform = `translateX(${idx * 100}%)`;
+    this.paintTabs(tab);
 
     const topbar = document.querySelector('.mapp-topbar');
     if (topbar) topbar.classList.remove('mapp-elevated');
@@ -13282,6 +13301,361 @@ MApp.Shortcuts = {
 };
 
 // ================================================================
+// SIDE DRAWER — every module, grouped by the job it belongs to.
+//
+// The tab bar holds five screens and cannot hold more: five is the limit
+// at which targets stay thumb-sized at 360px. Everything else lived behind
+// More, then a disclosure, then a row. The drawer is the other half of the
+// answer to that -- one tap from any screen, everything in it, grouped by
+// the job rather than by which module happens to own the record.
+//
+// Groups are <details>, the same disclosure the More tab uses, so the
+// keyboard handling and the aria-expanded semantics are the platform's and
+// the sections still work if this script never runs. Which ones are open
+// is remembered, because a drawer that forgets is a drawer you re-open
+// three times.
+//
+// Every entry resolves through MApp.Shortcuts, so the drawer and the
+// learned "Go to" row cannot list different things, and opening a module
+// from here counts towards that ranking like any other launch.
+// ================================================================
+MApp.Drawer = {
+  KEY: 'maharaja-erp-mobile-drawer-groups',
+
+  // Screens (a tab) and modules (a sheet) sit side by side deliberately:
+  // which one a destination happens to be is an implementation detail of
+  // this app, not something an operator looking for "Wastage" should have
+  // to know.
+  GROUPS: [
+    { key: 'production', label: 'Production', open: true, items: [
+      { tab: 'production', label: 'Production lots' },
+      { dest: 'issued' }, { dest: 'wastage' },
+      { dest: 'processes' }, { dest: 'recipes' }
+    ] },
+    { key: 'stock', label: 'Stock', open: true, items: [
+      { tab: 'stock', label: 'Stock' },
+      { dest: 'pool' }, { dest: 'itemsLookup' }, { dest: 'stockGroups' }
+    ] },
+    { key: 'purchase', label: 'Purchase', items: [
+      { dest: 'poLedger' }, { dest: 'billLedger' },
+      // The returns LIST lives inline on the More tab rather than in a
+      // sheet of its own, so this navigates there and opens that section
+      // instead of pretending a sheet exists.
+      { group: 'returns', label: 'Return Goods' }
+    ] },
+    { key: 'sales', label: 'Sales & Dispatch', items: [
+      { tab: 'dispatch', label: 'Dispatch' },
+      { dest: 'dispatchPlan' }, { dest: 'clientOrders' }
+    ] },
+    { key: 'directory', label: 'Directory', items: [
+      { dest: 'vendors' }, { dest: 'clients' }, { dest: 'contractors' }
+    ] },
+    { key: 'masters', label: 'Masters', items: [
+      { dest: 'colors' }, { dest: 'models' },
+      { dest: 'processTypes' }, { dest: 'units' }
+    ] },
+    { key: 'system', label: 'System', items: [
+      { dest: 'syncIssues' }, { dest: 'status' },
+      { tab: 'more', label: 'More & settings' }
+    ] }
+  ],
+
+  _open: false,
+
+  readGroups() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(this.KEY) || 'null');
+      return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    } catch (e) {
+      return {};
+    }
+  },
+
+  rememberGroup(key, open) {
+    const state = this.readGroups();
+    state[key] = !!open;
+    try { localStorage.setItem(this.KEY, JSON.stringify(state)); } catch (e) { /* storage inaccessible */ }
+  },
+
+  // The label comes from the Shortcuts catalogue unless an item overrides
+  // it, so renaming a module is done in one place.
+  _label(item) {
+    if (item.label) return item.label;
+    const dest = item.dest && MApp.Shortcuts.destination(item.dest);
+    return dest ? dest.label : '';
+  },
+
+  render() {
+    const body = document.getElementById('mapp-drawer-body');
+    if (!body) return;
+    const stored = this.readGroups();
+    const esc = MApp.Util.escapeHtml;
+
+    body.innerHTML = this.GROUPS.map(g => {
+      const isOpen = Object.prototype.hasOwnProperty.call(stored, g.key)
+        ? stored[g.key]
+        : !!g.open;
+      const rows = g.items.map(item => {
+        const label = this._label(item);
+        if (!label) return '';
+        const action = item.tab
+          ? `MApp.Drawer.goTab('${item.tab}')`
+          : item.group
+            ? `MApp.Drawer.goGroup('${item.group}')`
+            : `MApp.Drawer.goModule('${item.dest}')`;
+        return `
+          <button type="button" class="mapp-drawer-item" onclick="${action}">
+            ${esc(label)}
+          </button>`;
+      }).join('');
+
+      return `
+        <details class="mapp-group" data-drawer-group="${g.key}"${isOpen ? ' open' : ''}>
+          <summary class="mapp-group-summary">
+            <span class="mapp-section-label">${esc(g.label)}</span>
+            <svg class="mapp-group-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          ${rows}
+        </details>`;
+    }).join('');
+
+    body.querySelectorAll('.mapp-group[data-drawer-group]').forEach(el => {
+      el.addEventListener('toggle', () => this.rememberGroup(el.dataset.drawerGroup, el.open));
+    });
+  },
+
+  toggle() { this._open ? this.close() : this.open(); },
+
+  open() {
+    const drawer = document.getElementById('mapp-drawer');
+    const backdrop = document.getElementById('mapp-drawer-backdrop');
+    if (!drawer) return;
+    this.render();
+    drawer.hidden = false;
+    if (backdrop) backdrop.hidden = false;
+    // Next frame, so the transition has a from-state to animate out of.
+    requestAnimationFrame(() => drawer.classList.add('open'));
+    this._open = true;
+    const btn = document.getElementById('mapp-menu-btn');
+    if (btn) btn.setAttribute('aria-expanded', 'true');
+    this._onKey = e => { if (e.key === 'Escape') this.close(); };
+    document.addEventListener('keydown', this._onKey);
+  },
+
+  close() {
+    const drawer = document.getElementById('mapp-drawer');
+    const backdrop = document.getElementById('mapp-drawer-backdrop');
+    this._open = false;
+    if (drawer) {
+      drawer.classList.remove('open');
+      drawer.hidden = true;
+    }
+    if (backdrop) backdrop.hidden = true;
+    const btn = document.getElementById('mapp-menu-btn');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+    if (this._onKey) {
+      document.removeEventListener('keydown', this._onKey);
+      this._onKey = null;
+    }
+  },
+
+  goTab(tab) {
+    this.close();
+    MApp.Shell.showTab(tab);
+  },
+
+  // Counts the launch as well as opening it -- see MApp.Shortcuts.
+  goModule(key) {
+    this.close();
+    MApp.Shortcuts.go(key);
+  },
+
+  // For a destination whose screen is a section of the More tab rather
+  // than a sheet of its own.
+  goGroup(groupKey) {
+    this.close();
+    MApp.Shell.showTab('more');
+    MApp.More.openGroup(groupKey);
+  }
+};
+
+// ================================================================
+// BOTTOM TABS — which five, decided by the person using them.
+//
+// The bar held a fixed Home/Stock/Production/Dispatch/More. That is the
+// right default and the wrong fixed answer: a storeman lives in Bills and
+// Items and visits Production never, a supervisor the reverse. Five slots
+// under the thumb are the most valuable real estate in the app, and until
+// now nobody could spend them.
+//
+// Home is pinned. It is where the hash resolves by default, what the app
+// opens on, and the screen every other one is reached from -- a tab bar
+// without it is a shell you can get lost in. Everything else is a choice,
+// including More, because the drawer now reaches every module and settings
+// with it.
+// ================================================================
+MApp.TabBar = {
+  KEY: 'maharaja-erp-mobile-tabs',
+  FIXED: 'home',
+  MIN: 2,
+  MAX: 5,
+  DEFAULTS: ['home', 'stock', 'production', 'dispatch', 'more'],
+
+  // A screen is a tab template; a module is a sheet. Both can hold a slot.
+  SCREENS: [
+    { key: 'home', label: 'Home' },
+    { key: 'stock', label: 'Stock' },
+    { key: 'production', label: 'Production' },
+    { key: 'dispatch', label: 'Dispatch' },
+    { key: 'more', label: 'More' }
+  ],
+
+  choices() {
+    return this.SCREENS.map(s => ({ key: s.key, label: s.label, kind: 'screen' }))
+      .concat(MApp.Shortcuts.DESTINATIONS.map(d => ({
+        key: d.key, label: d.label, kind: 'module'
+      })));
+  },
+
+  choice(key) {
+    return this.choices().find(c => c.key === key) || null;
+  },
+
+  read() {
+    let stored = null;
+    try { stored = JSON.parse(localStorage.getItem(this.KEY) || 'null'); } catch (e) { stored = null; }
+    if (!Array.isArray(stored)) return this.DEFAULTS.slice();
+    // Filtered through the catalogue so a key from an older build cannot
+    // leave a dead slot, and re-pinned so Home cannot be lost by editing
+    // storage by hand.
+    const keys = stored.filter(k => this.choice(k));
+    const withHome = keys.indexOf(this.FIXED) === -1
+      ? [this.FIXED].concat(keys)
+      : keys;
+    return withHome.slice(0, this.MAX);
+  },
+
+  write(keys) {
+    try { localStorage.setItem(this.KEY, JSON.stringify(keys)); } catch (e) { /* storage inaccessible */ }
+  },
+
+  visible() { return this.read(); },
+
+  render() {
+    const bar = document.querySelector('.mapp-tabbar');
+    if (!bar) return;
+    const keys = this.visible();
+    const esc = MApp.Util.escapeHtml;
+
+    const indicator = '<div class="mapp-tab-indicator" id="mapp-tab-indicator" aria-hidden="true"></div>';
+    bar.innerHTML = indicator + keys.map(key => {
+      const c = this.choice(key);
+      if (!c) return '';
+      const onclick = c.kind === 'screen'
+        ? `MApp.Shell.showTab('${key}')`
+        : `MApp.Shortcuts.go('${key}')`;
+      // A module tab is not a screen, so it is never the selected one --
+      // role=tab with aria-selected would be a lie about a button that
+      // opens a sheet over whatever is showing.
+      const role = c.kind === 'screen' ? ' role="tab" aria-selected="false"' : '';
+      return `
+        <button type="button" class="mapp-tab" id="mapp-tab-${key}"${role} onclick="${onclick}">
+          ${this._icon(key)}
+          <span>${esc(c.label)}</span>
+        </button>`;
+    }).join('');
+
+    // The indicator spans one slot, so its width has to follow the count.
+    const el = document.getElementById('mapp-tab-indicator');
+    if (el) el.style.width = `${100 / Math.max(keys.length, 1)}%`;
+    if (MApp.Shell.current) MApp.Shell.paintTabs(MApp.Shell.current);
+  },
+
+  ICONS: {
+    home: '<path d="M3 11l9-8 9 8"/><path d="M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10"/>',
+    stock: '<path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
+    production: '<circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5-6-3.5z"/>',
+    dispatch: '<rect x="1" y="7" width="14" height="10" rx="1"/><path d="M15 10h4l3 3v4h-7z"/><circle cx="6" cy="19" r="1.6"/><circle cx="17.5" cy="19" r="1.6"/>',
+    more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>'
+  },
+
+  _icon(key) {
+    // Modules have no icon of their own; a neutral one keeps the tab the
+    // same height and shape as its neighbours rather than reflowing the bar.
+    const path = this.ICONS[key] || '<rect x="4" y="4" width="16" height="16" rx="2"/>';
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+  },
+
+  // ── Customise sheet ─────────────────────────────────────────────────
+  open() {
+    this.draft = this.visible().slice();
+    this.renderChoices();
+    MApp.Sheet.open('sheet-tabbar');
+  },
+
+  close() { MApp.Sheet.close('sheet-tabbar'); },
+
+  renderChoices() {
+    const body = document.getElementById('tabbar-choices');
+    if (!body) return;
+    const esc = MApp.Util.escapeHtml;
+    const chosen = new Set(this.draft);
+
+    body.innerHTML = this.choices().map(c => {
+      const on = chosen.has(c.key);
+      const pinned = c.key === this.FIXED;
+      return `
+        <label class="mb-card mb-card-row" style="cursor:${pinned ? 'default' : 'pointer'};">
+          <span>
+            <span class="mb-card-title">${esc(c.label)}</span>
+            <span class="mb-card-sub">${c.kind === 'screen' ? 'Screen' : 'Module'}${pinned ? ' · always shown' : ''}</span>
+          </span>
+          <input type="checkbox" ${on ? 'checked' : ''} ${pinned ? 'disabled' : ''}
+                 data-tab-choice="${c.key}" onchange="MApp.TabBar.toggle('${c.key}')">
+        </label>`;
+    }).join('');
+
+    const note = document.getElementById('tabbar-note');
+    if (note) {
+      note.textContent = `${this.draft.length} of ${this.MAX} slots used.`;
+    }
+  },
+
+  toggle(key) {
+    if (key === this.FIXED) return;
+    const at = this.draft.indexOf(key);
+    if (at > -1) {
+      if (this.draft.length <= this.MIN) {
+        MApp.Toast.error(`Keep at least ${this.MIN} tabs.`);
+        this.renderChoices();
+        return;
+      }
+      this.draft.splice(at, 1);
+    } else {
+      if (this.draft.length >= this.MAX) {
+        MApp.Toast.error(`Five tabs is the most that fit. Remove one first.`);
+        this.renderChoices();
+        return;
+      }
+      this.draft.push(key);
+    }
+    this.renderChoices();
+  },
+
+  save() {
+    this.write(this.draft.slice());
+    this.render();
+    this.close();
+    MApp.Toast.success('Tabs updated.');
+  },
+
+  reset() {
+    this.draft = this.DEFAULTS.slice();
+    this.renderChoices();
+  }
+};
+
+// ================================================================
 // ONLY ON DESKTOP — the handoff screen.
 //
 // mobile_parity.test.js holds two maps. BACKLOG is empty: every method
@@ -13465,6 +13839,26 @@ MApp.More = {
     MApp.SyncIssues.updateSummary();
   },
 
+  // Open one More-tab section and bring it into view.
+  //
+  // For destinations whose screen is a section of this tab rather than a
+  // sheet of its own -- Returns is the one -- so the drawer can send
+  // somebody to the returns list without that list first having to become
+  // a sheet. Deferred a frame because the caller has usually just asked
+  // Shell to swap the template in, and the section does not exist until
+  // that has happened.
+  openGroup(key) {
+    requestAnimationFrame(() => {
+      const el = document.querySelector(`.mapp-group[data-group="${key}"]`);
+      if (!el) return;
+      el.open = true;
+      MApp.MoreGroups._remember(key, true);
+      if (typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+    });
+  },
+
   // Adaptation from source: Mobile_Index.html's own doGet() served both
   // shells from the SAME path, differentiated only by a `ui=mobile` query
   // param -- so source strips that param and reuses window.location.pathname
@@ -13514,6 +13908,10 @@ document.addEventListener('DOMContentLoaded', () => {
   MApp.Theme.init();
   MApp.Density.init();
   MApp.PullToRefresh.init();
+  // Before Shell.init: it paints the active tab, and the buttons it paints
+  // have to exist. The static bar in mobile.html is the no-JS fallback and
+  // the default set; this replaces it with whatever was chosen.
+  MApp.TabBar.render();
   MApp.Shell.init();
 
   // Fire-and-forget: the logo is only needed by the time something is
