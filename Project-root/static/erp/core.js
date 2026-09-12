@@ -1727,12 +1727,9 @@ const App = {
     // to fall inside one, and quietly including it would inflate every
     // filtered total. With no window set, everything passes untouched.
     inDateRange(rawIso, display, from, to) {
-      if (!from && !to) return true;
-      const value = dateToInputValue(rawIso, display);
-      if (!value) return false;
-      if (from && value < from) return false;
-      if (to && value > to) return false;
-      return true;
+      // Lives in api.js now -- MApp filters by date too and there must be
+      // one answer to "is this row in the period".
+      return inDateRange(rawIso, display, from, to);
     },
 
     // Clamps a requested page number to a valid range for the given item count.

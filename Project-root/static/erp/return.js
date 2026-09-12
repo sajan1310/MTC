@@ -252,111 +252,9 @@ App.Return = {
   },
 
   // Builds a fully self-contained "Goods Returned" page for print/bulk print.
+  // Shared with MApp -- see issue.js.
   buildReturnPrintPageHtml(ret) {
-    const BRAND = '#FD7E14';
-
-    const bodyHtml = (ret.items || []).map((item, idx) => {
-      const rowBg = idx % 2 === 0 ? '#ffffff' : '#FFF6EE';
-      const rowStyle = `background-color:${rowBg};-webkit-print-color-adjust:exact;print-color-adjust:exact;page-break-inside:avoid;break-inside:avoid;`;
-      return `
-      <tr style="${rowStyle}">
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;font-weight:600;">${escapeHtml(item.name || '')}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;color:#555;">${escapeHtml(item.narration || '')}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;">${escapeHtml(item.size || '')}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;font-weight:600;">${escapeHtml(String(toNumber(item.qty)))} ${escapeHtml(item.unit || 'Pcs')}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;">${formatCurrency(item.price)}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;color:#555;">${escapeHtml(item.reason || '')}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;font-weight:700;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${formatCurrency(item.lineTotal)}</td>
-      </tr>`;
-    }).join('');
-
-    return `
-    <div style="background:#fff;color:#1a1a1a;font-family:'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.5;padding:14px 20px 12px 20px;margin:0;box-sizing:border-box;width:100%;border-top:5px solid ${BRAND};border-bottom:3px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-      <div style="text-align:center;padding:4px 0 8px 0;">
-        ${App.Print.brandHeaderHtml(BRAND)}
-        <div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:0.3px;">
-          6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
-        </div>
-        <div style="font-size:10px;color:#555;margin-top:2px;letter-spacing:0.3px;">
-          Ph : 86996-42398, 91546-94000, 94170-42398 &nbsp;|&nbsp; E-mail : maharaja.bikes@gmail.com
-          &nbsp;&nbsp; GSTIN : 03AFIPS4089J1Z1
-        </div>
-      </div>
-      <div style="height:2px;background:${BRAND};margin:0 0 12px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
-
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-        <div style="flex:1;text-align:left;">
-          <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Return #</span>
-          <div style="font-size:15px;font-weight:700;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${escapeHtml(ret.returnNumber || '')}</div>
-        </div>
-        <div style="flex:2;text-align:center;">
-          <span style="font-size:18px;font-weight:800;color:${BRAND};letter-spacing:3px;text-transform:uppercase;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-            Goods Returned
-          </span>
-        </div>
-        <div style="flex:1;text-align:right;">
-          <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Date</span>
-          <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${escapeHtml(ret.returnDate || '')}</div>
-        </div>
-      </div>
-
-      <div style="height:1px;background:#bbb;margin-bottom:14px;"></div>
-
-      <div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #ccc;">
-        <div style="display:flex;gap:16px;">
-          <div style="flex:1;">
-            <div style="margin-bottom:6px;">
-              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Vendor</span>
-              <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${escapeHtml(App.Utils.formatNameCase(ret.vendor))}</div>
-            </div>
-            <div>
-              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Remarks</span>
-              <div style="font-size:11px;color:#333;margin-top:1px;white-space:pre-wrap;">${escapeHtml(ret.remarks || '')}</div>
-            </div>
-          </div>
-          <div style="flex:1;">
-            <div style="margin-bottom:6px;">
-              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Contact</span>
-              <div style="font-size:11px;color:#333;margin-top:1px;">${escapeHtml(ret.contact || '')}</div>
-            </div>
-            <div>
-              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Bill Reference</span>
-              <div style="font-size:11px;color:#333;margin-top:1px;font-weight:600;">${escapeHtml(ret.billNumber || 'N/A')}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12px;">
-        <thead style="background-color:${BRAND};color:#fff;text-align:center;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-          <tr>
-            <th style="padding:6px;border:1px solid #bbb;text-align:center;width:5%;">#</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:20%;">Item Name</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:17%;">Narration</th>
-            <th style="padding:6px;border:1px solid #bbb;width:9%;">Size</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:center;width:11%;">Qty</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:right;width:10%;">Rate</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:16%;">Reason</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:right;width:12%;">Total</th>
-          </tr>
-        </thead>
-        <tbody style="color:#1a1a1a;text-align:center;">${bodyHtml}</tbody>
-      </table>
-
-      <div style="text-align:right;margin-bottom:16px;padding:8px 0 0 0;border-top:2px solid ${BRAND};page-break-inside:avoid;break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-        <span style="font-size:13px;font-weight:600;color:#1a1a1a;">Grand Total:&nbsp;&nbsp;</span>
-        <span style="font-size:15px;font-weight:800;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-          &#8377;${toNumber(ret.totalAmount).toFixed(2)}
-        </span>
-      </div>
-
-      <div style="display:flex;justify-content:flex-end;page-break-inside:avoid;break-inside:avoid;">
-        <div style="width:180px;text-align:center;padding-top:5px;border-top:2px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-          <span style="font-size:10px;color:#666;letter-spacing:0.5px;font-style:italic;">Authorized Signature</span>
-        </div>
-      </div>
-    </div>`;
+    return PrintTemplates.returnNote(ret, App.Print.templateDeps());
   },
 
   async bulkDelete() {
@@ -992,45 +890,11 @@ App.Wastage = {
 
   // Per-record HTML block, shared by printSelected() and the single-record
   // print(wastageId) used by the post-save Print button (enterSavedMode).
+  // Shared with MApp. This shell wraps these entries in a standalone
+  // document and opens a print window; the phone renders the same entries
+  // into the bulk container, because a popup on a phone is a coin toss.
   buildWastageEntryHtml(w) {
-    const itemRows = (w.items || []).map(it => `
-        <tr>
-          <td style="padding:6px 8px; border:1px solid #dee2e6;">${escapeHtml(it.name || '')}${it.size ? ` <em>(${escapeHtml(it.size)})</em>` : ''}</td>
-          <td style="padding:6px 8px; border:1px solid #dee2e6;">${escapeHtml(String(it.qty || ''))} ${escapeHtml(it.unit || '')}</td>
-          <td style="padding:6px 8px; border:1px solid #dee2e6;">${escapeHtml(it.reason || '—')}</td>
-        </tr>`).join('');
-
-    const vendorLine = w.vendor ? `<br><small><strong>Vendor:</strong> ${escapeHtml(App.Utils.formatNameCase(w.vendor))}</small>` : '';
-    const remarksLine = w.remarks ? `<br><small><strong>Remarks:</strong> ${escapeHtml(w.remarks)}</small>` : '';
-
-    return `
-      <div class="wastage-entry" style="page-break-inside:avoid; margin-bottom:24px; border:1px solid #dee2e6; border-radius:6px; padding:16px;">
-        <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
-          <div>
-            <strong style="font-size:15px;">${escapeHtml(w.wastageId)}</strong>
-            ${vendorLine}
-            ${remarksLine}
-          </div>
-          <div class="text-end">
-            <span style="background:#fff3cd; padding:4px 10px; border-radius:4px; font-weight:bold;">${escapeHtml(w.date || '')}</span>
-          </div>
-        </div>
-        <table style="width:100%; border-collapse:collapse; font-size:13px;">
-          <thead>
-            <tr style="background:#f8f9fa;">
-              <th style="padding:6px 8px; border:1px solid #dee2e6; text-align:left;">Item</th>
-              <th style="padding:6px 8px; border:1px solid #dee2e6; text-align:left; width:15%;">Qty</th>
-              <th style="padding:6px 8px; border:1px solid #dee2e6; text-align:left; width:35%;">Reason</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${itemRows}
-          </tbody>
-        </table>
-        <div style="margin-top:8px; font-size:12px; color:#666;">
-          Total Qty: <strong>${escapeHtml(String(w.totalQty ?? 0))}</strong>
-        </div>
-      </div>`;
+    return PrintTemplates.wastageNote(w, App.Print.templateDeps());
   },
 
   buildWastagePrintPageHtml(records) {

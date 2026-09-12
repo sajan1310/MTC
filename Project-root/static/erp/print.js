@@ -49,7 +49,10 @@ App.Print = {
       formatCurrency,
       formatNameCase: App.Utils.formatNameCase.bind(App.Utils),
       sameText: App.Utils.sameText.bind(App.Utils),
-      brandColor: App.BRAND_COLOR
+      brandColor: App.BRAND_COLOR,
+      // The three per-record notes draw their own letterhead, which is a
+      // logo when one is configured and the company name when it is not.
+      brandHeaderHtml: b => App.Print.brandHeaderHtml(b)
     };
   },
 

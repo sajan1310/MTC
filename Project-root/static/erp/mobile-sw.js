@@ -29,7 +29,18 @@
 // same builder desktop uses, instead of this shell's own drifted copies.
 // LOAD-BEARING both ways: one decides whether a bill can be entered at
 // all, the other what a client receives with their goods.
-const CACHE_NAME = 'erp-mobile-shell-v54';
+// v55: the phone prints the documents, not just the lists. The Stock
+// Issue Receipt, the Goods Return Note and the Wastage Report are the
+// same builders desktop uses, rendered one page per record through the
+// shared bulk container; the toolbar button now asks which of the two
+// documents you want, because a phone toolbar has room for one button and
+// both the log and the notes are real.
+//
+// The contractor statement gains the date window it never had, and prints
+// with the opening balance and period line desktop has always carried --
+// without them a statement handed over at the gate disagreed with the one
+// printed in the office about the same account.
+const CACHE_NAME = 'erp-mobile-shell-v55';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

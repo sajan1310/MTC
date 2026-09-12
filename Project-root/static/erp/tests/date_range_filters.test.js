@@ -28,6 +28,7 @@ function loadModules(...files) {
     'global.formatQty = formatQty;',
     'global.parseRecordDate = parseRecordDate;',
     'global.dateToInputValue = dateToInputValue;',
+    'global.inDateRange = inDateRange;',
     'global.todayIso = todayIso;',
     'global.normalizeDateForInput = normalizeDateForInput;',
     // po.js reads it at module scope; api.js is where the one

@@ -30,10 +30,17 @@ function loadContractor() {
     'global.formatQty = formatQty;',
     'global.parseRecordDate = parseRecordDate;',
     'global.dateToInputValue = dateToInputValue;',
+    'global.inDateRange = inDateRange;',
     'global.todayIso = todayIso;',
   ].join('\n');
   // eslint-disable-next-line no-eval
   eval(api);
+
+  // The printed statement -- the opening row, the period line and the
+  // ledger body -- is built in print-templates.js, which both shells load.
+  // eslint-disable-next-line no-eval
+  eval(fs.readFileSync(path.join(__dirname, '..', 'print-templates.js'), 'utf8')
+    .replace(/^const PrintTemplates = /m, 'global.PrintTemplates = '));
 
   const core = fs
     .readFileSync(path.join(__dirname, '..', 'core.js'), 'utf8')
@@ -326,7 +333,20 @@ describe('printing follows the screen', () => {
       contractorName: 'ravi', entries: ENTRIES,
       totalPayable: 1500, totalPaid: 700, balanceDue: 800,
     };
-    global.App.Print = { trigger: jest.fn() };
+    // templateDeps() is how this shell tells print-templates.js its own
+    // spelling of escapeHtml/formatCurrency/... -- see print.js. Stubbed
+    // here rather than loading print.js, which drags in the whole PDF and
+    // page-geometry surface for a test about dates.
+    global.App.Print = {
+      trigger: jest.fn(),
+      templateDeps: () => ({
+        escapeHtml,
+        toNumber,
+        formatCurrency,
+        formatNameCase: App.Utils.formatNameCase.bind(App.Utils),
+        sameText: App.Utils.sameText.bind(App.Utils)
+      })
+    };
   });
 
   const printed = () => document.getElementById('print-contractor-ledger-body').textContent;

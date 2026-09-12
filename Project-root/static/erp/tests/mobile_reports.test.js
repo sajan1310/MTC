@@ -348,7 +348,10 @@ describe('which modules can print', () => {
   });
 
   test('every new print control is wired in the markup', () => {
-    ['MApp.Issue.printReport()', 'MApp.Wastage.printReport()',
+    // Issue and Wastage now ask which document -- the log, or the
+    // per-record notes desktop prints. One toolbar button, two documents
+    // behind it, because a phone toolbar has room for one.
+    ['MApp.Issue.printMenu()', 'MApp.Wastage.printMenu()',
       'MApp.ProductionSheet.printSheet()', 'MApp.Stock.printCurrentView()']
       .forEach(call => expect(VIEWS_HTML).toContain(call));
   });

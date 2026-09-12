@@ -726,5 +726,342 @@ const PrintTemplates = {
     }
 
     return b;
+  },
+  // ── Stock Issue Receipt ──────────────────────────────────────────────
+  // One self-contained page per record, handed to whichever shell's bulk
+  // printer asked for it. The phone used to print a LIST of the issue log
+  // instead -- a different document answering a different question, and no
+  // use at all to somebody signing for goods they have just been handed.
+  issueNote(iss, deps) {
+    const { esc, num, nameCase } = this._deps(deps);
+    const brandHeader = (deps && deps.brandHeaderHtml) || (() => '');
+    const BRAND = '#212529';
+    const hasValue = num(iss.totalValue) > 0;
+    const colCount = hasValue ? 5 : 4;
+
+    const rowsHtml = (iss.items || []).map((item, idx) => {
+      const rowBg = idx % 2 === 0 ? '#ffffff' : '#f5f5f5';
+      const amountCell = hasValue
+        ? `<td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;font-weight:600;">${num(item.rate) ? '&#8377;' + num(item.value).toFixed(2) : '-'}</td>`
+        : '';
+      return `
+      <tr style="background-color:${rowBg};-webkit-print-color-adjust:exact;print-color-adjust:exact;page-break-inside:avoid;break-inside:avoid;">
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;font-weight:600;">${esc(item.name || '')}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;">${esc(item.size || '-')}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;font-weight:600;">${esc(String(num(item.qty)))} ${esc(item.unit || 'Pcs')}</td>
+        ${amountCell}
+      </tr>`;
+    }).join('');
+    const rows = rowsHtml || `<tr><td colspan="${colCount}" style="padding:10px;text-align:center;color:#999;">No items recorded for this issue.</td></tr>`;
+    const amountHeader = hasValue ? '<th style="padding:6px;border:1px solid #bbb;text-align:right;width:20%;">Amount</th>' : '';
+    const totalValueHtml = hasValue ? `
+      <div style="text-align:right;margin-top:4px;">
+        <span style="font-size:11px;font-weight:600;color:#1a1a1a;">Total Value:&nbsp;&nbsp;</span>
+        <span style="font-size:13px;font-weight:800;color:${BRAND};">&#8377;${num(iss.totalValue).toFixed(2)}</span>
+      </div>` : '';
+
+    const remarksHtml = iss.remarks ? `
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #ccc;">
+      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Remarks</span>
+      <div style="font-size:12px;color:#1a1a1a;margin-top:2px;white-space:pre-wrap;">${esc(iss.remarks)}</div>
+    </div>` : '';
+
+    return `
+    <div style="background:#fff;color:#1a1a1a;font-family:'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.5;padding:14px 20px 12px 20px;margin:0;box-sizing:border-box;width:100%;border-top:5px solid ${BRAND};border-bottom:3px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+      <div style="text-align:center;padding:4px 0 8px 0;">
+        ${brandHeader(BRAND)}
+        <div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:0.3px;">
+          6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
+        </div>
+        <div style="font-size:11px;color:${BRAND};font-weight:700;margin-top:4px;letter-spacing:1px;text-transform:uppercase;">
+          Stock Issue Receipt
+        </div>
+      </div>
+      <div style="height:2px;background:${BRAND};margin:0 0 12px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div style="flex:1;text-align:left;">
+          <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Issue #</span>
+          <div style="font-size:15px;font-weight:700;color:${BRAND};">${esc(iss.issueId || '')}</div>
+        </div>
+        <div style="flex:1;text-align:right;">
+          <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Date</span>
+          <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${esc(iss.date || '')}</div>
+        </div>
+      </div>
+
+      <div style="height:1px;background:#bbb;margin-bottom:14px;"></div>
+
+      <div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #ccc;">
+        <div style="display:flex;gap:16px;">
+          <div style="flex:1;">
+            <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Issued To / Purpose</span>
+            <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${esc(nameCase(iss.issuedTo))}</div>
+          </div>
+          <div style="flex:1;">
+            <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Reference</span>
+            <div style="font-size:13px;font-weight:600;color:#1a1a1a;margin-top:1px;">${esc(iss.reference || '-')}</div>
+          </div>
+        </div>
+      </div>
+
+      <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12px;">
+        <thead style="background-color:${BRAND};color:#fff;text-align:center;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+          <tr>
+            <th style="padding:6px;border:1px solid #bbb;text-align:center;width:8%;">#</th>
+            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:${hasValue ? '37' : '47'}%;">Item Name</th>
+            <th style="padding:6px;border:1px solid #bbb;width:20%;">Size</th>
+            <th style="padding:6px;border:1px solid #bbb;text-align:center;width:${hasValue ? '15' : '25'}%;">Qty</th>
+            ${amountHeader}
+          </tr>
+        </thead>
+        <tbody style="color:#1a1a1a;text-align:center;">${rows}</tbody>
+      </table>
+
+      <div style="text-align:right;margin-bottom:16px;padding:8px 0 0 0;border-top:2px solid ${BRAND};page-break-inside:avoid;break-inside:avoid;">
+        <span style="font-size:13px;font-weight:600;color:#1a1a1a;">Total Qty:&nbsp;&nbsp;</span>
+        <span style="font-size:15px;font-weight:800;color:${BRAND};">${esc(String(iss.totalQty ?? 0))}</span>
+      </div>
+      ${totalValueHtml}
+      ${remarksHtml}
+
+      <div style="display:flex;justify-content:flex-end;page-break-inside:avoid;break-inside:avoid;margin-top:16px;">
+        <div style="width:180px;text-align:center;padding-top:5px;border-top:2px solid ${BRAND};">
+          <span style="font-size:10px;color:#666;letter-spacing:0.5px;font-style:italic;">Received By / Signature</span>
+        </div>
+      </div>
+    </div>`;
+  },
+
+  // ── Goods Return Note ────────────────────────────────────────────────
+  returnNote(ret, deps) {
+    const { esc, num, nameCase } = this._deps(deps);
+    const brandHeader = (deps && deps.brandHeaderHtml) || (() => '');
+    const BRAND = '#FD7E14';
+
+    const bodyHtml = (ret.items || []).map((item, idx) => {
+      const rowBg = idx % 2 === 0 ? '#ffffff' : '#FFF6EE';
+      const rowStyle = `background-color:${rowBg};-webkit-print-color-adjust:exact;print-color-adjust:exact;page-break-inside:avoid;break-inside:avoid;`;
+      return `
+      <tr style="${rowStyle}">
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;font-weight:600;">${esc(item.name || '')}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;color:#555;">${esc(item.narration || '')}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;">${esc(item.size || '')}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;font-weight:600;">${esc(String(num(item.qty)))} ${esc(item.unit || 'Pcs')}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;">${formatCurrency(item.price)}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;color:#555;">${esc(item.reason || '')}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;font-weight:700;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${formatCurrency(item.lineTotal)}</td>
+      </tr>`;
+    }).join('');
+
+    return `
+    <div style="background:#fff;color:#1a1a1a;font-family:'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.5;padding:14px 20px 12px 20px;margin:0;box-sizing:border-box;width:100%;border-top:5px solid ${BRAND};border-bottom:3px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+      <div style="text-align:center;padding:4px 0 8px 0;">
+        ${brandHeader(BRAND)}
+        <div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:0.3px;">
+          6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
+        </div>
+        <div style="font-size:10px;color:#555;margin-top:2px;letter-spacing:0.3px;">
+          Ph : 86996-42398, 91546-94000, 94170-42398 &nbsp;|&nbsp; E-mail : maharaja.bikes@gmail.com
+          &nbsp;&nbsp; GSTIN : 03AFIPS4089J1Z1
+        </div>
+      </div>
+      <div style="height:2px;background:${BRAND};margin:0 0 12px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div style="flex:1;text-align:left;">
+          <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Return #</span>
+          <div style="font-size:15px;font-weight:700;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${esc(ret.returnNumber || '')}</div>
+        </div>
+        <div style="flex:2;text-align:center;">
+          <span style="font-size:18px;font-weight:800;color:${BRAND};letter-spacing:3px;text-transform:uppercase;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+            Goods Returned
+          </span>
+        </div>
+        <div style="flex:1;text-align:right;">
+          <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Date</span>
+          <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${esc(ret.returnDate || '')}</div>
+        </div>
+      </div>
+
+      <div style="height:1px;background:#bbb;margin-bottom:14px;"></div>
+
+      <div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #ccc;">
+        <div style="display:flex;gap:16px;">
+          <div style="flex:1;">
+            <div style="margin-bottom:6px;">
+              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Vendor</span>
+              <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${esc(nameCase(ret.vendor))}</div>
+            </div>
+            <div>
+              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Remarks</span>
+              <div style="font-size:11px;color:#333;margin-top:1px;white-space:pre-wrap;">${esc(ret.remarks || '')}</div>
+            </div>
+          </div>
+          <div style="flex:1;">
+            <div style="margin-bottom:6px;">
+              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Contact</span>
+              <div style="font-size:11px;color:#333;margin-top:1px;">${esc(ret.contact || '')}</div>
+            </div>
+            <div>
+              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Bill Reference</span>
+              <div style="font-size:11px;color:#333;margin-top:1px;font-weight:600;">${esc(ret.billNumber || 'N/A')}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12px;">
+        <thead style="background-color:${BRAND};color:#fff;text-align:center;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+          <tr>
+            <th style="padding:6px;border:1px solid #bbb;text-align:center;width:5%;">#</th>
+            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:20%;">Item Name</th>
+            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:17%;">Narration</th>
+            <th style="padding:6px;border:1px solid #bbb;width:9%;">Size</th>
+            <th style="padding:6px;border:1px solid #bbb;text-align:center;width:11%;">Qty</th>
+            <th style="padding:6px;border:1px solid #bbb;text-align:right;width:10%;">Rate</th>
+            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:16%;">Reason</th>
+            <th style="padding:6px;border:1px solid #bbb;text-align:right;width:12%;">Total</th>
+          </tr>
+        </thead>
+        <tbody style="color:#1a1a1a;text-align:center;">${bodyHtml}</tbody>
+      </table>
+
+      <div style="text-align:right;margin-bottom:16px;padding:8px 0 0 0;border-top:2px solid ${BRAND};page-break-inside:avoid;break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+        <span style="font-size:13px;font-weight:600;color:#1a1a1a;">Grand Total:&nbsp;&nbsp;</span>
+        <span style="font-size:15px;font-weight:800;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+          &#8377;${num(ret.totalAmount).toFixed(2)}
+        </span>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;page-break-inside:avoid;break-inside:avoid;">
+        <div style="width:180px;text-align:center;padding-top:5px;border-top:2px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+          <span style="font-size:10px;color:#666;letter-spacing:0.5px;font-style:italic;">Authorized Signature</span>
+        </div>
+      </div>
+    </div>`;
+  },
+
+  // ── Wastage entry ────────────────────────────────────────────────────
+  // Plainer than the two notes above because desktop's wastage print is
+  // plainer -- it is the reference, so this is what the phone prints too.
+  // One entry, not a whole document: desktop wraps these in a popup print
+  // window, and the phone (where popups are unreliable) renders the same
+  // entries into the shared bulk container.
+  wastageNote(w, deps) {
+    const { esc, nameCase } = this._deps(deps);
+    const itemRows = (w.items || []).map(it => `
+        <tr>
+          <td style="padding:6px 8px; border:1px solid #dee2e6;">${esc(it.name || '')}${it.size ? ` <em>(${esc(it.size)})</em>` : ''}</td>
+          <td style="padding:6px 8px; border:1px solid #dee2e6;">${esc(String(it.qty || ''))} ${esc(it.unit || '')}</td>
+          <td style="padding:6px 8px; border:1px solid #dee2e6;">${esc(it.reason || '—')}</td>
+        </tr>`).join('');
+
+    const vendorLine = w.vendor ? `<br><small><strong>Vendor:</strong> ${esc(nameCase(w.vendor))}</small>` : '';
+    const remarksLine = w.remarks ? `<br><small><strong>Remarks:</strong> ${esc(w.remarks)}</small>` : '';
+
+    return `
+      <div class="wastage-entry" style="page-break-inside:avoid; margin-bottom:24px; border:1px solid #dee2e6; border-radius:6px; padding:16px;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+          <div>
+            <strong style="font-size:15px;">${esc(w.wastageId)}</strong>
+            ${vendorLine}
+            ${remarksLine}
+          </div>
+          <div class="text-end">
+            <span style="background:#fff3cd; padding:4px 10px; border-radius:4px; font-weight:bold;">${esc(w.date || '')}</span>
+          </div>
+        </div>
+        <table style="width:100%; border-collapse:collapse; font-size:13px;">
+          <thead>
+            <tr style="background:#f8f9fa;">
+              <th style="padding:6px 8px; border:1px solid #dee2e6; text-align:left;">Item</th>
+              <th style="padding:6px 8px; border:1px solid #dee2e6; text-align:left; width:15%;">Qty</th>
+              <th style="padding:6px 8px; border:1px solid #dee2e6; text-align:left; width:35%;">Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itemRows}
+          </tbody>
+        </table>
+        <div style="margin-top:8px; font-size:12px; color:#666;">
+          Total Qty: <strong>${esc(String(w.totalQty ?? 0))}</strong>
+        </div>
+      </div>`;
+  },
+  // ── Contractor statement ─────────────────────────────────────────────
+  // The printed ledger is the ledger ON SCREEN. Printing a whole account
+  // from a screen filtered to a date window hands somebody a document that
+  // does not match what they were looking at when they pressed the button,
+  // and they have no way to tell, because every row in it is real.
+  //
+  // The opening balance travels with it for the same reason it is on
+  // screen: the balance column is cumulative across the whole account, so
+  // without the carried-in figure the first printed row reads as though
+  // the account began mid-window.
+  //
+  // The phone printed neither -- no window, no opening row -- so a
+  // contractor at the gate and the office were reading two different
+  // statements of the same account.
+  contractorLedgerBody(entries, opening, from, to, deps) {
+    const { esc, money } = this._deps(deps);
+    const cell = 'padding:6px;border:1px solid #999;color:#000;';
+    const num = `${cell}text-align:right;font-weight:700;`;
+    const rows = entries || [];
+
+    if (!rows.length) {
+      return `<tr><td colspan="7" style="padding:10px;text-align:center;color:#999;">${
+        from || to
+          ? 'No transactions in the selected dates.'
+          : 'No transactions yet for this contractor.'
+      }</td></tr>`;
+    }
+
+    const openingRow = opening === null || opening === undefined
+      ? ''
+      : `<tr>
+      <td style="${cell}">${esc(from || '')}</td>
+      <td style="${cell}">Opening</td>
+      <td style="${cell}"></td>
+      <td style="${cell}">Balance carried into the selected dates</td>
+      <td style="${num.replace('font-weight:700;', '')}">-</td>
+      <td style="${num.replace('font-weight:700;', '')}">-</td>
+      <td style="${num}">${money(opening)}</td>
+    </tr>`;
+
+    return openingRow + rows.map(e => `<tr>
+      <td style="${cell}">${esc(e.date)}</td>
+      <td style="${cell}">${esc(e.type)}</td>
+      <td style="${cell}">${esc(e.ref)}</td>
+      <td style="${cell}">${esc(e.description)}</td>
+      <td style="${num}">${e.type === 'Payable' ? money(e.amount) : '-'}</td>
+      <td style="${num}">${e.type === 'Payment' ? money(e.rawAmount) : '-'}</td>
+      <td style="${num}">${money(e.balance)}</td>
+    </tr>`).join('');
+  },
+
+  // "Period: 01/08/2026 to today", or nothing at all when the statement
+  // covers the whole account. Shared so the two shells cannot word it
+  // differently.
+  ledgerPeriodLine(from, to) {
+    return (from || to) ? `Period: ${from || 'start'} to ${to || 'today'}` : '';
+  },
+
+  // The balance carried into a window. Entries arrive in chronological
+  // order (the running balance depends on it), so the last one before the
+  // window is what was carried in. Null means no window, so nothing is
+  // being excluded and no opening row belongs on the page.
+  ledgerOpeningBalance(entries, from, toInputValue) {
+    if (!from) return null;
+    const asValue = toInputValue || (e => e.dateRaw || e.date);
+    let carried = 0;
+    let sawAny = false;
+    (entries || []).forEach(e => {
+      const value = asValue(e);
+      if (value && value < from) { carried = e.balance; sawAny = true; }
+    });
+    return sawAny ? carried : 0;
   }
 };

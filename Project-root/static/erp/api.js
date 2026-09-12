@@ -462,6 +462,26 @@ function tomorrowIso() {
 
 // Converts a record's raw ISO timestamp (preferred) or DD/MM/YYYY display
 // date into the YYYY-MM-DD format <input type="date"> expects/produces.
+// Is a record inside a [from, to] window? Both ends inclusive, both
+// optional. dateToInputValue is the same conversion the single-date
+// filters use, so a record that matched one matches this.
+//
+// An undated record is OUT whenever a window is set: it cannot be shown to
+// fall inside one, and quietly including it would inflate every filtered
+// total. With no window set, everything passes untouched.
+//
+// Here rather than in core.js because both shells filter by date and there
+// must be one answer -- a contractor's statement printed from the gate and
+// from the office cannot disagree about which rows are in the period.
+function inDateRange(rawIso, display, from, to) {
+  if (!from && !to) return true;
+  const value = dateToInputValue(rawIso, display);
+  if (!value) return false;
+  if (from && value < from) return false;
+  if (to && value > to) return false;
+  return true;
+}
+
 function dateToInputValue(rawIso, displayDate) {
   if (rawIso) {
     const iso = String(rawIso).split('T')[0];

@@ -2140,6 +2140,45 @@ MApp.Print = {
     });
   },
 
+  // ── Per-record notes ─────────────────────────────────────────────────
+  // Desktop renders one self-contained page per record into the shared
+  // #print-bulk-container and prints them as a single multi-page job
+  // (App.Print.renderBulkPages). This is that, and it exists so the phone
+  // can print the Stock Issue Receipt, the Goods Return Note and the
+  // Wastage Report as the SAME documents -- it used to print a list of the
+  // whole log instead, which is a different document answering a different
+  // question and no use to anyone signing for goods.
+  bulk(records, buildPageHtml, { filename, title, landscape } = {}) {
+    const list = records || [];
+    if (!list.length) {
+      MApp.Toast.error('Nothing to print.');
+      return;
+    }
+    return this.chooseAction({
+      containerId: 'print-bulk-container',
+      filename: filename || 'Document',
+      title: title || 'Document',
+      landscape,
+      populate: () => {
+        const body = document.getElementById('print-bulk-body');
+        if (!body) return;
+        body.innerHTML = list.map((record, idx) => {
+          const pageStyle = idx < list.length - 1
+            ? 'page-break-after:always;break-after:page;'
+            : '';
+          return `<div class="bulk-print-page" style="${pageStyle}">${buildPageHtml(record)}</div>`;
+        }).join('');
+      }
+    });
+  },
+
+  // What print-templates.js's three note builders ask for, on top of
+  // templateDeps(): the letterhead, which is a logo when one is configured
+  // and the company name when it is not.
+  noteDeps() {
+    return { ...this.templateDeps(), brandHeaderHtml: b => this.brandHeaderHtml(b) };
+  },
+
   // ── Reports ──────────────────────────────────────────────────────────
   // Stock, the low-stock report, the Warehouse Pool, returns, issued stock
   // and wastage are the same document -- a title, what it was taken from,
@@ -5256,6 +5295,7 @@ MApp.Returns = {
         </div>
         <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-return-action="edit" data-return-index="${i}">Edit</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-return-action="print" data-return-index="${i}">Print Note</button>
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-return-action="delete" data-return-index="${i}">Delete</button>
         </div>
       </div>
@@ -5266,6 +5306,7 @@ MApp.Returns = {
         const record = this.returns[Number(btn.dataset.returnIndex)];
         if (!record) return;
         if (btn.dataset.returnAction === 'edit') this.openEditSheet(record);
+        else if (btn.dataset.returnAction === 'print') this.printNote(Number(btn.dataset.returnIndex));
         else this.deleteReturn(record);
       });
     });
@@ -5301,6 +5342,18 @@ MApp.Returns = {
     } finally {
       if (saveBtn) saveBtn.disabled = false;
     }
+  },
+
+  // The Goods Return Note desktop prints, from the same builder. A return
+  // goes back to a vendor with paper attached, so the phone needed the
+  // document and not a listing of the log.
+  printNote(index) {
+    const rec = (this.returns || [])[index];
+    if (!rec) return;
+    MApp.Print.bulk([rec], r => PrintTemplates.returnNote(r, MApp.Print.noteDeps()), {
+      filename: `Goods_Return_Note_${rec.returnNumber || index + 1}`,
+      title: 'Goods Return Note'
+    });
   },
 
   closeNewReturnSheet() {
@@ -6624,6 +6677,46 @@ MApp.Issue = {
     });
   },
 
+  // The receipt a person signs, one page per record, from the same builder
+  // desktop uses. Separate from printReport() above, which prints the LOG:
+  // both are real documents and the phone now has both, where before it
+  // had only the list.
+  // The toolbar button now asks which document: the log (a listing, for
+  // reconciling against the shelf) or the notes (one signed page per
+  // record). Desktop has both as separate buttons; a phone toolbar has
+  // room for one, so it asks.
+  async printMenu() {
+    const picked = await MApp.Picker.open({
+      title: 'Issued Stock',
+      searchable: false,
+      items: [
+        { value: 'log', label: 'Issued Stock log', sublabel: 'One row per line, for reconciling' },
+        { value: 'notes', label: 'Stock Issue Receipts', sublabel: 'One page per record, to sign' }
+      ]
+    });
+    if (!picked) return;
+    if (picked.value === 'log') this.printReport();
+    else this.printAllNotes();
+  },
+
+
+  printNote(index) {
+    const rec = (this.filtered || [])[index];
+    if (!rec) return;
+    MApp.Print.bulk([rec], r => PrintTemplates.issueNote(r, MApp.Print.noteDeps()), {
+      filename: `Stock_Issue_Receipt_${rec.issueId || index + 1}`,
+      title: 'Stock Issue Receipt'
+    });
+  },
+
+  // Every record currently in view, as one multi-page job -- desktop's
+  // "Print Selected".
+  printAllNotes() {
+    MApp.Print.bulk(this.filtered || [],
+      r => PrintTemplates.issueNote(r, MApp.Print.noteDeps()),
+      { filename: 'Stock_Issue_Receipt_Selected', title: 'Stock Issue Receipt' });
+  },
+
   close() {
     MApp.Sheet.close('sheet-issue-log');
   },
@@ -6948,6 +7041,44 @@ MApp.Wastage = {
 
   close() {
     MApp.Sheet.close('sheet-wastage-log');
+  },
+
+  // Desktop wraps these entries in a standalone document and opens a print
+  // window. A popup on a phone is a coin toss, so the same entries go into
+  // the shared bulk container instead -- same note, a delivery mechanism
+  // that works on the device it is running on.
+  // The toolbar button now asks which document: the log (a listing, for
+  // reconciling against the shelf) or the notes (one signed page per
+  // record). Desktop has both as separate buttons; a phone toolbar has
+  // room for one, so it asks.
+  async printMenu() {
+    const picked = await MApp.Picker.open({
+      title: 'Wastage',
+      searchable: false,
+      items: [
+        { value: 'log', label: 'Wastage log', sublabel: 'One row per line, for reconciling' },
+        { value: 'notes', label: 'Wastage Report', sublabel: 'One page per record, to sign' }
+      ]
+    });
+    if (!picked) return;
+    if (picked.value === 'log') this.printReport();
+    else this.printAllNotes();
+  },
+
+
+  printNote(index) {
+    const rec = (this.filtered || [])[index];
+    if (!rec) return;
+    MApp.Print.bulk([rec], r => PrintTemplates.wastageNote(r, MApp.Print.noteDeps()), {
+      filename: `Wastage_${rec.wastageId || index + 1}`,
+      title: 'Wastage Report'
+    });
+  },
+
+  printAllNotes() {
+    MApp.Print.bulk(this.filtered || [],
+      r => PrintTemplates.wastageNote(r, MApp.Print.noteDeps()),
+      { filename: 'Wastage_Report', title: 'Wastage Report' });
   },
 
   onSearch(term) {
@@ -12959,6 +13090,66 @@ MApp.ContractorDetail = {
   name: null,
   data: null,
 
+  // ── The date window ──────────────────────────────────────────────────
+  // Desktop has had one on this ledger for a while; the phone did not, so
+  // a contractor asking "what about August?" at the gate could only be
+  // shown the whole account. The printed statement follows the screen, so
+  // this is also what gives the paper its period line and opening row.
+  range: { from: '', to: '' },
+
+  _entriesInRange() {
+    const all = ((this.data || {}).ledger || {}).entries || [];
+    const { from, to } = this.range;
+    if (!from && !to) return all;
+    return all.filter(e => inDateRange(e.dateRaw, e.date, from, to));
+  },
+
+  // Shared with desktop (print-templates.js) so one account cannot carry
+  // two different figures into the same window.
+  _openingBalance() {
+    return PrintTemplates.ledgerOpeningBalance(
+      ((this.data || {}).ledger || {}).entries || [],
+      this.range.from,
+      e => dateToInputValue(e.dateRaw, e.date));
+  },
+
+  setRange(which, value) {
+    this.range[which] = value || '';
+    this.render();
+  },
+
+  clearRange() {
+    this.range = { from: '', to: '' };
+    this.render();
+  },
+
+  _rangeToolbarHtml() {
+    const all = ((this.data || {}).ledger || {}).entries || [];
+    const shown = this._entriesInRange().length;
+    const { from, to } = this.range;
+    const note = (from || to)
+      ? `<div class="mb-text-sm mb-text-steel mb-mt-2">${shown} of ${all.length} entries in range</div>`
+      : '';
+    return `
+      <div class="mb-card" style="padding:var(--mb-sp-3);">
+        <div style="display:flex;gap:var(--mb-sp-2);align-items:flex-end;flex-wrap:wrap;">
+          <div class="mb-field" style="flex:1 1 130px;margin-bottom:0;">
+            <label for="contractor-ledger-from">From</label>
+            <input type="date" id="contractor-ledger-from" value="${MApp.Util.escapeHtml(from)}"
+              onchange="MApp.ContractorDetail.setRange('from', this.value)">
+          </div>
+          <div class="mb-field" style="flex:1 1 130px;margin-bottom:0;">
+            <label for="contractor-ledger-to">To</label>
+            <input type="date" id="contractor-ledger-to" value="${MApp.Util.escapeHtml(to)}"
+              onchange="MApp.ContractorDetail.setRange('to', this.value)">
+          </div>
+          ${from || to ? `<button type="button" class="mb-btn mb-btn-secondary" style="flex:0 0 auto;"
+            aria-label="Clear the date filter" onclick="MApp.ContractorDetail.clearRange()">Clear</button>` : ''}
+        </div>
+        ${note}
+      </div>`;
+  },
+
   // Every contractor's balance in one call, for the "who owes what"
   // question that otherwise means opening each contractor in turn.
   // Rendered as a banner above the contractor Directory list.
@@ -13062,9 +13253,12 @@ MApp.ContractorDetail = {
           ${p.description && p.description !== '-' ? `<div class="mb-card-sub">${MApp.Util.escapeHtml(p.description)}</div>` : ''}
         </div>`).join(''));
 
-    const ledgerRows = !ledger ? '' : ((ledger.entries || []).length === 0
-      ? empty('No ledger entries yet.')
-      : ledger.entries.slice(0, 30).map(e => `
+    const inRange = this._entriesInRange();
+    const ledgerRows = !ledger ? '' : (inRange.length === 0
+      ? empty(this.range.from || this.range.to
+        ? 'No entries in the selected dates.'
+        : 'No ledger entries yet.')
+      : inRange.slice(0, 30).map(e => `
         <div class="mb-card">
           <div class="mb-card-row">
             <div>
@@ -13110,6 +13304,7 @@ MApp.ContractorDetail = {
     body.innerHTML = `
       ${summary}
       <div class="mapp-section-label mb-mt-4">Ledger</div>
+      ${ledger ? this._rangeToolbarHtml() : ''}
       ${ledgerRows}
       <div class="mapp-section-label mb-mt-4">Payments</div>
       <div id="contractor-payment-list">${paymentRows}</div>
@@ -13222,21 +13417,20 @@ MApp.ContractorDetail = {
     setText('print-contractor-total-paid', MApp.Util.formatCurrency(ledger.totalPaid));
     setText('print-contractor-balance-due', MApp.Util.formatCurrency(ledger.balanceDue));
 
+    // The printed statement is the statement ON SCREEN: same window, same
+    // opening row, same period line, from the same builder desktop uses.
+    // Printing the whole account from a filtered screen hands somebody a
+    // document that does not match what they were looking at, and they
+    // have no way to tell, because every row in it is real.
+    const { from, to } = this.range;
+    const period = document.getElementById('print-contractor-period');
+    if (period) period.textContent = PrintTemplates.ledgerPeriodLine(from, to);
+
     const bodyEl = document.getElementById('print-contractor-ledger-body');
     if (bodyEl) {
-      const cell = 'padding:6px;border:1px solid #999;color:#000;';
-      const num = cell + 'text-align:right;font-weight:700;';
-      bodyEl.innerHTML = (ledger.entries || []).length
-        ? ledger.entries.map(e => `<tr>
-            <td style="${cell}">${MApp.Util.escapeHtml(e.date)}</td>
-            <td style="${cell}">${MApp.Util.escapeHtml(e.type)}</td>
-            <td style="${cell}">${MApp.Util.escapeHtml(e.ref)}</td>
-            <td style="${cell}">${MApp.Util.escapeHtml(e.description)}</td>
-            <td style="${num}">${e.type === 'Payable' ? MApp.Util.formatCurrency(e.amount) : '-'}</td>
-            <td style="${num}">${e.type === 'Payment' ? MApp.Util.formatCurrency(e.rawAmount) : '-'}</td>
-            <td style="${num}">${MApp.Util.formatCurrency(e.balance)}</td>
-          </tr>`).join('')
-        : '<tr><td colspan="7" style="padding:10px;text-align:center;color:#999;">No transactions yet for this contractor.</td></tr>';
+      bodyEl.innerHTML = PrintTemplates.contractorLedgerBody(
+        this._entriesInRange(), this._openingBalance(), from, to,
+        MApp.Print.templateDeps());
     }
 
     return MApp.Print.chooseAction({

@@ -453,3 +453,230 @@ describe('the documents both shells print', () => {
     });
   });
 });
+
+describe('the per-record notes', () => {
+  // These three build a self-contained page and return it, rather than
+  // filling a container: desktop drops them into #print-bulk-body one per
+  // record, and MApp.Print.bulk does the same. So the assertions read the
+  // returned string.
+  const NOTE_DEPS = {
+    escapeHtml: s => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
+    toNumber: v => Number(v) || 0,
+    formatCurrency: v => `₹${(Number(v) || 0).toFixed(2)}`,
+    formatNameCase: s => String(s == null ? '' : s)
+      .toLowerCase().replace(/\b\w/g, c => c.toUpperCase()),
+    brandHeaderHtml: () => '<div>Maharaja Bikes</div>'
+  };
+
+  const ISSUE = {
+    issueId: 'ISS-12', date: '05/09/2026', issuedTo: 'anil KUMAR',
+    reference: 'LOT-PNT041', remarks: 'for the paint line',
+    totalQty: 12, totalValue: 0,
+    items: [{ name: 'Primer', size: '5 L', unit: 'Ltr', qty: 12, rate: 0, value: 0 }]
+  };
+
+  const RETURN = {
+    returnNumber: 'RET-3', returnDate: '06/09/2026', vendor: 'acme CYCLES',
+    remarks: 'bent on arrival', totalQty: 4,
+    items: [{ name: 'Rim 26', size: '26 inch', unit: 'Pcs', qty: 4, reason: 'Damaged' }]
+  };
+
+  const WASTAGE = {
+    wastageId: 'WST-9', date: '07/09/2026', vendor: 'acme CYCLES',
+    remarks: 'paint run',
+    items: [{ name: 'Frame 20', size: '20 inch', unit: 'Pcs', qty: 2, reason: 'Rejected' }]
+  };
+
+  test('the issue receipt names the record, who took it and what for', () => {
+    const html = PrintTemplates.issueNote(ISSUE, NOTE_DEPS);
+    expect(html).toContain('ISS-12');
+    expect(html).toContain('Anil Kumar');
+    expect(html).toContain('LOT-PNT041');
+    expect(html).toContain('Primer');
+  });
+
+  test('the issue receipt has somewhere to sign', () => {
+    // It is a receipt. Somebody is taking goods off a shelf on it.
+    expect(PrintTemplates.issueNote(ISSUE, NOTE_DEPS)).toContain('Received By');
+  });
+
+  test('the issue receipt drops the money column when nothing is valued', () => {
+    expect(PrintTemplates.issueNote(ISSUE, NOTE_DEPS)).not.toContain('Total Value');
+
+    const valued = { ...ISSUE, totalValue: 480,
+      items: [{ ...ISSUE.items[0], rate: 40, value: 480 }] };
+    expect(PrintTemplates.issueNote(valued, NOTE_DEPS)).toContain('Total Value');
+  });
+
+  test('an issue with no items says so rather than printing an empty table', () => {
+    expect(PrintTemplates.issueNote({ ...ISSUE, items: [] }, NOTE_DEPS))
+      .toContain('No items recorded');
+  });
+
+  test('the return note names the vendor and the reason', () => {
+    const html = PrintTemplates.returnNote(RETURN, NOTE_DEPS);
+    expect(html).toContain('RET-3');
+    expect(html).toContain('Acme Cycles');
+    expect(html).toContain('Damaged');
+  });
+
+  test('the wastage entry carries its id, date and reason', () => {
+    const html = PrintTemplates.wastageNote(WASTAGE, NOTE_DEPS);
+    expect(html).toContain('WST-9');
+    expect(html).toContain('07/09/2026');
+    expect(html).toContain('Rejected');
+    expect(html).toContain('Acme Cycles');
+  });
+
+  test('all three escape what they print', () => {
+    const nasty = '<img src=x onerror=alert(1)>';
+    expect(PrintTemplates.issueNote({ ...ISSUE, items: [{ name: nasty, qty: 1 }] }, NOTE_DEPS))
+      .not.toContain('<img src=x');
+    expect(PrintTemplates.returnNote({ ...RETURN, items: [{ name: nasty, qty: 1 }] }, NOTE_DEPS))
+      .not.toContain('<img src=x');
+    expect(PrintTemplates.wastageNote({ ...WASTAGE, items: [{ name: nasty, qty: 1 }] }, NOTE_DEPS))
+      .not.toContain('<img src=x');
+  });
+
+  test('missing deps degrade rather than throw', () => {
+    expect(() => PrintTemplates.issueNote(ISSUE, {})).not.toThrow();
+    expect(() => PrintTemplates.returnNote(RETURN, {})).not.toThrow();
+    expect(() => PrintTemplates.wastageNote(WASTAGE, {})).not.toThrow();
+  });
+
+  describe('neither shell keeps a second copy', () => {
+    const read3 = f => require('fs').readFileSync(
+      require('path').join(__dirname, '..', f), 'utf8');
+
+    test('desktop delegates all three', () => {
+      expect(read3('issue.js')).toContain('PrintTemplates.issueNote(');
+      expect(read3('return.js')).toContain('PrintTemplates.returnNote(');
+      expect(read3('return.js')).toContain('PrintTemplates.wastageNote(');
+    });
+
+    test('mobile prints the notes, not only the log', () => {
+      // The gap this closes: the phone printed a LIST of the issue log
+      // where desktop printed the receipt a person signs.
+      const m = read3('mobile.js');
+      expect(m).toContain('PrintTemplates.issueNote(');
+      expect(m).toContain('PrintTemplates.returnNote(');
+      expect(m).toContain('PrintTemplates.wastageNote(');
+    });
+
+    test('mobile renders them through the shared bulk container', () => {
+      // Same container desktop uses, so one note is one page either way.
+      expect(read3('mobile.js')).toContain("'print-bulk-container'");
+      expect(read3('mobile.js')).toContain('print-bulk-body');
+    });
+
+    test('and the log report is still reachable beside them', () => {
+      // Both are real documents. The notes were added, the listing kept.
+      const m = read3('mobile.js');
+      expect(m).toContain('printAllNotes()');
+      expect(m).toContain('printReport()');
+    });
+  });
+});
+
+describe('the contractor statement', () => {
+  // Both shells build this one. The phone used to print the whole account
+  // with no opening row and no period line, so a contractor at the gate
+  // and the office were reading two different statements of one account.
+  const LEDGER_DEPS = {
+    escapeHtml: s => String(s == null ? '' : s).replace(/</g, '&lt;'),
+    formatCurrency: v => `₹${(Number(v) || 0).toFixed(2)}`
+  };
+
+  const ENTRIES = [
+    { date: '01/08/2026', dateRaw: '2026-08-01', type: 'Payable', ref: 'LOT-1',
+      description: 'Painting', amount: 1000, rawAmount: 1000, balance: 1000 },
+    { date: '05/08/2026', dateRaw: '2026-08-05', type: 'Payment', ref: 'PAY-1',
+      description: 'On account', amount: -400, rawAmount: 400, balance: 600 },
+    { date: '02/09/2026', dateRaw: '2026-09-02', type: 'Payable', ref: 'LOT-2',
+      description: 'Fitting', amount: 250, rawAmount: 250, balance: 850 }
+  ];
+
+  test('a payable shows in the payable column and a payment in the paid one', () => {
+    const html = PrintTemplates.contractorLedgerBody(ENTRIES, null, '', '', LEDGER_DEPS);
+    expect(html).toContain('₹1000.00');
+    expect(html).toContain('₹400.00');
+    expect(html).toContain('₹850.00');
+  });
+
+  test('the opening row carries the balance into the window', () => {
+    const html = PrintTemplates.contractorLedgerBody(
+      ENTRIES.slice(2), 600, '2026-09-01', '', LEDGER_DEPS);
+    expect(html).toContain('Opening');
+    expect(html).toContain('Balance carried into the selected dates');
+    expect(html).toContain('₹600.00');
+  });
+
+  test('no window means no opening row -- nothing is being excluded', () => {
+    const html = PrintTemplates.contractorLedgerBody(ENTRIES, null, '', '', LEDGER_DEPS);
+    expect(html).not.toContain('Opening');
+  });
+
+  test('an empty window says so, not "no transactions yet"', () => {
+    // The difference matters: one means the account is new, the other
+    // means you are looking at the wrong month.
+    expect(PrintTemplates.contractorLedgerBody([], null, '2026-10-01', '', LEDGER_DEPS))
+      .toContain('No transactions in the selected dates');
+    expect(PrintTemplates.contractorLedgerBody([], null, '', '', LEDGER_DEPS))
+      .toContain('No transactions yet for this contractor');
+  });
+
+  test('the period line names both ends, open or closed', () => {
+    expect(PrintTemplates.ledgerPeriodLine('01/08/2026', '31/08/2026'))
+      .toBe('Period: 01/08/2026 to 31/08/2026');
+    expect(PrintTemplates.ledgerPeriodLine('01/08/2026', ''))
+      .toBe('Period: 01/08/2026 to today');
+    expect(PrintTemplates.ledgerPeriodLine('', '31/08/2026'))
+      .toBe('Period: start to 31/08/2026');
+    expect(PrintTemplates.ledgerPeriodLine('', '')).toBe('');
+  });
+
+  test('the carried-in balance is the last one before the window', () => {
+    const asValue = e => e.dateRaw;
+    expect(PrintTemplates.ledgerOpeningBalance(ENTRIES, '2026-09-01', asValue)).toBe(600);
+    // Nothing before the window: the account starts at zero, not at null.
+    expect(PrintTemplates.ledgerOpeningBalance(ENTRIES, '2026-01-01', asValue)).toBe(0);
+    // No window at all: no opening row belongs on the page.
+    expect(PrintTemplates.ledgerOpeningBalance(ENTRIES, '', asValue)).toBeNull();
+  });
+
+  test('it escapes what it prints', () => {
+    const html = PrintTemplates.contractorLedgerBody(
+      [{ ...ENTRIES[0], description: '<img src=x onerror=alert(1)>' }],
+      null, '', '', LEDGER_DEPS);
+    expect(html).not.toContain('<img src=x');
+  });
+
+  describe('both shells reach it', () => {
+    const read4 = f => require('fs').readFileSync(
+      require('path').join(__dirname, '..', f), 'utf8');
+
+    test('desktop delegates the body, the period line and the opening balance', () => {
+      const d = read4('contractor.js');
+      expect(d).toContain('PrintTemplates.contractorLedgerBody(');
+      expect(d).toContain('PrintTemplates.ledgerPeriodLine(');
+      expect(d).toContain('PrintTemplates.ledgerOpeningBalance(');
+    });
+
+    test('mobile does too, and has a window to print', () => {
+      const m = read4('mobile.js');
+      expect(m).toContain('PrintTemplates.contractorLedgerBody(');
+      expect(m).toContain('PrintTemplates.ledgerPeriodLine(');
+      expect(m).toContain('PrintTemplates.ledgerOpeningBalance(');
+      expect(m).toContain('contractor-ledger-from');
+      expect(m).toContain('contractor-ledger-to');
+    });
+
+    test('one answer to "is this row in the period"', () => {
+      // inDateRange moved into api.js, which both shells load, so a
+      // statement cannot disagree with itself about which rows count.
+      expect(read4('api.js')).toContain('function inDateRange(');
+      expect(read4('mobile.js')).toContain('inDateRange(');
+    });
+  });
+});

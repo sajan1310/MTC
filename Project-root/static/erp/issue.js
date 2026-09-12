@@ -236,104 +236,11 @@ App.Issue = {
   },
 
   // Builds a fully self-contained "Stock Issue Receipt" page for bulk printing.
+  // The receipt itself lives in print-templates.js, which MApp loads too,
+  // so a receipt printed from the floor is the same paper as one printed
+  // from this desk.
   buildIssuePrintPageHtml(iss) {
-    const BRAND = '#212529';
-    const hasValue = toNumber(iss.totalValue) > 0;
-    const colCount = hasValue ? 5 : 4;
-
-    const rowsHtml = (iss.items || []).map((item, idx) => {
-      const rowBg = idx % 2 === 0 ? '#ffffff' : '#f5f5f5';
-      const amountCell = hasValue
-        ? `<td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;font-weight:600;">${toNumber(item.rate) ? '&#8377;' + toNumber(item.value).toFixed(2) : '-'}</td>`
-        : '';
-      return `
-      <tr style="background-color:${rowBg};-webkit-print-color-adjust:exact;print-color-adjust:exact;page-break-inside:avoid;break-inside:avoid;">
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;font-weight:600;">${escapeHtml(item.name || '')}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;">${escapeHtml(item.size || '-')}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;font-weight:600;">${escapeHtml(String(toNumber(item.qty)))} ${escapeHtml(item.unit || 'Pcs')}</td>
-        ${amountCell}
-      </tr>`;
-    }).join('');
-    const rows = rowsHtml || `<tr><td colspan="${colCount}" style="padding:10px;text-align:center;color:#999;">No items recorded for this issue.</td></tr>`;
-    const amountHeader = hasValue ? '<th style="padding:6px;border:1px solid #bbb;text-align:right;width:20%;">Amount</th>' : '';
-    const totalValueHtml = hasValue ? `
-      <div style="text-align:right;margin-top:4px;">
-        <span style="font-size:11px;font-weight:600;color:#1a1a1a;">Total Value:&nbsp;&nbsp;</span>
-        <span style="font-size:13px;font-weight:800;color:${BRAND};">&#8377;${toNumber(iss.totalValue).toFixed(2)}</span>
-      </div>` : '';
-
-    const remarksHtml = iss.remarks ? `
-    <div style="margin-top:10px;padding-top:8px;border-top:1px solid #ccc;">
-      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Remarks</span>
-      <div style="font-size:12px;color:#1a1a1a;margin-top:2px;white-space:pre-wrap;">${escapeHtml(iss.remarks)}</div>
-    </div>` : '';
-
-    return `
-    <div style="background:#fff;color:#1a1a1a;font-family:'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.5;padding:14px 20px 12px 20px;margin:0;box-sizing:border-box;width:100%;border-top:5px solid ${BRAND};border-bottom:3px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-      <div style="text-align:center;padding:4px 0 8px 0;">
-        ${App.Print.brandHeaderHtml(BRAND)}
-        <div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:0.3px;">
-          6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
-        </div>
-        <div style="font-size:11px;color:${BRAND};font-weight:700;margin-top:4px;letter-spacing:1px;text-transform:uppercase;">
-          Stock Issue Receipt
-        </div>
-      </div>
-      <div style="height:2px;background:${BRAND};margin:0 0 12px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
-
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-        <div style="flex:1;text-align:left;">
-          <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Issue #</span>
-          <div style="font-size:15px;font-weight:700;color:${BRAND};">${escapeHtml(iss.issueId || '')}</div>
-        </div>
-        <div style="flex:1;text-align:right;">
-          <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Date</span>
-          <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${escapeHtml(iss.date || '')}</div>
-        </div>
-      </div>
-
-      <div style="height:1px;background:#bbb;margin-bottom:14px;"></div>
-
-      <div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #ccc;">
-        <div style="display:flex;gap:16px;">
-          <div style="flex:1;">
-            <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Issued To / Purpose</span>
-            <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${escapeHtml(App.Utils.formatNameCase(iss.issuedTo))}</div>
-          </div>
-          <div style="flex:1;">
-            <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Reference</span>
-            <div style="font-size:13px;font-weight:600;color:#1a1a1a;margin-top:1px;">${escapeHtml(iss.reference || '-')}</div>
-          </div>
-        </div>
-      </div>
-
-      <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12px;">
-        <thead style="background-color:${BRAND};color:#fff;text-align:center;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-          <tr>
-            <th style="padding:6px;border:1px solid #bbb;text-align:center;width:8%;">#</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:${hasValue ? '37' : '47'}%;">Item Name</th>
-            <th style="padding:6px;border:1px solid #bbb;width:20%;">Size</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:center;width:${hasValue ? '15' : '25'}%;">Qty</th>
-            ${amountHeader}
-          </tr>
-        </thead>
-        <tbody style="color:#1a1a1a;text-align:center;">${rows}</tbody>
-      </table>
-
-      <div style="text-align:right;margin-bottom:16px;padding:8px 0 0 0;border-top:2px solid ${BRAND};page-break-inside:avoid;break-inside:avoid;">
-        <span style="font-size:13px;font-weight:600;color:#1a1a1a;">Total Qty:&nbsp;&nbsp;</span>
-        <span style="font-size:15px;font-weight:800;color:${BRAND};">${escapeHtml(String(iss.totalQty ?? 0))}</span>
-      </div>
-      ${totalValueHtml}
-      ${remarksHtml}
-
-      <div style="display:flex;justify-content:flex-end;page-break-inside:avoid;break-inside:avoid;margin-top:16px;">
-        <div style="width:180px;text-align:center;padding-top:5px;border-top:2px solid ${BRAND};">
-          <span style="font-size:10px;color:#666;letter-spacing:0.5px;font-style:italic;">Received By / Signature</span>
-        </div>
-      </div>
-    </div>`;
+    return PrintTemplates.issueNote(iss, App.Print.templateDeps());
   },
 
   openIssueModal(prefillReference) {

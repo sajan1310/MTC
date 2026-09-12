@@ -51,6 +51,9 @@ describe('MApp.ContractorDetail', () => {
         <div id="mapp-picker-list"></div>
       </div>`;
     loadAsGlobal('api.js', 'Api');
+    // The printed statement -- opening row, period line, ledger body --
+    // is built in print-templates.js, which mobile.html loads too.
+    loadAsGlobal('print-templates.js', 'PrintTemplates');
     loadAsGlobal('mobile.js', 'MApp');
     MApp.Sheet._stack = [];
     window.confirm = jest.fn(() => true);
@@ -244,6 +247,9 @@ describe('MApp.ContractorDetail print and multi-select', () => {
         <div id="mapp-picker-list"></div>
       </div>`;
     loadAsGlobal('api.js', 'Api');
+    // The printed statement -- opening row, period line, ledger body --
+    // is built in print-templates.js, which mobile.html loads too.
+    loadAsGlobal('print-templates.js', 'PrintTemplates');
     loadAsGlobal('mobile.js', 'MApp');
     MApp.Sheet._stack = [];
     window.print = jest.fn();

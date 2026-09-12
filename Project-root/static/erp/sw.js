@@ -303,7 +303,12 @@
 // address, no GSTIN and no HSN on any line. Desktop's output is byte-for-
 // byte what it was -- the builders were moved, not rewritten -- but the
 // bundles that call them changed, so the cache moves with them.
-const CACHE_NAME = 'erp-shell-v64';
+// v65: the Stock Issue Receipt, the Goods Return Note, the wastage entry
+// and the contractor statement's body move into the shared
+// print-templates.js, and inDateRange moves into api.js so both shells
+// answer "is this row in the period" the same way. Desktop's output is
+// unchanged -- the builders were moved, not rewritten.
+const CACHE_NAME = 'erp-shell-v65';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

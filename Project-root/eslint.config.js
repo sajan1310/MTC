@@ -70,6 +70,7 @@ module.exports = [
         todayIso: 'writable',
         tomorrowIso: 'writable',
         dateToInputValue: 'writable',
+        inDateRange: 'writable',
         normalizeDateForInput: 'writable',
         loadScript: 'writable',
         safeModalShow: 'writable',
