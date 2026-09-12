@@ -7899,7 +7899,9 @@ MApp.Directory = {
         // thing they could not do. The three quick-adds stay, but the
         // detail sheet offers them too, alongside what they produced.
         ? [['account', 'Account'], ['edit', 'Edit'], ['rate', '+ Rate'], ['charge', '+ Charge'], ['payment', '+ Payment']]
-        : [['edit', 'Edit']];
+        : (this.type === 'vendor' || this.type === 'client')
+          ? [['edit', 'Edit'], ['ledger', 'Ledger']]
+          : [['edit', 'Edit']];
       const actionsHtml = actions.map(([action, label]) =>
         `<button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-action="${action}" data-name="${MApp.Util.escapeHtml(e.name)}">${label}</button>`
       ).join('');
@@ -7924,11 +7926,52 @@ MApp.Directory = {
         else if (btn.dataset.action === 'rate') this.openRateSheet(record.name);
         else if (btn.dataset.action === 'charge') this.openExtraChargeSheet(record.name);
         else if (btn.dataset.action === 'payment') this.openPaymentSheet(record.name);
+        else if (btn.dataset.action === 'ledger') this.printLedger(record);
       });
     });
   },
 
   // ── Add/Edit (Phase 1) ──────────────────────────────────────────────
+  // ── The vendor and client statements ─────────────────────────────────
+  // Desktop opens a detail modal and prints from it. There is no such
+  // screen here, so these print the self-contained page straight from the
+  // list -- the same document, reached in one tap instead of two.
+  //
+  // The collections are fetched on demand: a vendor ledger merges POs,
+  // bills, returns and issues, and loading four datasets on every visit
+  // to a directory nobody is printing from is a poor trade on a phone.
+  async printLedger(record) {
+    MApp.Toast.show('Building the ledger…');
+    try {
+      const [pos, bills, returns, issues, dispatches, orders] = await Promise.all([
+        MApp.Api.call('getPOData').catch(() => null),
+        MApp.Api.call('getBillData').catch(() => null),
+        MApp.Api.call('getReturnData').catch(() => null),
+        MApp.Api.call('getIssueData').catch(() => null),
+        MApp.Api.call('getDispatchData').catch(() => null),
+        MApp.Api.call('getClientOrdersData').catch(() => null)
+      ]);
+      const ok = r => (r && r.success && r.data) || [];
+      const src = {
+        pos: ok(pos), bills: ok(bills), returns: ok(returns),
+        issues: ok(issues), dispatches: ok(dispatches), orders: ok(orders)
+      };
+      const deps = MApp.Print.noteDeps();
+      const isClient = this.type === 'client';
+
+      MApp.Print.bulk([record],
+        r => (isClient
+          ? PrintTemplates.clientLedgerSheet(r, src, deps)
+          : PrintTemplates.vendorLedgerSheet(r, src, deps)),
+        {
+          filename: `${isClient ? 'Client' : 'Vendor'}_Ledger_${String(record.name || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+          title: isClient ? 'Client Ledger' : 'Vendor Ledger'
+        });
+    } catch (err) {
+      MApp.Toast.error('Could not build the ledger: ' + (err.message || ''));
+    }
+  },
+
   // The MApp.Form spec for whichever directory type is showing. `type`
   // per field is what finally gives the contact field a phone keypad:
   // it was type="text" on a card advertised as tap-to-call, while 24
@@ -9230,6 +9273,22 @@ MApp.BOM = {
     this.render();
   },
 
+  // The BOM Cost Sheet desktop prints, from the same builder: the
+  // components grouped as the recipe groups them, the extra costs, and
+  // what the product costs to make. The recipes were on screen here and
+  // there was no way to put one on paper.
+  printCostSheet(index) {
+    const bom = (this.filtered || [])[index];
+    if (!bom) return;
+    MApp.Print.bulk([bom], b => PrintTemplates.bomCostSheet(b, {
+      ...MApp.Print.noteDeps(),
+      formatQty: v => MApp.Util.formatQty(v)
+    }), {
+      filename: `BOM_${String(bom.productId || bom.productName || index + 1).replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+      title: 'BOM Cost Sheet'
+    });
+  },
+
   render() {
     const listEl = document.getElementById('bom-list-list');
     if (!listEl) return;
@@ -9261,7 +9320,10 @@ MApp.BOM = {
             ${reorderable ? MApp.Reorder.controlsHtml('bom-move', this.products.indexOf(p), this.products.length) : ''}
           </div>
         </div>
-        <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-bom-index="${i}">Edit</button></div>
+        <div class="mb-mt-2" style="display:flex;gap:var(--mb-sp-4);">
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-bom-index="${i}">Edit</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-bom-print="${i}">Cost Sheet</button>
+        </div>
       </div>`).join('') + MApp.Paging.moreHtml(page);
 
     listEl.querySelectorAll('[data-bom-index]').forEach(btn => {
@@ -9269,6 +9331,10 @@ MApp.BOM = {
         const product = this.filtered[Number(btn.dataset.bomIndex)];
         if (product) this.openForm(product);
       });
+    });
+
+    listEl.querySelectorAll('[data-bom-print]').forEach(btn => {
+      btn.addEventListener('click', () => this.printCostSheet(Number(btn.dataset.bomPrint)));
     });
 
     listEl.querySelectorAll('[data-bom-move]').forEach(btn => {

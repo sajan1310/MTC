@@ -1404,5 +1404,564 @@ const PrintTemplates = {
       });
     });
     return map;
+  },
+  // ── BOM Cost Sheet / Recipe Card ─────────────────────────────────────
+  // A self-contained page per recipe: the components grouped as the recipe
+  // groups them, the extra costs, and what the product costs to make.
+  // Desktop prints one or many; the phone had the recipes on screen and no
+  // way to put one on paper.
+  bomCostSheet(bom, deps) {
+    const { esc, num, money, brand: _brand } = this._deps(deps);
+    const qty = (deps && deps.formatQty) || (v => String(v == null ? '' : v));
+    const brandHeader = (deps && deps.brandHeaderHtml) || (() => '');
+    const BRAND = '#6610f2';
+    const reportDate = new Date().toLocaleDateString('en-GB');
+
+    const groupOrder = [];
+    const groupMap = {};
+    (bom.components || []).forEach(c => {
+      const groupName = c.processGroup || 'General';
+      if (!groupMap[groupName]) {
+        groupMap[groupName] = [];
+        groupOrder.push(groupName);
+      }
+      groupMap[groupName].push(c);
+    });
+
+    let groupsHtml = '';
+    groupOrder.forEach(groupName => {
+      let rowsHtml = '';
+      groupMap[groupName].forEach(c => {
+        rowsHtml += `<tr>
+      <td style="padding:6px;border:1px solid #e5e5e5;font-weight:600;">${esc(c.itemName)}</td>
+      <td style="padding:6px;border:1px solid #e5e5e5;">${esc(c.size || '-')}</td>
+      <td style="padding:6px;border:1px solid #e5e5e5;color:#555;">${esc(c.narration || '-')}</td>
+      <td style="padding:6px;border:1px solid #e5e5e5;">${esc(c.vendor || 'Custom')}</td>
+      <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;">${Number(num(c.qtyPerProduct).toFixed(4))}</td>
+      <td style="padding:6px;border:1px solid #e5e5e5;text-align:right;">${money(c.rate)}</td>
+      <td style="padding:6px;border:1px solid #e5e5e5;text-align:right;font-weight:700;">${money(c.lineCost)}</td>
+    </tr>`;
+      });
+
+      groupsHtml += `
+  <div style="margin-bottom:14px;page-break-inside:avoid;break-inside:avoid;">
+    ${groupOrder.length > 1 ? `<h6 style="color:${BRAND};font-size:11px;font-weight:700;margin:0 0 8px 0;text-transform:uppercase;letter-spacing:0.5px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">${esc(groupName)}</h6>` : ''}
+    <table style="width:100%;border-collapse:collapse;font-size:11px;">
+      <thead>
+        <tr style="background-color:${BRAND};color:#fff;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:22%;">Item Name</th>
+          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:10%;">Size</th>
+          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:20%;">Narration</th>
+          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:16%;">Vendor</th>
+          <th style="padding:6px;border:1px solid #bbb;text-align:center;width:10%;">Qty/Unit</th>
+          <th style="padding:6px;border:1px solid #bbb;text-align:right;width:11%;">Rate</th>
+          <th style="padding:6px;border:1px solid #bbb;text-align:right;width:11%;">Line Cost</th>
+        </tr>
+      </thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+  </div>`;
+    });
+
+    let costsRows = '';
+    (bom.additionalCosts || []).forEach(cost => {
+      costsRows += `<tr>
+    <td style="padding:6px;border:1px solid #e5e5e5;">${esc(cost.description)}</td>
+    <td style="padding:6px;border:1px solid #e5e5e5;text-align:right;font-weight:700;">${money(cost.rate)}</td>
+  </tr>`;
+    });
+    const costsSectionHtml = (bom.additionalCosts && bom.additionalCosts.length > 0) ? `
+  <div style="margin-bottom:14px;page-break-inside:avoid;break-inside:avoid;">
+    <h6 style="color:${BRAND};font-size:11px;font-weight:700;margin:0 0 8px 0;text-transform:uppercase;letter-spacing:0.5px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Additional / Dynamic Costs</h6>
+    <table style="width:100%;border-collapse:collapse;font-size:11px;">
+      <thead>
+        <tr style="background-color:${BRAND};color:#fff;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:75%;">Description</th>
+          <th style="padding:6px;border:1px solid #bbb;text-align:right;width:25%;">Rate</th>
+        </tr>
+      </thead>
+      <tbody>${costsRows}</tbody>
+    </table>
+  </div>` : '';
+
+    const remarksHtml = bom.remarks ? `
+  <div style="margin-top:10px;padding-top:8px;border-top:1px solid #ccc;">
+    <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Remarks</span>
+    <div style="font-size:12px;color:#1a1a1a;margin-top:2px;white-space:pre-wrap;">${esc(bom.remarks)}</div>
+  </div>` : '';
+
+    return `
+<div style="background:#fff;color:#1a1a1a;font-family:'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.5;padding:14px 20px 12px 20px;margin:0;box-sizing:border-box;width:100%;border-top:5px solid ${BRAND};border-bottom:3px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+  <div style="text-align:center;padding:4px 0 8px 0;">
+    ${brandHeader(BRAND)}
+    <div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:0.3px;">
+      6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
+    </div>
+    <div style="font-size:11px;color:${BRAND};font-weight:700;margin-top:4px;letter-spacing:1px;text-transform:uppercase;">
+      Bill of Materials &mdash; Cost Sheet / Recipe Card
+    </div>
+  </div>
+  <div style="height:2px;background:${BRAND};margin:0 0 12px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <div style="text-align:left;">
+      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Product ID</span>
+      <div style="font-size:15px;font-weight:700;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${esc(bom.productId)}</div>
+    </div>
+    <div style="flex:1;text-align:center;">
+      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Product Name</span>
+      <div style="font-size:16px;font-weight:700;color:#111;">${esc(bom.productName)}</div>
+    </div>
+    <div style="text-align:right;">
+      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Report Date</span>
+      <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${reportDate}</div>
+    </div>
+  </div>
+
+  <div style="height:1px;background:#bbb;margin-bottom:14px;"></div>
+
+  ${groupsHtml}
+  ${costsSectionHtml}
+
+  <div style="text-align:right;margin-bottom:16px;padding:8px 0 0 0;border-top:2px solid ${BRAND};page-break-inside:avoid;break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+    <span style="font-size:11px;font-weight:600;color:#555;">Material Cost:&nbsp;&nbsp;${money(bom.totalCost)} &nbsp;&nbsp;|&nbsp;&nbsp; Additional Cost:&nbsp;&nbsp;${money(bom.totalAdditionalCost)}</span>
+    <br>
+    <span style="font-size:13px;font-weight:600;color:#1a1a1a;">Total Estimated Cost (per unit):&nbsp;&nbsp;</span>
+    <span style="font-size:15px;font-weight:800;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+      ${money(bom.grandTotal ?? bom.totalCost)}
+    </span>
+    ${(bom.colorCosts || []).length > 1 ? `
+    <div style="font-size:10px;color:#777;margin-top:2px;">
+      Color rows are alternatives, not additive &mdash; cost above is for <strong>${esc(bom.colorCosts[0].color)}</strong> only.
+      By color: ${bom.colorCosts.map(c => `${esc(c.color)} ${money(c.totalCost + bom.totalAdditionalCost)}`).join(' &nbsp;|&nbsp; ')}
+    </div>` : ''}
+  </div>
+  ${remarksHtml}
+</div>`;
+  },
+  // ── Vendor ledger ────────────────────────────────────────────────────
+  // What came in from this vendor and what went back: POs, bills, returns
+  // and issues merged into one dated run with a running quantity, plus
+  // what is still outstanding per item. Assembled from four collections,
+  // which is why the phone -- where all four were reachable -- still had
+  // no vendor ledger.
+  vendorLedger(vendorName, src, deps) {
+    const { esc, num, sameText } = this._deps(deps);
+    src = src || {};
+    const vendorPOs = src.pos.filter(po => sameText(po.vendor, vendorName));
+    const vendorBills = src.bills.filter(b => sameText(b.vendor, vendorName));
+    const vendorReturns = (src.returns || []).filter(r => sameText(r.vendor, vendorName));
+    const vendorIssues = (src.issues || []).filter(iss => sameText(iss.vendor, vendorName));
+
+    let ledger = [];
+    vendorPOs.forEach(po => {
+      ledger.push({
+        dateObj: parseRecordDate(po.poDateRaw, po.poDate),
+        dateStr: po.poDate,
+        type: 'PO Issued',
+        ref: `PO-${po.poNumber}`,
+        items: po.items.map(i => `${i.name} (${String(i.qty)})`).join(', '),
+        orderQty: po.items.reduce((sum, i) => sum + num(i.qty), 0),
+        incomingQty: 0,
+        outgoingQty: 0,
+        value: po.grandTotal,
+        badgeClass: 'bg-primary'
+      });
+    });
+
+    vendorBills.forEach(b => {
+      const itemsStr = b.items.length
+        ? (typeof b.items[0] === 'object'
+          ? b.items.map(i => `${i.name} (${String(i.qty)})`).join(', ')
+          : b.items.map(s => String(s)).join(', '))
+        : '';
+      const billQty = typeof b.items[0] === 'object'
+        ? b.items.reduce((sum, i) => sum + num(i.qty), 0)
+        : 0;
+      ledger.push({
+        dateObj: parseRecordDate(b.billDateRaw, b.billDate),
+        dateStr: b.billDate,
+        type: 'Bill Received',
+        ref: b.billNumber,
+        items: itemsStr,
+        orderQty: 0,
+        incomingQty: billQty,
+        outgoingQty: 0,
+        value: b.totalAmount,
+        badgeClass: 'bg-success'
+      });
+    });
+
+    vendorReturns.forEach(r => {
+      const itemsStr = (r.items || []).map(i => `${i.name} (${String(i.qty)})`).join(', ');
+      const returnQty = (r.items || []).reduce((sum, i) => sum + num(i.qty), 0);
+      ledger.push({
+        dateObj: parseRecordDate(r.returnDateRaw, r.returnDate),
+        dateStr: r.returnDate,
+        type: 'Goods Returned',
+        ref: r.returnNumber,
+        items: itemsStr,
+        orderQty: 0,
+        incomingQty: 0,
+        outgoingQty: returnQty,
+        value: r.totalAmount,
+        badgeClass: 'bg-danger'
+      });
+    });
+
+    vendorIssues.forEach(iss => {
+      const itemsStr = (iss.items || []).map(i => `${i.name} (${String(i.qty)})`).join(', ');
+      ledger.push({
+        dateObj: parseRecordDate(iss.dateRaw, iss.date),
+        dateStr: iss.date,
+        type: 'Stock Issued',
+        ref: iss.issueId,
+        items: itemsStr,
+        orderQty: 0,
+        incomingQty: 0,
+        outgoingQty: num(iss.totalQty),
+        value: num(iss.totalValue) || 0,
+        badgeClass: 'bg-warning text-dark'
+      });
+    });
+
+    // Running qty balance: net units taken from this vendor to date.
+    //
+    // Accumulated over a CHRONOLOGICAL copy while the display order stays
+    // newest-first below -- the entries are the same objects, so writing
+    // .balance here lands on the rows the table renders. Same shape as the
+    // Item Ledger, the Pool Ledger and the Contractor Account Ledger, all of
+    // which accumulate oldest-first and display newest-first.
+    //
+    // A PO moves nothing -- it is an intent to buy, and the goods arrive as
+    // a Bill that has its own row -- so it leaves the balance untouched and
+    // reports null rather than the carried-forward figure. Counting a PO
+    // here would double every order: once when placed, once when received.
+    // This mirrors countsTowardStock in get_item_ledger_data.
+    let runningQty = 0;
+    [...ledger].sort((a, b) => a.dateObj - b.dateObj).forEach(entry => {
+      if (entry.type === 'PO Issued') {
+        entry.balance = null;
+        return;
+      }
+      runningQty += num(entry.incomingQty) - num(entry.outgoingQty);
+      entry.balance = runningQty;
+    });
+
+    ledger.sort((a, b) => b.dateObj - a.dateObj);
+
+    let itemMap = {};
+
+    vendorPOs.forEach(po => {
+      po.items.forEach(i => {
+        const key = `${i.name}|${i.size || ''}`;
+        if (!itemMap[key]) itemMap[key] = { name: i.name, size: i.size, ordered: 0, received: 0 };
+        itemMap[key].ordered += (Number(i.qty) || 0);
+      });
+    });
+
+    vendorBills.forEach(b => {
+      b.items.forEach(i => {
+        const name = typeof i === 'object' ? i.name : String(i).split(' [')[0];
+        const size = typeof i === 'object' ? (i.size || '') : '';
+        const qty = typeof i === 'object' ? (Number(i.qty) || 0) : 0;
+        const key = `${name}|${size}`;
+        if (itemMap[key]) {
+          itemMap[key].received += qty;
+        }
+      });
+    });
+
+    const pendingList = Object.values(itemMap)
+      .map(item => ({ ...item, pending: item.ordered - item.received }))
+      .filter(item => item.pending !== 0);
+
+    return { ledger, pendingList };
+  },
+  // ── Vendor Profile & Transaction Ledger ──────────────────────────────
+  // The whole page, self-contained, so a shell with no vendor-detail
+  // screen can still print the document. Desktop reached this only from
+  // bulk print; the phone reaches it from the vendor list.
+  vendorLedgerSheet(vendor, src, deps) {
+    const { esc, num, money, nameCase } = this._deps(deps);
+    const brandHeader = (deps && deps.brandHeaderHtml) || (() => '');
+    const BRAND = '#D35400';
+    const { ledger, pendingList } = this.vendorLedger(vendor.name, src, deps);
+
+    let ledgerHtml = '';
+    ledger.forEach(entry => {
+      ledgerHtml += `<tr>
+        <td style="padding:6px;border:1px solid #e5e5e5;">${esc(entry.dateStr)}</td>
+        <td style="padding:6px;border:1px solid #e5e5e5;">${esc(entry.type)}</td>
+        <td style="padding:6px;border:1px solid #e5e5e5;font-weight:700;">${esc(entry.ref)}</td>
+        <td style="padding:6px;border:1px solid #e5e5e5;color:#555;">${esc(entry.items)}</td>
+        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;font-weight:700;">${entry.orderQty || '-'}</td>
+        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;font-weight:700;">${entry.incomingQty || '-'}</td>
+        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;font-weight:700;">-</td>
+        <td style="padding:6px;border:1px solid #e5e5e5;text-align:right;font-weight:700;">${money(entry.value)}</td>
+      </tr>`;
+    });
+    const ledgerRows = ledgerHtml || '<tr><td colspan="8" style="padding:10px;text-align:center;color:#999;">No transaction history found.</td></tr>';
+
+    let pendingHtml = '';
+    pendingList.forEach(item => {
+      const isOver = item.pending < 0;
+      pendingHtml += `<tr>
+        <td style="padding:6px;border:1px solid #e5e5e5;font-weight:700;color:#0d6efd;">${esc(item.name)}</td>
+        <td style="padding:6px;border:1px solid #e5e5e5;">${esc(item.size || '-')}</td>
+        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;">${item.ordered}</td>
+        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;">${item.received}</td>
+        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;font-weight:700;color:${isOver ? '#198754' : '#dc3545'};">
+          ${isOver ? '+' : ''}${Math.abs(item.pending)}${isOver ? ' (Over-Delivered)' : ''}
+        </td>
+      </tr>`;
+    });
+    const pendingRows = pendingHtml || '<tr><td colspan="5" style="padding:10px;text-align:center;color:#198754;font-weight:700;">No pending orders. All caught up!</td></tr>';
+
+    return `
+    <div style="background:#fff;color:#1a1a1a;font-family:'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.5;padding:14px 20px 12px 20px;margin:0;box-sizing:border-box;width:100%;border-top:5px solid ${BRAND};border-bottom:3px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+      <div style="text-align:center;padding:4px 0 8px 0;">
+        ${brandHeader(BRAND)}
+        <div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:0.3px;">
+          6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
+        </div>
+        <div style="font-size:11px;color:${BRAND};font-weight:700;margin-top:4px;letter-spacing:1px;text-transform:uppercase;">
+          Vendor Profile &amp; Transaction Ledger Report
+        </div>
+      </div>
+      <div style="height:2px;background:${BRAND};margin:0 0 12px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+
+      <div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #ccc;page-break-inside:avoid;break-inside:avoid;">
+        <div style="display:flex;gap:16px;">
+          <div style="flex:1;">
+            <div style="margin-bottom:6px;">
+              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Vendor Name</span>
+              <div style="font-weight:700;font-size:14px;color:#1a1a1a;margin-top:1px;">${esc(nameCase(vendor.name))}</div>
+            </div>
+            <div>
+              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">GSTIN</span>
+              <div style="font-size:11px;color:#333;margin-top:1px;font-weight:600;">${esc(vendor.gstin || '-')}</div>
+            </div>
+          </div>
+          <div style="flex:1;">
+            <div style="margin-bottom:6px;">
+              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Contact Info</span>
+              <div style="font-size:11px;color:#333;margin-top:1px;">${esc(vendor.contact || '-')}</div>
+            </div>
+            <div>
+              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Address</span>
+              <div style="font-size:11px;color:#333;margin-top:1px;">${esc(vendor.address || '-')}</div>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:8px;">
+          <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Remarks</span>
+          <div style="font-size:11px;color:#444;margin-top:1px;font-style:italic;">${esc(vendor.remarks || 'No remarks')}</div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:20px;">
+        <h6 style="color:${BRAND};font-size:11px;font-weight:700;margin:0 0 8px 0;text-transform:uppercase;letter-spacing:0.5px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Ledger Transaction History</h6>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+          <thead>
+            <tr style="background-color:${BRAND};color:#fff;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+              <th style="padding:6px;border:1px solid #bbb;text-align:left;width:12%;">Date</th>
+              <th style="padding:6px;border:1px solid #bbb;text-align:left;width:15%;">Doc Type</th>
+              <th style="padding:6px;border:1px solid #bbb;text-align:left;width:15%;">Reference #</th>
+              <th style="padding:6px;border:1px solid #bbb;text-align:left;width:43%;">Items Summary</th>
+              <th style="padding:6px;border:1px solid #bbb;text-align:right;width:15%;">Total Value</th>
+            </tr>
+          </thead>
+          <tbody>${ledgerRows}</tbody>
+        </table>
+      </div>
+
+      <div style="margin-bottom:20px;page-break-inside:avoid;break-inside:avoid;">
+        <h6 style="color:${BRAND};font-size:11px;font-weight:700;margin:0 0 8px 0;text-transform:uppercase;letter-spacing:0.5px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Pending Quantities Summary</h6>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+          <thead>
+            <tr style="background-color:${BRAND};color:#fff;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+              <th style="padding:6px;border:1px solid #bbb;text-align:left;width:45%;">Item Name</th>
+              <th style="padding:6px;border:1px solid #bbb;text-align:left;width:15%;">Size</th>
+              <th style="padding:6px;border:1px solid #bbb;text-align:center;width:13%;">Total Ordered</th>
+              <th style="padding:6px;border:1px solid #bbb;text-align:center;width:13%;">Total Received</th>
+              <th style="padding:6px;border:1px solid #bbb;text-align:center;width:14%;">Pending Qty</th>
+            </tr>
+          </thead>
+          <tbody>${pendingRows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  },
+  // ── Client ledger ────────────────────────────────────────────────────
+  // Three sections: every PI/Estimate, what is still owed on the confirmed
+  // ones, and everything dispatched. Assembled from orders and dispatches
+  // -- both reachable on the phone, neither joined up there before.
+  clientLedgerSections(clientName, src, deps) {
+    const { esc, sameText } = this._deps(deps);
+    const qty = (deps && deps.formatQty) || (v => String(v == null ? '' : v));
+    const piStatus = (deps && deps.piDisplayStatus)
+      || (o => ({ label: String((o && o.status) || '-'), badgeClass: 'bg-secondary' }));
+    src = src || {};
+
+    const orders = (src.orders || []).filter(o => sameText(o.clientName, clientName));
+    const dispatches = (src.dispatches || []).filter(d => sameText(d.clientName, clientName));
+
+    const ordersHtml = orders.map(o => {
+      const productsSummary = (o.lines || [])
+        .map(l => `${esc(l.productName)} <span class="text-muted">x${qty(l.qty)}</span>`)
+        .join('<br>');
+      const totalQty = (o.lines || []).reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
+      const { label, badgeClass } = piStatus(o);
+      return `<tr>
+          <td><span class="badge bg-dark shadow-sm">${esc(o.orderNumber)}</span></td>
+          <td>${esc(o.orderDate)}</td>
+          <td><small>${productsSummary || '-'}</small></td>
+          <td class="text-center"><span class="badge ${badgeClass} shadow-sm">${label}</span></td>
+          <td class="text-center fw-bold">${qty(totalQty)}</td>
+        </tr>`;
+    }).join('');
+
+    const pendingHtml = this.pendingOrderLines(clientName, src, deps).map(p => `<tr>
+          <td><span class="badge bg-dark shadow-sm">${esc(p.orderNumber)}</span></td>
+          <td>${esc(p.orderDate)}</td>
+          <td>${esc(p.productName)} <span class="text-muted">(${esc(p.productId)})</span></td>
+          <td class="text-center">${qty(p.orderedQty)}</td>
+          <td class="text-center">${qty(p.dispatchedQty)}</td>
+          <td class="text-center fw-bold text-danger">${qty(p.pendingQty)}</td>
+          <td class="text-center"><span class="badge ${p.badgeClass} shadow-sm">${p.label}</span></td>
+        </tr>`).join('');
+
+    const dispatchHtml = dispatches.map(d => {
+      const invoiceGr = [
+        d.invoiceNumber ? `Inv: ${esc(d.invoiceNumber)}` : '',
+        d.grNumber ? `GR: ${esc(d.grNumber)}` : ''
+      ].filter(Boolean).join('<br>');
+      return `<tr>
+          <td><span class="badge bg-success shadow-sm">${esc(d.dispatchNumber)}</span></td>
+          <td>${esc(d.dispatchDate)}</td>
+          <td>${esc(d.orderNumber) || '-'}</td>
+          <td>${esc(d.productName)} <span class="text-muted">(${esc(d.productId)})</span></td>
+          <td class="text-center fw-bold">${qty(d.qty)}</td>
+          <td>${esc(d.transport) || '-'}</td>
+          <td><small>${invoiceGr || '-'}</small></td>
+        </tr>`;
+    }).join('');
+
+    return {
+      ordersHtml: ordersHtml
+        || '<tr><td colspan="5" class="text-center text-muted p-4">No PI / Estimates found for this client.</td></tr>',
+      pendingHtml: pendingHtml
+        || '<tr><td colspan="7" class="text-center text-success fw-bold p-4">No pending orders. All caught up!</td></tr>',
+      dispatchHtml: dispatchHtml
+        || '<tr><td colspan="7" class="text-center text-muted p-4">No dispatch records found for this client.</td></tr>'
+    };
+  },
+
+  // One row per confirmed order line still awaiting dispatch. `clientName`
+  // null means every client, which is what the global Pending Orders view
+  // asks for.
+  pendingOrderLines(clientName, src, deps) {
+    const { sameText } = this._deps(deps);
+    const piStatus = (deps && deps.piDisplayStatus)
+      || (o => ({ label: String((o && o.status) || '-'), badgeClass: 'bg-secondary' }));
+    src = src || {};
+    const result = [];
+
+    (src.orders || []).forEach(o => {
+      if (o.status !== 'Order Confirmed') return;
+      if (clientName && !sameText(o.clientName, clientName)) return;
+
+      const { label, badgeClass } = piStatus(o);
+
+      (o.lines || []).forEach(line => {
+        const orderedQty = Number(line.qty) || 0;
+        const dispatchedQty = (src.dispatches || [])
+          .filter(d => d.orderNumber === o.orderNumber &&
+            String(d.productId).toLowerCase() === String(line.productId).toLowerCase())
+          .reduce((sum, d) => sum + (Number(d.qty) || 0), 0);
+        const pendingQty = orderedQty - dispatchedQty;
+        if (pendingQty <= 0.0001) return;
+
+        result.push({
+          orderNumber: o.orderNumber,
+          orderDate: o.orderDate,
+          clientName: o.clientName,
+          productId: line.productId,
+          productName: line.productName,
+          orderedQty,
+          dispatchedQty,
+          pendingQty,
+          label,
+          badgeClass
+        });
+      });
+    });
+
+    return result;
+  },
+
+  // The whole page, self-contained -- desktop prints this by copying its
+  // detail modal's three tables, which needs a modal. The phone has no
+  // such screen, so the page is built here and both shells get the same
+  // three sections under the same headings.
+  clientLedgerSheet(client, src, deps) {
+    const c = client || {};
+    const { esc, nameCase } = this._deps(deps);
+    const brandHeader = (deps && deps.brandHeaderHtml) || (() => '');
+    const BRAND = '#0d6efd';
+    const { ordersHtml, pendingHtml, dispatchHtml } =
+      this.clientLedgerSections(c.name, src, deps);
+
+    const th = 'padding:6px;border:1px solid #bbb;font-weight:700;text-align:left;';
+    const section = (title, headers, rows) => `
+      <div style="font-size:11px;font-weight:700;color:${BRAND};text-transform:uppercase;letter-spacing:1px;margin:14px 0 6px 0;">${title}</div>
+      <table class="table table-sm table-bordered" style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead style="background-color:${BRAND};color:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+          <tr>${headers.map(h => `<th style="${th}">${h}</th>`).join('')}</tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+
+    const field = (label, value) => `
+      <div style="flex:1;">
+        <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">${label}</span>
+        <div style="font-size:12px;font-weight:600;color:#1a1a1a;margin-top:1px;">${esc(value || '-')}</div>
+      </div>`;
+
+    return `
+    <div style="background:#fff;color:#1a1a1a;font-family:'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.5;padding:14px 20px 12px 20px;margin:0;box-sizing:border-box;width:100%;border-top:5px solid ${BRAND};border-bottom:3px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+      <div style="text-align:center;padding:4px 0 8px 0;">
+        ${brandHeader(BRAND)}
+        <div style="font-size:11px;color:${BRAND};font-weight:700;margin-top:4px;letter-spacing:1px;text-transform:uppercase;">
+          Client Profile &amp; Order Ledger
+        </div>
+      </div>
+      <div style="height:2px;background:${BRAND};margin:0 0 12px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
+        <div style="flex:1;">
+          <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Client</span>
+          <div style="font-weight:700;font-size:14px;color:#1a1a1a;margin-top:1px;">${esc(nameCase(c.name))}</div>
+        </div>
+        <div style="flex:1;text-align:right;">
+          <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Printed</span>
+          <div style="font-size:12px;font-weight:700;">${new Date().toLocaleDateString('en-GB')}</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:16px;margin-bottom:6px;padding-bottom:8px;border-bottom:1px solid #ccc;">
+        ${field('GSTIN', c.gstin)}
+        ${field('Contact', c.contact)}
+      </div>
+      <div style="display:flex;gap:16px;margin-bottom:4px;padding-bottom:8px;border-bottom:1px solid #ccc;">
+        ${field('Address', c.address)}
+        ${field('Remarks', c.remarks || 'No remarks')}
+      </div>
+
+      ${section('PI / Estimates', ['Order #', 'Date', 'Products', 'Status', 'Qty'], ordersHtml)}
+      ${section('Pending Dispatch', ['Order #', 'Date', 'Product', 'Ordered', 'Dispatched', 'Pending', 'Status'], pendingHtml)}
+      ${section('Dispatch History', ['Challan #', 'Date', 'Order #', 'Product', 'Qty', 'Transport', 'Invoice / GR'], dispatchHtml)}
+    </div>`;
   }
 };

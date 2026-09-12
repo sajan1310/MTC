@@ -313,7 +313,12 @@
 // the Bootstrap utilities the ledger templates use, scoped to
 // .print-container -- a no-op here, where Bootstrap already says the
 // same, and the only definition on a shell that does not load it.
-const CACHE_NAME = 'erp-shell-v66';
+// v67: the BOM cost sheet, the vendor ledger (both the assembler and the
+// self-contained page) and the client ledger's three sections move into
+// print-templates.js. Desktop's output is unchanged -- moved, not
+// rewritten -- except the client sheet, which desktop never had as a page
+// at all and still prints by copying its modal.
+const CACHE_NAME = 'erp-shell-v67';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

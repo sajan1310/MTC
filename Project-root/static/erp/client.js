@@ -777,49 +777,29 @@ App.Client = {
   },
 
   // ── Client Ledger (PI / Estimates + Dispatch History) ─────
+  // Shared with MApp so the phone can print this document without a
+  // detail screen to copy tables out of.
   calculateClientLedger(clientName) {
-    const orders = (App.State.globalOrders || []).filter(o => App.Utils.sameText(o.clientName, clientName));
-    const dispatches = (App.State.globalDispatch || []).filter(d => App.Utils.sameText(d.clientName, clientName));
-    return { orders, dispatches };
+    return {
+      orders: (App.State.globalOrders || []).filter(
+        o => App.Utils.sameText(o.clientName, clientName)),
+      dispatches: (App.State.globalDispatch || []).filter(
+        d => App.Utils.sameText(d.clientName, clientName))
+    };
   },
 
   // Returns one row per order line that still has qty pending dispatch
   // (status === 'Order Confirmed' and dispatched < ordered). Optionally
   // scoped to a single client.
   calculatePendingOrderLines(clientName = null) {
-    const result = [];
-
-    (App.State.globalOrders || []).forEach(o => {
-      if (o.status !== 'Order Confirmed') return;
-      if (clientName && !App.Utils.sameText(o.clientName, clientName)) return;
-
-      const { label, badgeClass } = this.calculatePIDisplayStatus(o);
-
-      (o.lines || []).forEach(line => {
-        const orderedQty = Number(line.qty) || 0;
-        const dispatchedQty = (App.State.globalDispatch || [])
-          .filter(d => d.orderNumber === o.orderNumber &&
-            String(d.productId).toLowerCase() === String(line.productId).toLowerCase())
-          .reduce((sum, d) => sum + (Number(d.qty) || 0), 0);
-        const pendingQty = orderedQty - dispatchedQty;
-        if (pendingQty <= 0.0001) return;
-
-        result.push({
-          orderNumber: o.orderNumber,
-          orderDate: o.orderDate,
-          clientName: o.clientName,
-          productId: line.productId,
-          productName: line.productName,
-          orderedQty,
-          dispatchedQty,
-          pendingQty,
-          label,
-          badgeClass
-        });
-      });
+    return PrintTemplates.pendingOrderLines(clientName, {
+      orders: App.State.globalOrders,
+      dispatches: App.State.globalDispatch
+    }, {
+      ...(App.Print ? App.Print.templateDeps() : {}),
+      formatQty: v => App.Production.formatQty(v),
+      piDisplayStatus: o => this.calculatePIDisplayStatus(o)
     });
-
-    return result;
   },
 
   populateClientLedger(clientName) {

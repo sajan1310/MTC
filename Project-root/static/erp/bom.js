@@ -496,131 +496,14 @@ App.BOM = {
   },
   // Builds a fully self-contained "BOM Cost Sheet / Recipe Card" page
   // (mirrors #print-bom-container's markup/styling) for bulk printing.
+  // The cost sheet lives in print-templates.js, which MApp loads too, so
+  // a recipe card is the same paper from either shell.
   buildBOMPrintPageHtml(bom) {
-    const BRAND = '#6610f2';
-    const reportDate = new Date().toLocaleDateString('en-GB');
-
-    const groupOrder = [];
-    const groupMap = {};
-    (bom.components || []).forEach(c => {
-      const groupName = c.processGroup || 'General';
-      if (!groupMap[groupName]) {
-        groupMap[groupName] = [];
-        groupOrder.push(groupName);
-      }
-      groupMap[groupName].push(c);
+    return PrintTemplates.bomCostSheet(bom, {
+      ...App.Print.templateDeps(),
+      formatQty,
+      brandHeaderHtml: b => App.Print.brandHeaderHtml(b)
     });
-
-    let groupsHtml = '';
-    groupOrder.forEach(groupName => {
-      let rowsHtml = '';
-      groupMap[groupName].forEach(c => {
-        rowsHtml += `<tr>
-      <td style="padding:6px;border:1px solid #e5e5e5;font-weight:600;">${escapeHtml(c.itemName)}</td>
-      <td style="padding:6px;border:1px solid #e5e5e5;">${escapeHtml(c.size || '-')}</td>
-      <td style="padding:6px;border:1px solid #e5e5e5;color:#555;">${escapeHtml(c.narration || '-')}</td>
-      <td style="padding:6px;border:1px solid #e5e5e5;">${escapeHtml(c.vendor || 'Custom')}</td>
-      <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;">${Number(toNumber(c.qtyPerProduct).toFixed(4))}</td>
-      <td style="padding:6px;border:1px solid #e5e5e5;text-align:right;">${formatCurrency(c.rate)}</td>
-      <td style="padding:6px;border:1px solid #e5e5e5;text-align:right;font-weight:700;">${formatCurrency(c.lineCost)}</td>
-    </tr>`;
-      });
-
-      groupsHtml += `
-  <div style="margin-bottom:14px;page-break-inside:avoid;break-inside:avoid;">
-    ${groupOrder.length > 1 ? `<h6 style="color:${BRAND};font-size:11px;font-weight:700;margin:0 0 8px 0;text-transform:uppercase;letter-spacing:0.5px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">${escapeHtml(groupName)}</h6>` : ''}
-    <table style="width:100%;border-collapse:collapse;font-size:11px;">
-      <thead>
-        <tr style="background-color:${BRAND};color:#fff;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:22%;">Item Name</th>
-          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:10%;">Size</th>
-          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:20%;">Narration</th>
-          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:16%;">Vendor</th>
-          <th style="padding:6px;border:1px solid #bbb;text-align:center;width:10%;">Qty/Unit</th>
-          <th style="padding:6px;border:1px solid #bbb;text-align:right;width:11%;">Rate</th>
-          <th style="padding:6px;border:1px solid #bbb;text-align:right;width:11%;">Line Cost</th>
-        </tr>
-      </thead>
-      <tbody>${rowsHtml}</tbody>
-    </table>
-  </div>`;
-    });
-
-    let costsRows = '';
-    (bom.additionalCosts || []).forEach(cost => {
-      costsRows += `<tr>
-    <td style="padding:6px;border:1px solid #e5e5e5;">${escapeHtml(cost.description)}</td>
-    <td style="padding:6px;border:1px solid #e5e5e5;text-align:right;font-weight:700;">${formatCurrency(cost.rate)}</td>
-  </tr>`;
-    });
-    const costsSectionHtml = (bom.additionalCosts && bom.additionalCosts.length > 0) ? `
-  <div style="margin-bottom:14px;page-break-inside:avoid;break-inside:avoid;">
-    <h6 style="color:${BRAND};font-size:11px;font-weight:700;margin:0 0 8px 0;text-transform:uppercase;letter-spacing:0.5px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Additional / Dynamic Costs</h6>
-    <table style="width:100%;border-collapse:collapse;font-size:11px;">
-      <thead>
-        <tr style="background-color:${BRAND};color:#fff;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:75%;">Description</th>
-          <th style="padding:6px;border:1px solid #bbb;text-align:right;width:25%;">Rate</th>
-        </tr>
-      </thead>
-      <tbody>${costsRows}</tbody>
-    </table>
-  </div>` : '';
-
-    const remarksHtml = bom.remarks ? `
-  <div style="margin-top:10px;padding-top:8px;border-top:1px solid #ccc;">
-    <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Remarks</span>
-    <div style="font-size:12px;color:#1a1a1a;margin-top:2px;white-space:pre-wrap;">${escapeHtml(bom.remarks)}</div>
-  </div>` : '';
-
-    return `
-<div style="background:#fff;color:#1a1a1a;font-family:'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.5;padding:14px 20px 12px 20px;margin:0;box-sizing:border-box;width:100%;border-top:5px solid ${BRAND};border-bottom:3px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-  <div style="text-align:center;padding:4px 0 8px 0;">
-    ${App.Print.brandHeaderHtml(BRAND)}
-    <div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:0.3px;">
-      6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
-    </div>
-    <div style="font-size:11px;color:${BRAND};font-weight:700;margin-top:4px;letter-spacing:1px;text-transform:uppercase;">
-      Bill of Materials &mdash; Cost Sheet / Recipe Card
-    </div>
-  </div>
-  <div style="height:2px;background:${BRAND};margin:0 0 12px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
-
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-    <div style="text-align:left;">
-      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Product ID</span>
-      <div style="font-size:15px;font-weight:700;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${escapeHtml(bom.productId)}</div>
-    </div>
-    <div style="flex:1;text-align:center;">
-      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Product Name</span>
-      <div style="font-size:16px;font-weight:700;color:#111;">${escapeHtml(bom.productName)}</div>
-    </div>
-    <div style="text-align:right;">
-      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Report Date</span>
-      <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${reportDate}</div>
-    </div>
-  </div>
-
-  <div style="height:1px;background:#bbb;margin-bottom:14px;"></div>
-
-  ${groupsHtml}
-  ${costsSectionHtml}
-
-  <div style="text-align:right;margin-bottom:16px;padding:8px 0 0 0;border-top:2px solid ${BRAND};page-break-inside:avoid;break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-    <span style="font-size:11px;font-weight:600;color:#555;">Material Cost:&nbsp;&nbsp;${formatCurrency(bom.totalCost)} &nbsp;&nbsp;|&nbsp;&nbsp; Additional Cost:&nbsp;&nbsp;${formatCurrency(bom.totalAdditionalCost)}</span>
-    <br>
-    <span style="font-size:13px;font-weight:600;color:#1a1a1a;">Total Estimated Cost (per unit):&nbsp;&nbsp;</span>
-    <span style="font-size:15px;font-weight:800;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-      ${formatCurrency(bom.grandTotal ?? bom.totalCost)}
-    </span>
-    ${(bom.colorCosts || []).length > 1 ? `
-    <div style="font-size:10px;color:#777;margin-top:2px;">
-      Color rows are alternatives, not additive &mdash; cost above is for <strong>${escapeHtml(bom.colorCosts[0].color)}</strong> only.
-      By color: ${bom.colorCosts.map(c => `${escapeHtml(c.color)} ${formatCurrency(c.totalCost + bom.totalAdditionalCost)}`).join(' &nbsp;|&nbsp; ')}
-    </div>` : ''}
-  </div>
-  ${remarksHtml}
-</div>`;
   },
 
   // Destroys Select2 instances on all rows and empties the process groups container

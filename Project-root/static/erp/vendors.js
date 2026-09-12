@@ -287,136 +287,15 @@ App.Vendor = {
     if (modalEl && typeof bootstrap !== 'undefined') new bootstrap.Modal(modalEl).show();
   },
 
+  // Shared with MApp (print-templates.js) -- four collections merged into
+  // one dated run, and the phone has all four.
   calculateLedgerAndPending(vendorName) {
-    const vendorPOs = App.State.globalPOs.filter(po => App.Utils.sameText(po.vendor, vendorName));
-    const vendorBills = App.State.globalBills.filter(b => App.Utils.sameText(b.vendor, vendorName));
-    const vendorReturns = (App.State.globalReturns || []).filter(r => App.Utils.sameText(r.vendor, vendorName));
-    const vendorIssues = (App.State.globalIssues || []).filter(iss => App.Utils.sameText(iss.vendor, vendorName));
-
-    let ledger = [];
-    vendorPOs.forEach(po => {
-      ledger.push({
-        dateObj: parseRecordDate(po.poDateRaw, po.poDate),
-        dateStr: po.poDate,
-        type: 'PO Issued',
-        ref: `PO-${po.poNumber}`,
-        items: po.items.map(i => `${i.name} (${String(i.qty)})`).join(', '),
-        orderQty: po.items.reduce((sum, i) => sum + toNumber(i.qty), 0),
-        incomingQty: 0,
-        outgoingQty: 0,
-        value: po.grandTotal,
-        badgeClass: 'bg-primary'
-      });
-    });
-
-    vendorBills.forEach(b => {
-      const itemsStr = b.items.length
-        ? (typeof b.items[0] === 'object'
-          ? b.items.map(i => `${i.name} (${String(i.qty)})`).join(', ')
-          : b.items.map(s => String(s)).join(', '))
-        : '';
-      const billQty = typeof b.items[0] === 'object'
-        ? b.items.reduce((sum, i) => sum + toNumber(i.qty), 0)
-        : 0;
-      ledger.push({
-        dateObj: parseRecordDate(b.billDateRaw, b.billDate),
-        dateStr: b.billDate,
-        type: 'Bill Received',
-        ref: b.billNumber,
-        items: itemsStr,
-        orderQty: 0,
-        incomingQty: billQty,
-        outgoingQty: 0,
-        value: b.totalAmount,
-        badgeClass: 'bg-success'
-      });
-    });
-
-    vendorReturns.forEach(r => {
-      const itemsStr = (r.items || []).map(i => `${i.name} (${String(i.qty)})`).join(', ');
-      const returnQty = (r.items || []).reduce((sum, i) => sum + toNumber(i.qty), 0);
-      ledger.push({
-        dateObj: parseRecordDate(r.returnDateRaw, r.returnDate),
-        dateStr: r.returnDate,
-        type: 'Goods Returned',
-        ref: r.returnNumber,
-        items: itemsStr,
-        orderQty: 0,
-        incomingQty: 0,
-        outgoingQty: returnQty,
-        value: r.totalAmount,
-        badgeClass: 'bg-danger'
-      });
-    });
-
-    vendorIssues.forEach(iss => {
-      const itemsStr = (iss.items || []).map(i => `${i.name} (${String(i.qty)})`).join(', ');
-      ledger.push({
-        dateObj: parseRecordDate(iss.dateRaw, iss.date),
-        dateStr: iss.date,
-        type: 'Stock Issued',
-        ref: iss.issueId,
-        items: itemsStr,
-        orderQty: 0,
-        incomingQty: 0,
-        outgoingQty: toNumber(iss.totalQty),
-        value: toNumber(iss.totalValue) || 0,
-        badgeClass: 'bg-warning text-dark'
-      });
-    });
-
-    // Running qty balance: net units taken from this vendor to date.
-    //
-    // Accumulated over a CHRONOLOGICAL copy while the display order stays
-    // newest-first below -- the entries are the same objects, so writing
-    // .balance here lands on the rows the table renders. Same shape as the
-    // Item Ledger, the Pool Ledger and the Contractor Account Ledger, all of
-    // which accumulate oldest-first and display newest-first.
-    //
-    // A PO moves nothing -- it is an intent to buy, and the goods arrive as
-    // a Bill that has its own row -- so it leaves the balance untouched and
-    // reports null rather than the carried-forward figure. Counting a PO
-    // here would double every order: once when placed, once when received.
-    // This mirrors countsTowardStock in get_item_ledger_data.
-    let runningQty = 0;
-    [...ledger].sort((a, b) => a.dateObj - b.dateObj).forEach(entry => {
-      if (entry.type === 'PO Issued') {
-        entry.balance = null;
-        return;
-      }
-      runningQty += toNumber(entry.incomingQty) - toNumber(entry.outgoingQty);
-      entry.balance = runningQty;
-    });
-
-    ledger.sort((a, b) => b.dateObj - a.dateObj);
-
-    let itemMap = {};
-
-    vendorPOs.forEach(po => {
-      po.items.forEach(i => {
-        const key = `${i.name}|${i.size || ''}`;
-        if (!itemMap[key]) itemMap[key] = { name: i.name, size: i.size, ordered: 0, received: 0 };
-        itemMap[key].ordered += (Number(i.qty) || 0);
-      });
-    });
-
-    vendorBills.forEach(b => {
-      b.items.forEach(i => {
-        const name = typeof i === 'object' ? i.name : String(i).split(' [')[0];
-        const size = typeof i === 'object' ? (i.size || '') : '';
-        const qty = typeof i === 'object' ? (Number(i.qty) || 0) : 0;
-        const key = `${name}|${size}`;
-        if (itemMap[key]) {
-          itemMap[key].received += qty;
-        }
-      });
-    });
-
-    const pendingList = Object.values(itemMap)
-      .map(item => ({ ...item, pending: item.ordered - item.received }))
-      .filter(item => item.pending !== 0);
-
-    return { ledger, pendingList };
+    return PrintTemplates.vendorLedger(vendorName, {
+      pos: App.State.globalPOs,
+      bills: App.State.globalBills,
+      returns: App.State.globalReturns,
+      issues: App.State.globalIssues
+    }, App.Print ? App.Print.templateDeps() : {});
   },
 
   populateLedgerAndPending(vendorName) {
@@ -577,114 +456,18 @@ App.Vendor = {
   // Builds a fully self-contained "Vendor Profile & Transaction Ledger"
   // page for bulk printing -- only reachable once App.Print exists
   // (bulkPrint guards this), left as an unmodified port for that round.
+  // Shared with MApp -- the phone has no vendor-detail screen, so a
+  // self-contained page is the only way it can print this document.
   buildVendorLedgerPrintPageHtml(vendor) {
-    const BRAND = '#D35400';
-    const { ledger, pendingList } = this.calculateLedgerAndPending(vendor.name);
-
-    let ledgerHtml = '';
-    ledger.forEach(entry => {
-      ledgerHtml += `<tr>
-        <td style="padding:6px;border:1px solid #e5e5e5;">${escapeHtml(entry.dateStr)}</td>
-        <td style="padding:6px;border:1px solid #e5e5e5;">${escapeHtml(entry.type)}</td>
-        <td style="padding:6px;border:1px solid #e5e5e5;font-weight:700;">${escapeHtml(entry.ref)}</td>
-        <td style="padding:6px;border:1px solid #e5e5e5;color:#555;">${escapeHtml(entry.items)}</td>
-        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;font-weight:700;">${entry.orderQty || '-'}</td>
-        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;font-weight:700;">${entry.incomingQty || '-'}</td>
-        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;font-weight:700;">-</td>
-        <td style="padding:6px;border:1px solid #e5e5e5;text-align:right;font-weight:700;">${formatCurrency(entry.value)}</td>
-      </tr>`;
+    return PrintTemplates.vendorLedgerSheet(vendor, {
+      pos: App.State.globalPOs,
+      bills: App.State.globalBills,
+      returns: App.State.globalReturns,
+      issues: App.State.globalIssues
+    }, {
+      ...App.Print.templateDeps(),
+      brandHeaderHtml: b => App.Print.brandHeaderHtml(b)
     });
-    const ledgerRows = ledgerHtml || '<tr><td colspan="8" style="padding:10px;text-align:center;color:#999;">No transaction history found.</td></tr>';
-
-    let pendingHtml = '';
-    pendingList.forEach(item => {
-      const isOver = item.pending < 0;
-      pendingHtml += `<tr>
-        <td style="padding:6px;border:1px solid #e5e5e5;font-weight:700;color:#0d6efd;">${escapeHtml(item.name)}</td>
-        <td style="padding:6px;border:1px solid #e5e5e5;">${escapeHtml(item.size || '-')}</td>
-        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;">${item.ordered}</td>
-        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;">${item.received}</td>
-        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;font-weight:700;color:${isOver ? '#198754' : '#dc3545'};">
-          ${isOver ? '+' : ''}${Math.abs(item.pending)}${isOver ? ' (Over-Delivered)' : ''}
-        </td>
-      </tr>`;
-    });
-    const pendingRows = pendingHtml || '<tr><td colspan="5" style="padding:10px;text-align:center;color:#198754;font-weight:700;">No pending orders. All caught up!</td></tr>';
-
-    return `
-    <div style="background:#fff;color:#1a1a1a;font-family:'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.5;padding:14px 20px 12px 20px;margin:0;box-sizing:border-box;width:100%;border-top:5px solid ${BRAND};border-bottom:3px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-      <div style="text-align:center;padding:4px 0 8px 0;">
-        ${App.Print.brandHeaderHtml(BRAND)}
-        <div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:0.3px;">
-          6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
-        </div>
-        <div style="font-size:11px;color:${BRAND};font-weight:700;margin-top:4px;letter-spacing:1px;text-transform:uppercase;">
-          Vendor Profile &amp; Transaction Ledger Report
-        </div>
-      </div>
-      <div style="height:2px;background:${BRAND};margin:0 0 12px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
-
-      <div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #ccc;page-break-inside:avoid;break-inside:avoid;">
-        <div style="display:flex;gap:16px;">
-          <div style="flex:1;">
-            <div style="margin-bottom:6px;">
-              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Vendor Name</span>
-              <div style="font-weight:700;font-size:14px;color:#1a1a1a;margin-top:1px;">${escapeHtml(App.Utils.formatNameCase(vendor.name))}</div>
-            </div>
-            <div>
-              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">GSTIN</span>
-              <div style="font-size:11px;color:#333;margin-top:1px;font-weight:600;">${escapeHtml(vendor.gstin || '-')}</div>
-            </div>
-          </div>
-          <div style="flex:1;">
-            <div style="margin-bottom:6px;">
-              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Contact Info</span>
-              <div style="font-size:11px;color:#333;margin-top:1px;">${escapeHtml(vendor.contact || '-')}</div>
-            </div>
-            <div>
-              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Address</span>
-              <div style="font-size:11px;color:#333;margin-top:1px;">${escapeHtml(vendor.address || '-')}</div>
-            </div>
-          </div>
-        </div>
-        <div style="margin-top:8px;">
-          <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Remarks</span>
-          <div style="font-size:11px;color:#444;margin-top:1px;font-style:italic;">${escapeHtml(vendor.remarks || 'No remarks')}</div>
-        </div>
-      </div>
-
-      <div style="margin-bottom:20px;">
-        <h6 style="color:${BRAND};font-size:11px;font-weight:700;margin:0 0 8px 0;text-transform:uppercase;letter-spacing:0.5px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Ledger Transaction History</h6>
-        <table style="width:100%;border-collapse:collapse;font-size:11px;">
-          <thead>
-            <tr style="background-color:${BRAND};color:#fff;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-              <th style="padding:6px;border:1px solid #bbb;text-align:left;width:12%;">Date</th>
-              <th style="padding:6px;border:1px solid #bbb;text-align:left;width:15%;">Doc Type</th>
-              <th style="padding:6px;border:1px solid #bbb;text-align:left;width:15%;">Reference #</th>
-              <th style="padding:6px;border:1px solid #bbb;text-align:left;width:43%;">Items Summary</th>
-              <th style="padding:6px;border:1px solid #bbb;text-align:right;width:15%;">Total Value</th>
-            </tr>
-          </thead>
-          <tbody>${ledgerRows}</tbody>
-        </table>
-      </div>
-
-      <div style="margin-bottom:20px;page-break-inside:avoid;break-inside:avoid;">
-        <h6 style="color:${BRAND};font-size:11px;font-weight:700;margin:0 0 8px 0;text-transform:uppercase;letter-spacing:0.5px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Pending Quantities Summary</h6>
-        <table style="width:100%;border-collapse:collapse;font-size:11px;">
-          <thead>
-            <tr style="background-color:${BRAND};color:#fff;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-              <th style="padding:6px;border:1px solid #bbb;text-align:left;width:45%;">Item Name</th>
-              <th style="padding:6px;border:1px solid #bbb;text-align:left;width:15%;">Size</th>
-              <th style="padding:6px;border:1px solid #bbb;text-align:center;width:13%;">Total Ordered</th>
-              <th style="padding:6px;border:1px solid #bbb;text-align:center;width:13%;">Total Received</th>
-              <th style="padding:6px;border:1px solid #bbb;text-align:center;width:14%;">Pending Qty</th>
-            </tr>
-          </thead>
-          <tbody>${pendingRows}</tbody>
-        </table>
-      </div>
-    </div>`;
   },
 
   delete(vendorName) {

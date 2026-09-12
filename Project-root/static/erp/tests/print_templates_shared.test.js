@@ -680,3 +680,155 @@ describe('the contractor statement', () => {
     });
   });
 });
+
+describe('the ledger documents', () => {
+  const DOC = {
+    escapeHtml: s => String(s == null ? '' : s).replace(/</g, '&lt;'),
+    toNumber: v => Number(v) || 0,
+    formatCurrency: v => `₹${(Number(v) || 0).toFixed(2)}`,
+    formatNameCase: s => String(s == null ? '' : s)
+      .toLowerCase().replace(/\b\w/g, c => c.toUpperCase()),
+    formatQty: v => String(Number(v) || 0),
+    brandHeaderHtml: () => '<div>Maharaja Bikes</div>'
+  };
+
+  describe('the vendor ledger', () => {
+    const SRC = {
+      pos: [{ poNumber: 'PO-1', vendor: 'Acme', poDate: '01/08/2026',
+        items: [{ name: 'Rim 26', size: '26 inch', qty: 10, baseQty: 10 }] }],
+      bills: [{ billNumber: 'B-1', vendor: 'Acme', billDate: '05/08/2026',
+        items: [{ name: 'Rim 26', size: '26 inch', qty: 6, baseQty: 6, poNumber: 'PO-1' }] }],
+      returns: [], issues: []
+    };
+
+    test('a PO orders and a bill receives, and what is left is pending', () => {
+      const { pendingList } = PrintTemplates.vendorLedger('Acme', SRC, DOC);
+      const rim = pendingList.find(p => p.name === 'Rim 26');
+      expect(rim.ordered).toBe(10);
+      expect(rim.received).toBe(6);
+      expect(rim.pending).toBe(4);
+    });
+
+    test('a vendor with nothing against them has an empty ledger, not a crash', () => {
+      const { ledger, pendingList } = PrintTemplates.vendorLedger('Nobody', SRC, DOC);
+      expect(ledger).toEqual([]);
+      expect(pendingList).toEqual([]);
+    });
+
+    test('the sheet is a whole page, so a shell with no detail screen can print it', () => {
+      const html = PrintTemplates.vendorLedgerSheet({ name: 'acme' }, SRC, DOC);
+      expect(html).toContain('Maharaja Bikes');
+      expect(html).toContain('Acme');       // title-cased
+      expect(html).toContain('PO-1');
+    });
+  });
+
+  describe('the client ledger', () => {
+    const SRC = {
+      orders: [{
+        orderNumber: 'SO-1', clientName: 'Nova', orderDate: '01/09/2026',
+        status: 'Order Confirmed',
+        lines: [{ productId: 'PRD-1', productName: 'Kalpi 26', qty: 40 }]
+      }],
+      dispatches: [{
+        dispatchNumber: 'DC-1', clientName: 'Nova', dispatchDate: '08/09/2026',
+        orderNumber: 'SO-1', productId: 'PRD-1', productName: 'Kalpi 26',
+        qty: 25, transport: 'Blue Dart'
+      }]
+    };
+
+    test('pending is ordered minus dispatched, per line', () => {
+      const rows = PrintTemplates.pendingOrderLines('Nova', SRC, DOC);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ orderedQty: 40, dispatchedQty: 25, pendingQty: 15 });
+    });
+
+    test('a fully dispatched line drops off the pending list', () => {
+      const done = { ...SRC, dispatches: [{ ...SRC.dispatches[0], qty: 40 }] };
+      expect(PrintTemplates.pendingOrderLines('Nova', done, DOC)).toEqual([]);
+    });
+
+    test('only confirmed orders count as pending', () => {
+      const draft = { ...SRC, orders: [{ ...SRC.orders[0], status: 'Draft' }] };
+      expect(PrintTemplates.pendingOrderLines('Nova', draft, DOC)).toEqual([]);
+    });
+
+    test('all three sections appear, each with its own empty state', () => {
+      const empty = PrintTemplates.clientLedgerSections('Ghost', SRC, DOC);
+      expect(empty.ordersHtml).toContain('No PI / Estimates found');
+      expect(empty.pendingHtml).toContain('All caught up');
+      expect(empty.dispatchHtml).toContain('No dispatch records found');
+    });
+
+    test('the sheet carries the client, the orders and the challans', () => {
+      const html = PrintTemplates.clientLedgerSheet(
+        { name: 'nova', gstin: '03ABCDE1234F1Z5' }, SRC, DOC);
+      expect(html).toContain('Nova');
+      expect(html).toContain('03ABCDE1234F1Z5');
+      expect(html).toContain('SO-1');
+      expect(html).toContain('DC-1');
+      expect(html).toContain('Pending Dispatch');
+    });
+  });
+
+  describe('the BOM cost sheet', () => {
+    const BOM = {
+      productId: 'PRD-9', productName: 'Kalpi 26',
+      components: [{ itemName: 'Rim 26', size: '26 inch', qtyPerProduct: 2, rate: 150, groupName: 'Wheels' }],
+      additionalCosts: [{ description: 'Painting', rate: 40 }],
+      totalCost: 300, totalAdditionalCost: 40
+    };
+
+    test('it names the product and its components', () => {
+      const html = PrintTemplates.bomCostSheet(BOM, DOC);
+      expect(html).toContain('Kalpi 26');
+      expect(html).toContain('Rim 26');
+    });
+
+    test('a recipe with no components still prints', () => {
+      expect(() => PrintTemplates.bomCostSheet(
+        { productName: 'Empty', components: [] }, DOC)).not.toThrow();
+    });
+  });
+
+  test('all four escape what they print', () => {
+    const nasty = '<img src=x onerror=alert(1)>';
+    expect(PrintTemplates.vendorLedgerSheet({ name: nasty },
+      { pos: [], bills: [], returns: [], issues: [] }, DOC)).not.toContain('<img src=x');
+    expect(PrintTemplates.clientLedgerSheet({ name: nasty },
+      { orders: [], dispatches: [] }, DOC)).not.toContain('<img src=x');
+    expect(PrintTemplates.bomCostSheet({ productName: nasty, components: [] }, DOC))
+      .not.toContain('<img src=x');
+  });
+
+  describe('both shells reach them', () => {
+    const read5 = f => require('fs').readFileSync(
+      require('path').join(__dirname, '..', f), 'utf8');
+
+    test('desktop delegates all four assemblers', () => {
+      expect(read5('vendors.js')).toContain('PrintTemplates.vendorLedger(');
+      expect(read5('vendors.js')).toContain('PrintTemplates.vendorLedgerSheet(');
+      expect(read5('client.js')).toContain('PrintTemplates.pendingOrderLines(');
+      expect(read5('bom.js')).toContain('PrintTemplates.bomCostSheet(');
+      expect(read5('items.js')).toContain('PrintTemplates.itemLedgerSections(');
+    });
+
+    test('mobile prints all four', () => {
+      const m = read5('mobile.js');
+      expect(m).toContain('PrintTemplates.vendorLedgerSheet(');
+      expect(m).toContain('PrintTemplates.clientLedgerSheet(');
+      expect(m).toContain('PrintTemplates.bomCostSheet(');
+      expect(m).toContain('PrintTemplates.itemLedgerSections(');
+    });
+
+    test('the print partial defines the utilities these rows are built from', () => {
+      // index.html loads Bootstrap and mobile.html deliberately does not,
+      // so without this block these rows print unstyled on a phone.
+      const partial = require('fs').readFileSync(
+        require('path').join(__dirname, '..', '..', '..',
+          'templates', 'erp', 'partials', 'print.html'), 'utf8');
+      ['.text-muted', '.text-end', '.fw-bold', '.badge', '.collapse.show']
+        .forEach(sel => expect(partial).toContain(`.print-container ${sel}`));
+    });
+  });
+});

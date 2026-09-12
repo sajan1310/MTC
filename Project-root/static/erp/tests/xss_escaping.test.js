@@ -50,6 +50,12 @@ function loadVendors() {
   eval(api);
 
   // core.js supplies App.Utils / App.State / App.Selection.
+  // The ledger assembler lives in print-templates.js, which both shells
+  // load -- one vendor ledger, not one per shell.
+  // eslint-disable-next-line no-eval
+  eval(fs.readFileSync(path.join(__dirname, '..', 'print-templates.js'), 'utf8')
+    .replace(/^const PrintTemplates = /m, 'global.PrintTemplates = '));
+
   const core = fs
     .readFileSync(path.join(__dirname, '..', 'core.js'), 'utf8')
     .replace(/^const App = /m, 'global.App = ');

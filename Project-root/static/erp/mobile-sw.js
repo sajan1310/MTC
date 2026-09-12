@@ -44,7 +44,12 @@
 // always reachable here -- the document joins SIX collections and
 // nothing on this shell did that joining, which is the real reason it
 // was missing. Print ledger sits beside Adjust stock on an expanded item.
-const CACHE_NAME = 'erp-mobile-shell-v56';
+// v57: the last three documents. BOM Cost Sheet from the recipe list,
+// and the Vendor and Client ledgers straight from the directory -- there
+// is no detail screen here, so these print the self-contained page in one
+// tap instead of two. Every desktop print template is now reachable from
+// this shell.
+const CACHE_NAME = 'erp-mobile-shell-v57';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so
