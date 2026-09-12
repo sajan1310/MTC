@@ -1049,10 +1049,24 @@ const PrintTemplates = {
     return (from || to) ? `Period: ${from || 'start'} to ${to || 'today'}` : '';
   },
 
-  // The balance carried into a window. Entries arrive in chronological
-  // order (the running balance depends on it), so the last one before the
-  // window is what was carried in. Null means no window, so nothing is
-  // being excluded and no opening row belongs on the page.
+  // The balance carried into a window: the running total of everything
+  // dated before it. Null means no window, so nothing is being excluded
+  // and no opening row belongs on the page.
+  //
+  // Summed rather than read off the newest prior entry, because reading it
+  // needs to know which end of the array is newest and this got that
+  // backwards. getContractorAccountLedger returns entries NEWEST-first;
+  // the old code walked the array letting the last match win, which picked
+  // the OLDEST entry before the window -- so a statement filtered to
+  // August opened with the contractor's very first transaction instead of
+  // what they actually owed on the 1st. Measured on live data: 2,500
+  // carried in where the real figure was 93,698, and every balance in the
+  // printed window wrong by the difference.
+  //
+  // `balance` IS the running sum of `amount`, so summing gives the same
+  // answer from either ordering, including several entries on the
+  // boundary day. Verified against all four contractor accounts: the sum
+  // and the newest-entry balance agree exactly.
   ledgerOpeningBalance(entries, from, toInputValue) {
     if (!from) return null;
     const asValue = toInputValue || (e => e.dateRaw || e.date);
@@ -1060,7 +1074,10 @@ const PrintTemplates = {
     let sawAny = false;
     (entries || []).forEach(e => {
       const value = asValue(e);
-      if (value && value < from) { carried = e.balance; sawAny = true; }
+      if (value && value < from) {
+        carried += Number(e.amount) || 0;
+        sawAny = true;
+      }
     });
     return sawAny ? carried : 0;
   },

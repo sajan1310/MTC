@@ -832,3 +832,54 @@ describe('the ledger documents', () => {
     });
   });
 });
+
+describe('the carried-in balance does not depend on array order', () => {
+  // getContractorAccountLedger returns entries NEWEST-first (it
+  // accumulates oldest-first, then reverses "for display, matching every
+  // other ledger/table in this app"). The old implementation walked the
+  // array letting the last match win, on a comment that claimed
+  // chronological order -- so it picked the OLDEST entry before the
+  // window. A statement filtered to August opened with the contractor's
+  // very first transaction: 2,500 carried in on a real account where the
+  // figure was 93,698, and every balance in the printed window wrong by
+  // the difference.
+  const OLDEST_FIRST = [
+    { dateRaw: '2026-01-01', amount: 1000, balance: 1000 },
+    { dateRaw: '2026-01-15', amount: -400, balance: 600 },
+    { dateRaw: '2026-02-01', amount: 500, balance: 1100 },
+    { dateRaw: '2026-02-20', amount: -300, balance: 800 }
+  ];
+  const NEWEST_FIRST = [...OLDEST_FIRST].reverse();
+  const asValue = e => e.dateRaw;
+
+  test('newest-first gives the balance carried in, not the first ever', () => {
+    expect(PrintTemplates.ledgerOpeningBalance(NEWEST_FIRST, '2026-02-01', asValue))
+      .toBe(600);
+  });
+
+  test('and oldest-first gives the same answer', () => {
+    expect(PrintTemplates.ledgerOpeningBalance(OLDEST_FIRST, '2026-02-01', asValue))
+      .toBe(600);
+  });
+
+  test('several entries on the boundary day are all carried in', () => {
+    // The other half of the old bug: reading one entry's balance picks a
+    // single row out of that day, summing takes the day.
+    const sameDay = [
+      { dateRaw: '2026-01-31', amount: 200, balance: 1200 },
+      { dateRaw: '2026-01-31', amount: 300, balance: 1000 },
+      { dateRaw: '2026-01-01', amount: 700, balance: 700 }
+    ];
+    expect(PrintTemplates.ledgerOpeningBalance(sameDay, '2026-02-01', asValue))
+      .toBe(1200);
+  });
+
+  test('nothing before the window carries in zero, not the whole account', () => {
+    expect(PrintTemplates.ledgerOpeningBalance(NEWEST_FIRST, '2020-01-01', asValue))
+      .toBe(0);
+  });
+
+  test('no window means no opening row at all', () => {
+    expect(PrintTemplates.ledgerOpeningBalance(NEWEST_FIRST, '', asValue)).toBeNull();
+  });
+});

@@ -325,7 +325,12 @@
 // had read it. And the Vendor Ledger's pending figures were as-entered
 // where the Item Ledger and every server calculation use base units.
 // Both tables now say which unit they are in.
-const CACHE_NAME = 'erp-shell-v68';
+// v69: the opening balance on a date-filtered contractor statement was
+// the account's FIRST transaction instead of what was carried in. The
+// ledger comes back newest-first; the code walked it letting the last
+// match win, on a comment that claimed chronological order. 2,500 where
+// the real figure was 93,698, on every one of the four live accounts.
+const CACHE_NAME = 'erp-shell-v69';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

@@ -65,7 +65,8 @@
 // the choice is remembered, because whoever sends a PO out for a quote
 // sends every PO out for a quote. MApp.Prefs is the one place those
 // remembered choices now live.
-const CACHE_NAME = 'erp-mobile-shell-v59';
+// v60: same opening-balance fix -- this shell prints that statement too.
+const CACHE_NAME = 'erp-mobile-shell-v60';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

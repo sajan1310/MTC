@@ -55,11 +55,24 @@ function loadContractor() {
 // A running balance across the whole account: 1000 payable, 400 paid,
 // 500 payable, 300 paid. The window tests below all cut into the middle
 // of it, which is where the balance column can lie.
+//
+// Shaped exactly as getContractorAccountLedger returns it, because a
+// fixture that is not is worse than no fixture. Two details this file
+// used to get wrong, and the opening balance was computed wrongly for
+// years behind them:
+//
+//   - NEWEST-FIRST. The service accumulates the running balance
+//     oldest-first and then calls entries.reverse(), "newest-first for
+//     display, matching every other ledger/table in this app".
+//   - A Payment's `amount` is NEGATIVE (the service writes -amount) and
+//     `rawAmount` carries the positive figure for the Paid column. The
+//     balance column is the running sum of `amount`, so a fixture with
+//     amount: 0 on a payment cannot produce the balances beside it.
 const ENTRIES = [
-  { rowIdx: 1, date: '01/01/2026', dateRaw: '2026-01-01', type: 'Payable', ref: 'LOT-1', description: 'Lot 1', amount: 1000, rawAmount: 0, balance: 1000 },
-  { rowIdx: 2, date: '15/01/2026', dateRaw: '2026-01-15', type: 'Payment', ref: 'PAY-1', description: 'Cash', amount: 0, rawAmount: 400, balance: 600 },
+  { rowIdx: 4, date: '20/02/2026', dateRaw: '2026-02-20', type: 'Payment', ref: 'PAY-2', description: 'UPI', amount: -300, rawAmount: 300, balance: 800 },
   { rowIdx: 3, date: '01/02/2026', dateRaw: '2026-02-01', type: 'Payable', ref: 'LOT-2', description: 'Lot 2', amount: 500, rawAmount: 0, balance: 1100 },
-  { rowIdx: 4, date: '20/02/2026', dateRaw: '2026-02-20', type: 'Payment', ref: 'PAY-2', description: 'UPI', amount: 0, rawAmount: 300, balance: 800 },
+  { rowIdx: 2, date: '15/01/2026', dateRaw: '2026-01-15', type: 'Payment', ref: 'PAY-1', description: 'Cash', amount: -400, rawAmount: 400, balance: 600 },
+  { rowIdx: 1, date: '01/01/2026', dateRaw: '2026-01-01', type: 'Payable', ref: 'LOT-1', description: 'Lot 1', amount: 1000, rawAmount: 0, balance: 1000 },
 ];
 
 function mount(entries = ENTRIES) {
