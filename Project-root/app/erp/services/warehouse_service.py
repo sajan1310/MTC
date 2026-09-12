@@ -53,7 +53,7 @@ from __future__ import annotations
 
 import math
 import re
-from datetime import date
+from datetime import date, datetime, time
 
 import psycopg2.extras
 
@@ -374,10 +374,48 @@ def _resolve_composite_color_token(
     return next(iter(matches)) if len(matches) == 1 else None
 
 
+def _naive_local(value):
+    """One comparable shape for every moment in this module. Postgres hands
+    back timestamptz as aware datetimes and bare dates as dates; mixing the
+    two in a comparison raises, so everything is flattened to naive local
+    here before anything is ordered against anything else."""
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone().replace(tzinfo=None)
+    return value
+
+
+def _effective_at(day, created_at):
+    """The moment an entry takes effect.
+
+    A row entered on the date it is dated for knows its own time of day and
+    uses it. Anything else -- a backdated entry, a bulk import, any row
+    written before migration 045 -- knows only the date, and takes the start
+    of that day. "Time unknown" therefore sorts before a timed recount on
+    the same date, which is the reading the floor confirmed: a count taken
+    during the day counts what that day had already produced.
+
+    Everything comes back naive local, so a timestamptz from one table and
+    a bare date from another stay comparable with a plain `<=`.
+    """
+    if day is None:
+        return None
+    local = _naive_local(created_at)
+    if local is not None and local.date() == day:
+        return local
+    return datetime.combine(day, time.min)
+
+
 def _get_warehouse_pool_opening_rows(cur) -> list:
     cur.execute(
-        "SELECT output_item_name, process_id, product_tag, color, qty, opening_date, remarks "
-        "FROM erp.warehouse_pool_opening"
+        "SELECT id, output_item_name, process_id, product_tag, color, qty, "
+        "opening_date, opening_at, counted_qty, created_at, remarks "
+        "FROM erp.warehouse_pool_opening "
+        # Entry order, not date order. Where a date is wrong -- migration 045
+        # documents 17 rows whose day and month were transposed by an import
+        # -- id still says which correction the operator typed last.
+        "ORDER BY opening_date, id"
     )
     rows = []
     for row in cur.fetchall():
@@ -400,9 +438,60 @@ def _get_warehouse_pool_opening_rows(cur) -> list:
                 # Carried for the ledger only -- the bucket maths ignores both.
                 "date": row["opening_date"],
                 "remarks": str(row["remarks"] or ""),
+                # Non-null => this row is a recount and carries the absolute
+                # figure somebody counted (migration 045). `qty` still holds
+                # the delta so the ledger line reads as it always has.
+                "countedQty": (
+                    None if row["counted_qty"] is None else float(row["counted_qty"])
+                ),
+                "at": _naive_local(row["opening_at"])
+                or _effective_at(row["opening_date"], row["created_at"]),
+                "id": row["id"],
             }
         )
     return rows
+
+
+def _get_bucket_anchors(cur) -> dict:
+    """The newest recount per bucket: {bucket key: (moment, counted qty)}.
+
+    A recount is a statement about a shelf at a moment -- everything dated
+    at or before it is already inside that figure, and must never move the
+    bucket again however late it is entered or edited. This is what makes
+    that enforceable, and it is keyed exactly the way get_bucket() keys a
+    bucket: name, tag, colour, case-insensitively, and NOT process id.
+    """
+    cur.execute(
+        """
+        SELECT DISTINCT ON (
+                   lower(trim(output_item_name)),
+                   lower(trim(coalesce(product_tag, ''))),
+                   lower(trim(coalesce(color, '')))
+               )
+               output_item_name, product_tag, color, counted_qty,
+               opening_date, opening_at, created_at
+          FROM erp.warehouse_pool_opening
+         WHERE counted_qty IS NOT NULL
+         ORDER BY lower(trim(output_item_name)),
+                  lower(trim(coalesce(product_tag, ''))),
+                  lower(trim(coalesce(color, ''))),
+                  opening_at DESC NULLS LAST, opening_date DESC, id DESC
+        """
+    )
+    anchors = {}
+    for row in cur.fetchall():
+        key = (
+            str(row["output_item_name"] or "").strip().lower(),
+            str(row["product_tag"] or "").strip().lower(),
+            str(row["color"] or "").strip().lower(),
+        )
+        moment = _naive_local(row["opening_at"]) or _effective_at(
+            row["opening_date"], row["created_at"]
+        )
+        if moment is None:
+            continue
+        anchors[key] = (moment, float(row["counted_qty"]))
+    return anchors
 
 
 _COMMON_DRAIN_NOTE = (
@@ -449,6 +538,25 @@ def _build_warehouse_pool_buckets(
     """
     buckets: dict = {}
     count_overrides = _get_bucket_count_overrides(cur)
+    # A recount is a manual entry, so the "what does real history say"
+    # replay (include_opening=False) must not see one.
+    anchors = _get_bucket_anchors(cur) if include_opening else {}
+
+    def frozen(bucket: dict, when, created_at=None) -> bool:
+        """Is this event already inside the bucket's latest recount?
+
+        Somebody counted a shelf at a moment. Everything dated at or before
+        that moment is, by definition, part of what they counted -- so it
+        must not move the bucket a second time, however late it is entered
+        or edited. This is the whole of migration 045: without it a lot
+        completed after a recount but dated before it silently re-applies.
+        """
+        anchor_at = bucket.get("anchorAt")
+        if anchor_at is None or when is None:
+            return False
+        moment = when if isinstance(when, datetime) else _effective_at(when, created_at)
+        moment = _naive_local(moment)
+        return moment is not None and moment <= anchor_at
 
     def record(
         bucket: dict, date, entry_type: str, ref: str, remarks: str, qty: float
@@ -505,6 +613,12 @@ def _build_warehouse_pool_buckets(
                 "sawSubGroupCredit": False,
                 # None = no explicit answer, fall back to the credits above.
                 "countsOverride": count_overrides.get(key),
+                # The newest recount for this bucket (migration 045):
+                # the moment it was taken and the figure that was counted.
+                # `frozen()` above is the only thing that reads anchorAt.
+                "anchorAt": anchors.get(key, (None, None))[0],
+                "anchorQty": anchors.get(key, (None, None))[1],
+                "anchorApplied": False,
             }
             buckets[key] = bucket
         return bucket
@@ -541,7 +655,15 @@ def _build_warehouse_pool_buckets(
     # Pass 0: seed buckets from manually-recorded Opening Balances -- the
     # one durable source of "stock that didn't come from a Production lot".
     if include_opening:
-        for r in _get_warehouse_pool_opening_rows(cur):
+        # Effective-moment order, so a bucket's recount is always seeded
+        # before any entry that legitimately follows it. Reading these in
+        # id order instead would let a post-recount row be applied first and
+        # then wiped by the seed.
+        opening_rows = sorted(
+            _get_warehouse_pool_opening_rows(cur),
+            key=lambda r: (r["at"] or datetime.min, r["id"]),
+        )
+        for r in opening_rows:
             proc_id = (r["processId"] or "").strip().lower()
             if proc_id in final_stage_ids:
                 # Same final-stage exception as Pass 1 below: a per-entry
@@ -553,18 +675,46 @@ def _build_warehouse_pool_buckets(
             else:
                 name = process_output_item_map.get(proc_id) or r["outputItemName"]
             bucket = get_bucket(name, r["processId"], r["productTag"], r["color"])
-            bucket["producedQty"] += r["qty"]
             # adjustWarehousePoolManually records a correction as a delta row
             # here AND as an audit row in erp.warehouse_pool_adjustments. Only
             # this one is arithmetic, so only this one becomes a ledger line;
             # reading both is what used to count every correction twice.
             is_correction = r["remarks"].startswith("Correction: ")
+            reason = (
+                r["remarks"][len("Correction: ") :] if is_correction else r["remarks"]
+            )
+
+            if (
+                r["countedQty"] is not None
+                and bucket["anchorAt"] is not None
+                and r["at"] == bucket["anchorAt"]
+                and not bucket["anchorApplied"]
+            ):
+                # This row IS the bucket's newest recount. It states what was
+                # physically on the shelf, so it REPLACES the history behind
+                # it rather than adding to it -- all of that is already
+                # inside the counted figure. Everything dated after it still
+                # applies normally, which is what carrying a count forward
+                # means.
+                bucket["producedQty"] = r["countedQty"]
+                bucket["consumedQty"] = 0.0
+                bucket["anchorApplied"] = True
+                # Somebody counted units. Whatever the lots imply, this
+                # bucket holds goods.
+                bucket["sawCountingCredit"] = True
+                record(bucket, r["date"], "Recount", "", reason, r["countedQty"])
+                continue
+
+            if frozen(bucket, r["at"]):
+                continue
+
+            bucket["producedQty"] += r["qty"]
             record(
                 bucket,
                 r["date"],
                 "Manual Correction" if is_correction else "Opening Stock",
                 "",
-                r["remarks"][len("Correction: ") :] if is_correction else r["remarks"],
+                reason,
                 r["qty"],
             )
 
@@ -598,7 +748,7 @@ def _build_warehouse_pool_buckets(
         cur.execute(
             f"""
             SELECT process_id, output_item_name, product_id, color_breakdown, qty,
-                   lot_number, production_date, remarks
+                   lot_number, production_date, created_at, remarks
             FROM {table}
             WHERE deleted_at IS NULL AND lower(status) = 'completed'
             """
@@ -606,6 +756,10 @@ def _build_warehouse_pool_buckets(
         for row in cur.fetchall():
             lot_ref = str(row["lot_number"] or "")
             lot_date = row["production_date"]
+            # When the lot was actually booked, so a same-day recount and a
+            # same-day lot have an order. Absent (every row written before
+            # migration 045) this falls back to the start of the lot's date.
+            lot_at = _effective_at(lot_date, row.get("created_at"))
             lot_remarks = str(row["remarks"] or "")
             process_id = str(row["process_id"] or "").strip()
             own_output_item_name = str(row["output_item_name"] or "").strip()
@@ -650,6 +804,9 @@ def _build_warehouse_pool_buckets(
                         bucket["sawCountingCredit"] = True
                     else:
                         bucket["sawSubGroupCredit"] = True
+                    if frozen(bucket, lot_at):
+                        # Already on the shelf when this bucket was counted.
+                        return
                     bucket["producedQty"] += float(qty or 0)
                     record(
                         bucket,
@@ -868,8 +1025,11 @@ def _build_warehouse_pool_buckets(
             else:
                 qty = float(row["qty"] or 0)
                 bucket = get_bucket(output_item_name, process_id, product_tag, "")
-                bucket["producedQty"] += qty
-                record(bucket, lot_date, "Production Credit", lot_ref, lot_remarks, qty)
+                if not frozen(bucket, lot_at):
+                    bucket["producedQty"] += qty
+                    record(
+                        bucket, lot_date, "Production Credit", lot_ref, lot_remarks, qty
+                    )
 
         # Pass 2: debit POOL-sourced components consumed by Completed lots
         # from the (untagged, intermediate) bucket of the upstream item. A
@@ -883,7 +1043,8 @@ def _build_warehouse_pool_buckets(
         # whatever that row's conversion factor is (e.g. a Dozen row
         # debiting as if it were 1 Pcs).
         cur.execute(
-            f"SELECT components_consumed, lot_number, production_date, remarks FROM {table} "
+            f"SELECT components_consumed, lot_number, production_date, created_at, "
+            f"remarks FROM {table} "
             f"WHERE deleted_at IS NULL AND lower(status) = 'completed'"
         )
         pool_item_unit_map = None
@@ -895,6 +1056,7 @@ def _build_warehouse_pool_buckets(
         for row in cur.fetchall():
             lot_ref = str(row["lot_number"] or "")
             lot_date = row["production_date"]
+            lot_at = _effective_at(lot_date, row.get("created_at"))
             lot_remarks = str(row["remarks"] or "")
             for comp in row["components_consumed"] or []:
                 comp = comp or {}
@@ -953,9 +1115,19 @@ def _build_warehouse_pool_buckets(
                         common_consumption_by_item[key] = {
                             "itemName": item_name,
                             "qty": qty,
+                            # Each draw keeps its own moment and reference.
+                            # Collapsing them into one undated lump is what
+                            # let the settlement below run after every
+                            # recount and take the balance -- 1,810 of the
+                            # 2,003 units it drained against this database
+                            # were dated before the count they drained.
+                            "draws": [(lot_at, lot_date, qty, lot_ref, lot_remarks)],
                         }
                     else:
                         entry["qty"] += qty
+                        entry["draws"].append(
+                            (lot_at, lot_date, qty, lot_ref, lot_remarks)
+                        )
                     continue
 
                 # See _resolve_composite_color_token -- a manually
@@ -1043,15 +1215,16 @@ def _build_warehouse_pool_buckets(
                     "",
                     color,
                 )
-                debited["consumedQty"] += qty
-                record(
-                    debited,
-                    lot_date,
-                    "Production Consumption",
-                    lot_ref,
-                    lot_remarks,
-                    -qty,
-                )
+                if not frozen(debited, lot_at):
+                    debited["consumedQty"] += qty
+                    record(
+                        debited,
+                        lot_date,
+                        "Production Consumption",
+                        lot_ref,
+                        lot_remarks,
+                        -qty,
+                    )
 
         # Settle the COMMON-scoped consumption held back above.
         #
@@ -1077,66 +1250,115 @@ def _build_warehouse_pool_buckets(
             process_id_for_item = producing_process_by_item.get(key, "")
             blank_bucket = get_bucket(item_name, process_id_for_item, "", "")
 
-            remaining = entry["qty"]
-            available_blank = max(
-                blank_bucket["producedQty"] - blank_bucket["consumedQty"], 0
+            # Settle draw by draw, oldest first, instead of as one undated
+            # lump applied after everything else. Two things follow, and
+            # both were wrong before:
+            #
+            #   - a draw can be frozen out of a bucket that was recounted
+            #     after it, because those parts had already left the shelf
+            #     when somebody counted what was on it;
+            #   - which bucket pays is decided against the stock that
+            #     existed AT THAT MOMENT, not against final balances. You
+            #     cannot consume stock that had not been made yet.
+            draws = sorted(
+                entry.get("draws") or [(None, None, entry["qty"], "", "")],
+                key=lambda d: (d[0] or datetime.min, str(d[3])),
             )
-            take = min(remaining, available_blank)
-            blank_bucket["consumedQty"] += take
-            remaining -= take
-            # A COMMON draw says "this recipe consumes the item whatever
-            # colour it is", so which bucket pays is decided by this
-            # settlement and not by any single lot. One summarising line per
-            # bucket is therefore the honest rendering -- apportioning it
-            # back across the contributing lots would invent a precision the
-            # data does not have.
-            record(
-                blank_bucket,
-                None,
-                "Colour-agnostic Consumption",
-                "",
-                _COMMON_DRAIN_NOTE,
-                -take,
-            )
+            # One summarising line per bucket per draw: which bucket pays is
+            # decided by this settlement rather than by any single lot, but
+            # the lot that caused the draw is still the honest reference.
+            for draw_at, draw_date, draw_qty, draw_ref, draw_remarks in draws:
+                remaining = draw_qty
+                blank_eligible = not frozen(blank_bucket, draw_at)
 
-            if remaining > 0:
-                colored = [
-                    b
-                    for b in buckets.values()
-                    if b["outputItemName"].lower() == key
-                    and not b["productTag"]
-                    and b["color"]
-                ]
-                # Stable order so a rebuild is repeatable rather than
-                # dependent on dict insertion order, which follows whichever
-                # lot happened to be credited first.
-                colored.sort(key=lambda b: _color_order_key(b["color"]))
-                for bucket in colored:
-                    if remaining <= 0:
-                        break
-                    available = max(bucket["producedQty"] - bucket["consumedQty"], 0)
-                    take = min(remaining, available)
-                    bucket["consumedQty"] += take
-                    remaining -= take
-                    record(
-                        bucket,
-                        None,
-                        "Colour-agnostic Consumption",
-                        "",
-                        _COMMON_DRAIN_NOTE,
-                        -take,
+                if blank_eligible:
+                    available_blank = max(
+                        blank_bucket["producedQty"] - blank_bucket["consumedQty"], 0
                     )
+                    take = min(remaining, available_blank)
+                    if take:
+                        blank_bucket["consumedQty"] += take
+                        remaining -= take
+                        record(
+                            blank_bucket,
+                            draw_date,
+                            "Colour-agnostic Consumption",
+                            draw_ref,
+                            _COMMON_DRAIN_NOTE,
+                            -take,
+                        )
 
-            if remaining > 0:
-                blank_bucket["consumedQty"] += remaining
-                record(
-                    blank_bucket,
-                    None,
-                    "Colour-agnostic Consumption",
-                    "",
-                    _COMMON_DRAIN_SHORTFALL_NOTE,
-                    -remaining,
-                )
+                if remaining > 0:
+                    colored = [
+                        b
+                        for b in buckets.values()
+                        if b["outputItemName"].lower() == key
+                        and not b["productTag"]
+                        and b["color"]
+                    ]
+                    # Stable order so a rebuild is repeatable rather than
+                    # dependent on dict insertion order, which follows
+                    # whichever lot happened to be credited first.
+                    colored.sort(key=lambda b: _color_order_key(b["color"]))
+                    for bucket in colored:
+                        if remaining <= 0:
+                            break
+                        if frozen(bucket, draw_at):
+                            continue
+                        available = max(
+                            bucket["producedQty"] - bucket["consumedQty"], 0
+                        )
+                        take = min(remaining, available)
+                        if not take:
+                            continue
+                        bucket["consumedQty"] += take
+                        remaining -= take
+                        record(
+                            bucket,
+                            draw_date,
+                            "Colour-agnostic Consumption",
+                            draw_ref,
+                            _COMMON_DRAIN_NOTE,
+                            -take,
+                        )
+
+                if remaining > 0:
+                    # Where no bucket was eligible, the draw predates every
+                    # recount that could have paid it -- those parts were
+                    # already gone when somebody counted the shelf, so the
+                    # count has absorbed them and there is nothing left to
+                    # charge. Booking a shortfall here would re-apply the
+                    # very consumption the freeze just excluded, which is
+                    # the double-charge this whole change exists to stop.
+                    shortfall_bucket = (
+                        blank_bucket
+                        if blank_eligible
+                        else next(
+                            (
+                                b
+                                for b in buckets.values()
+                                if b["outputItemName"].lower() == key
+                                and not b["productTag"]
+                                and b["color"]
+                                and not frozen(b, draw_at)
+                            ),
+                            None,
+                        )
+                    )
+                    if shortfall_bucket is not None:
+                        # A genuine shortfall: consumed beyond anything this
+                        # item was ever credited. It stays as a negative
+                        # rather than being absorbed, because that negative
+                        # is the signal.
+                        shortfall_bucket["consumedQty"] += remaining
+                        record(
+                            shortfall_bucket,
+                            draw_date,
+                            "Colour-agnostic Consumption",
+                            draw_ref,
+                            _COMMON_DRAIN_SHORTFALL_NOTE,
+                            -remaining,
+                        )
 
     if (headers_table := config_maps.TABLE_NAMES.get("DISPATCH_HEADERS")) and (
         lines_table := config_maps.TABLE_NAMES.get("DISPATCH_LINES")
@@ -1154,17 +1376,26 @@ def _build_warehouse_pool_buckets(
         # which physical row it came from, so switching the source query to
         # a join needs no change to the aggregation itself.
         cur.execute(
-            f"SELECT l.product_id, l.qty FROM {lines_table} l "
+            f"SELECT l.product_id, l.qty, h.dispatch_date, h.created_at, "
+            f"h.dispatch_number FROM {lines_table} l "
             f"JOIN {headers_table} h ON h.id = l.header_id WHERE h.deleted_at IS NULL"
         )
-        dispatch_qty_by_key: dict = {}
+        # Per dispatch, not summed across all of them: a dispatch that left
+        # before a bucket was recounted is already missing from what was
+        # counted, and debiting it again takes the same goods off twice.
+        dispatch_draws_by_key: dict = {}
         for row in cur.fetchall():
             product_id = str(row["product_id"] or "").strip()
             if not product_id:
                 continue
             key = product_id.lower()
-            dispatch_qty_by_key[key] = dispatch_qty_by_key.get(key, 0) + float(
-                row["qty"] or 0
+            dispatch_draws_by_key.setdefault(key, []).append(
+                (
+                    _effective_at(row["dispatch_date"], row.get("created_at")),
+                    row["dispatch_date"],
+                    float(row["qty"] or 0),
+                    str(row["dispatch_number"] or ""),
+                )
             )
 
         # Dispatch carries no color of its own, so a Product Tag (or
@@ -1175,8 +1406,7 @@ def _build_warehouse_pool_buckets(
         # availability) on the first bucket so the total consumedQty
         # across all matching buckets still equals the total dispatched
         # qty.
-        for key, dispatched_qty in dispatch_qty_by_key.items():
-            remaining = dispatched_qty
+        for key, draws in dispatch_draws_by_key.items():
             # Units only. The drain is color-blind by necessity (Dispatch
             # carries no color), so left unfiltered it happily debits a
             # sub-group bucket -- and once those buckets stopped being
@@ -1207,25 +1437,56 @@ def _build_warehouse_pool_buckets(
             if not matching:
                 continue
 
-            for bucket in matching:
-                if remaining <= 0:
-                    break
-                available = max(bucket["producedQty"] - bucket["consumedQty"], 0)
-                take = min(remaining, available)
-                bucket["consumedQty"] += take
-                remaining -= take
-                record(bucket, None, "Dispatch", "", _DISPATCH_DRAIN_NOTE, -take)
+            for draw_at, draw_date, draw_qty, draw_ref in sorted(
+                draws, key=lambda d: (d[0] or datetime.min, str(d[3]))
+            ):
+                remaining = draw_qty
+                for bucket in matching:
+                    if remaining <= 0:
+                        break
+                    if frozen(bucket, draw_at):
+                        # Left the building before this bucket was counted.
+                        continue
+                    available = max(bucket["producedQty"] - bucket["consumedQty"], 0)
+                    take = min(remaining, available)
+                    if not take:
+                        continue
+                    bucket["consumedQty"] += take
+                    remaining -= take
+                    record(
+                        bucket,
+                        draw_date,
+                        "Dispatch",
+                        draw_ref,
+                        _DISPATCH_DRAIN_NOTE,
+                        -take,
+                    )
 
-            if remaining > 0:
-                matching[0]["consumedQty"] += remaining
-                record(
-                    matching[0],
-                    None,
-                    "Dispatch",
-                    "",
-                    _DISPATCH_SHORTFALL_NOTE,
-                    -remaining,
-                )
+                if remaining > 0:
+                    # Only a bucket this dispatch could still legitimately
+                    # be charged to. If every one of them was recounted
+                    # after the goods left, the count already reflects the
+                    # departure and charging it again takes the same units
+                    # off twice.
+                    shortfall_bucket = next(
+                        (b for b in matching if not frozen(b, draw_at)), None
+                    )
+                    if shortfall_bucket is not None:
+                        # Dispatched beyond anything this product had. It
+                        # stays as a negative rather than being absorbed --
+                        # see the audit note on migration 045: a -230
+                        # belongs to the ITEM, and pinning it to one
+                        # arbitrary colour is misattribution, not
+                        # arithmetic.
+                        shortfall_bucket["consumedQty"] += remaining
+                        record(
+                            shortfall_bucket,
+                            draw_date,
+                            "Dispatch",
+                            draw_ref,
+                            _DISPATCH_SHORTFALL_NOTE,
+                            -remaining,
+                        )
 
     return buckets
 
@@ -1712,11 +1973,18 @@ def adjust_warehouse_pool_manually(
     process_master_id = _find_process_master_id(cur, proc_id)
     user_id = get_current_user_id()
 
+    # counted_qty is what makes this row a RECOUNT rather than a delta
+    # (migration 045): the pool seeds the bucket with this figure and
+    # discards everything dated at or before opening_at, because all of it
+    # is already inside what was counted. opening_at is NOW() rather than
+    # today's date so a count taken this afternoon outranks a lot booked
+    # this morning -- the two used to be indistinguishable.
     cur.execute(
         """
         INSERT INTO erp.warehouse_pool_opening
-            (output_item_name, process_id, process_master_id, product_tag, color, qty, opening_date, remarks, created_by)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (output_item_name, process_id, process_master_id, product_tag, color, qty,
+             counted_qty, opening_date, opening_at, remarks, created_by)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s)
         RETURNING id
         """,
         (
@@ -1726,6 +1994,7 @@ def adjust_warehouse_pool_manually(
             tag,
             color_val,
             delta,
+            new_qty,
             date.today(),
             f"Correction: {reason_text}",
             user_id,

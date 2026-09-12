@@ -14,6 +14,7 @@ no-ops since Phase 3a, with zero code changes needed to activate them.
 from __future__ import annotations
 
 import uuid
+from datetime import date, timedelta
 
 import database
 
@@ -1383,13 +1384,20 @@ def test_manual_correction_supersedes_the_calculation(erp_client):
     """A hand-entered figure wins. It is entered for a reason, and it is
     how corrupted history gets repaired as entries are audited.
 
-    Getting there is not just (new - old): a correction is a delta on
-    produced_qty seeded in Pass 0, and the colour-agnostic (COMMON)
-    settlement runs after it, so a bucket carrying an unattributed
-    shortfall pays part of that shortfall out of the correction the moment
-    it is credited. The naive delta lands 10 on 5 -- indistinguishable from
-    the entry being overwritten. The correction is widened until the
-    entered figure actually holds.
+    It holds because it is stored as a COUNT and not as a difference
+    (migration 045). The recount says what was on the shelf at that moment,
+    so the pool seeds the bucket with it and discards everything dated at
+    or before it -- including the colour-agnostic draw that used to eat
+    part of the correction the instant it was credited.
+
+    This test used to assert the opposite mechanism: the correction was
+    widened from 10 to 15 until the entered figure survived the drain. That
+    forced the number to hold but hid why it did not, by inventing 15 units
+    of production on the Black bucket and paying the blank bucket's
+    shortfall off to zero. The shortfall is real -- 15 frames were consumed
+    and the 10 the pool knew about are still on the shelf, so all 15 came
+    from stock this pool never recorded -- and a negative that says so is
+    worth more than a zero that does not.
     """
     frame_name, frame_id = _common_shortfall_fixture(erp_client)
 
@@ -1407,19 +1415,20 @@ def test_manual_correction_supersedes_the_calculation(erp_client):
     assert body["success"] is True
     assert body["data"]["newAvailableQty"] == 10  # what was entered, full stop
     assert body["data"]["requestedQty"] == 10
-    # (new - old) was 10; it took 15, because 5 had already been drawn
-    # against stock the pool never recorded.
+    # No widening: the drain cannot reach a figure it predates, so the
+    # delta the count implied is the delta that was applied.
     assert body["data"]["expectedDelta"] == 10
-    assert body["data"]["appliedDelta"] == 15
-    assert "worth auditing" in body["message"]
+    assert body["data"]["appliedDelta"] == 10
+    assert body["message"] == "Warehouse Pool stock adjusted successfully."
 
     after = _pool_by_color(erp_client, frame_name)
     assert after["Black"]["availableQty"] == 10
-    assert after["Black"]["producedQty"] == 25  # 10 opened + 15 of correction
-    assert after[""]["availableQty"] == 0  # the shortfall is paid off
+    # Seeded by the count, not accumulated through it.
+    assert after["Black"]["producedQty"] == 10
+    # All 15 came from stock the pool never recorded -- the 10 it did know
+    # about are still on the shelf. The negative is the signal.
+    assert after[""]["availableQty"] == -15
 
-    # One opening row per correction, carrying the delta the count actually
-    # implied -- the widening updates that row rather than adding a second.
     openings = _rpc(erp_client, "getWarehousePoolOpeningData").get_json()["data"]
     corrections = [
         o
@@ -1427,7 +1436,7 @@ def test_manual_correction_supersedes_the_calculation(erp_client):
         if o["outputItemName"] == frame_name and o["remarks"].startswith("Correction: ")
     ]
     assert len(corrections) == 1
-    assert corrections[0]["qty"] == 15
+    assert corrections[0]["qty"] == 10
 
     # The audit log keeps the figure that actually holds.
     history = _rpc(erp_client, "getWarehousePoolAdjustmentHistory").get_json()["data"]
@@ -1491,3 +1500,136 @@ def test_manual_correction_downward_still_cannot_drive_produced_negative(erp_cli
     assert body["success"] is False
     assert "produced stock" in body["message"]
     assert _pool_by_color(erp_client, frame_name)["Black"]["availableQty"] == 10
+# --- Recounts are counts, not differences (migration 045) --------------------
+#
+# The audit that produced these: 57 of 314 recounted buckets in the live
+# database no longer matched what the floor had counted, 691 units gross,
+# because a correction was stored as `new - old` and anything dated earlier
+# that arrived later landed underneath it. These four pin the shape of the
+# fix -- a recount states a shelf at a moment, and only what genuinely
+# follows that moment may move it again.
+
+
+def _stage_fed_by_pool(client, upstream_qty=500):
+    """An upstream process holding stock and a downstream one that consumes
+    it -- the smallest shape in which a lot can be saved at all, since every
+    lot must consume something."""
+    up_payload, up_id = _save_process(client)
+    up_name = up_payload["outputItemName"]
+    _rpc(
+        client,
+        "saveWarehousePoolOpening",
+        [{"processId": up_id, "qty": upstream_qty}],
+        mutation=True,
+    )
+    down_payload, down_id = _save_process(
+        client,
+        components=[
+            {
+                "itemName": up_name,
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "",
+            }
+        ],
+    )
+    return up_name, down_payload["outputItemName"], down_id
+
+
+def _make_lot(client, down_id, up_name, qty, when=None):
+    payload = {
+        "processId": down_id,
+        "assignedTo": "Worker A",
+        "status": "Completed",
+        "qty": qty,
+        "componentsConsumed": [
+            {"itemName": up_name, "qty": qty, "sourceType": "POOL"}
+        ],
+    }
+    if when is not None:
+        payload["date"] = when.isoformat()
+    body = _rpc(client, "saveProduction", [payload], mutation=True).get_json()
+    assert body["success"] is True, body["message"]
+    return body
+
+
+def test_a_recount_is_not_moved_by_a_lot_dated_before_it(erp_client):
+    """The exact defect: a lot dated three weeks ago, completed today.
+
+    Those units were already on the shelf when somebody counted it, so
+    crediting them again invents stock that was never made.
+    """
+    up_name, name, down_id = _stage_fed_by_pool(erp_client)
+
+    body = _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [name, down_id, "", "", 40, "physical recount"],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+    assert _pool_by_color(erp_client, name)[""]["availableQty"] == 40
+
+    _make_lot(erp_client, down_id, up_name, 12, date.today() - timedelta(days=21))
+
+    assert _pool_by_color(erp_client, name)[""]["availableQty"] == 40
+
+
+def test_a_recount_still_carries_everything_after_it_forward(erp_client):
+    """The other half: freezing the past must not freeze the future, or a
+    recount would turn the bucket into a permanent constant."""
+    up_name, name, down_id = _stage_fed_by_pool(erp_client)
+
+    _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [name, down_id, "", "", 40, "physical recount"],
+        mutation=True,
+    )
+    _make_lot(erp_client, down_id, up_name, 12)
+
+    assert _pool_by_color(erp_client, name)[""]["availableQty"] == 52
+
+
+def test_the_newest_recount_wins(erp_client):
+    """Two counts of the same shelf: the later one is the current truth and
+    replaces the earlier one rather than stacking on it."""
+    payload, proc_id = _save_process(erp_client)
+    name = payload["outputItemName"]
+
+    for counted in (40, 33):
+        body = _rpc(
+            erp_client,
+            "adjustWarehousePoolManually",
+            [name, proc_id, "", "", counted, "physical recount"],
+            mutation=True,
+        ).get_json()
+        assert body["success"] is True, body["message"]
+
+    assert _pool_by_color(erp_client, name)[""]["availableQty"] == 33
+
+
+def test_colour_agnostic_consumption_cannot_reach_a_later_recount(erp_client):
+    """Option A, settled draw by draw in date order.
+
+    The drain used to be one undated lump applied after every dated entry
+    and sized to the balance, so a recounted bucket was emptied by
+    consumption that had left the shelf before it was counted. Against the
+    live database 1,810 of the 2,003 units it drained were dated before the
+    count they drained.
+    """
+    frame_name, frame_id = _common_shortfall_fixture(erp_client)
+    assert _pool_by_color(erp_client, frame_name)["Black"]["availableQty"] == 0
+
+    _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [frame_name, frame_id, "", "Black", 10, "physical recount"],
+        mutation=True,
+    )
+
+    after = _pool_by_color(erp_client, frame_name)
+    assert after["Black"]["availableQty"] == 10
+    # The draw did not vanish -- it moved to where it belongs. All 15 came
+    # from stock the pool never recorded, and that stays visible.
+    assert after[""]["availableQty"] == -15

@@ -1988,6 +1988,11 @@ App.Stock = {
   // presentation choice and stays here.
   POOL_LEDGER_BADGES: {
     'Opening Stock': 'bg-info',
+    // A recount OPENS the ledger -- it states the shelf at a moment and
+    // everything before it is already inside that figure (migration 045).
+    // Read as a stocktake line, not as an adjustment inside the running
+    // balance, which is why it is marked apart from a plain correction.
+    Recount: 'bg-primary',
     'Manual Correction': 'bg-warning text-dark',
     'Production Credit': 'bg-success',
     'Production Consumption': 'bg-danger',

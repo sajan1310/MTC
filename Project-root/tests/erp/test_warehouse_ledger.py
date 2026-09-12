@@ -91,11 +91,17 @@ def test_ledger_closes_on_the_buckets_available_qty(erp_client):
     assert rows[0]["remarks"] == "Initial seed"
 
 
-def test_a_manual_correction_is_counted_once_not_twice(erp_client):
-    """adjustWarehousePoolManually writes the delta to
-    erp.warehouse_pool_opening AND an audit row to
-    erp.warehouse_pool_adjustments. Reading both is what used to apply every
-    correction twice and drift the running balance by the correction total.
+def test_a_recount_opens_the_ledger_and_is_counted_once(erp_client):
+    """adjustWarehousePoolManually writes to erp.warehouse_pool_opening AND
+    an audit row to erp.warehouse_pool_adjustments. Reading both is what
+    used to apply every correction twice and drift the running balance by
+    the correction total. Only the first is arithmetic.
+
+    Since migration 045 a recount also OPENS the ledger rather than
+    adjusting inside it: it states what was on the shelf at that moment, so
+    everything dated at or before it is already inside the figure and is not
+    replayed. That is how a stock ledger reads after a stocktake, and it is
+    what keeps the running balance equal to the bucket.
     """
     payload, process_id = _save_process(erp_client)
     _rpc(
@@ -112,12 +118,14 @@ def test_a_manual_correction_is_counted_once_not_twice(erp_client):
     )
 
     rows = _ledger(erp_client, payload["outputItemName"])
-    corrections = [r for r in rows if r["type"] == "Manual Correction"]
-    assert len(corrections) == 1
-    # -8 to get from 20 to 12, shown as an Out rather than a negative In.
-    assert corrections[0]["outQty"] == 8
-    assert corrections[0]["inQty"] == 0
-    assert corrections[0]["remarks"] == "Physical recount"
+    recounts = [r for r in rows if r["type"] == "Recount"]
+    assert len(recounts) == 1
+    # The count itself, not the -8 needed to reach it from 20.
+    assert recounts[0]["inQty"] == 12
+    assert recounts[0]["outQty"] == 0
+    assert recounts[0]["remarks"] == "Physical recount"
+    # The opening it supersedes is not replayed behind it.
+    assert [r["type"] for r in rows] == ["Recount"]
 
     assert (
         _closing(rows)
