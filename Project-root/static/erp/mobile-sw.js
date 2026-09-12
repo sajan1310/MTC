@@ -49,7 +49,18 @@
 // is no detail screen here, so these print the self-contained page in one
 // tap instead of two. Every desktop print template is now reachable from
 // this shell.
-const CACHE_NAME = 'erp-mobile-shell-v57';
+// v58: a form that is overtaken while it loads no longer repaints from
+// the load it no longer belongs to. Tap Edit on one lot, tap Edit on
+// another before the first lands, and the first response used to repaint
+// the form the second one was showing -- markup from lot A, editingLot
+// set to B, and saving wrote A's numbers onto B with nothing looking
+// wrong. Fourteen form openers were exposed; MApp.Bill was the only one
+// that had solved it, privately. MApp.Util.openGuard is that idiom once.
+//
+// Also: three numeric fields that accepted negatives they have no meaning
+// for, one that still opened a full keyboard instead of a keypad, and
+// card action rows that now wrap rather than clip a third button.
+const CACHE_NAME = 'erp-mobile-shell-v58';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

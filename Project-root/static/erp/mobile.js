@@ -299,6 +299,29 @@ MApp.Util = {
 
   // For a date input's default value / server payload — local YYYY-MM-DD,
   // not toISOString() (which shifts to UTC and can land on the wrong day).
+  // ── Stale-open guard ─────────────────────────────────────────────────
+  // A form that opens, awaits its reference data, then paints, can be
+  // overtaken: tap Edit on one lot, tap Edit on another before the first
+  // load lands, and the first response repaints the form the second one is
+  // now showing. The markup on screen is lot A's; `this.editingLot` is lot
+  // B. Saving then writes A's numbers onto B, and nothing looks wrong.
+  //
+  // MApp.Bill solved this for itself with a private _formSeq counter. This
+  // is that idiom, once, for every form that needs it:
+  //
+  //     const stale = MApp.Util.openGuard(this);
+  //     await this._ensureRefData();
+  //     if (stale()) return;
+  //
+  // Each owner gets its own counter, so two different sheets opening at
+  // once do not cancel each other.
+  openGuard(owner) {
+    const target = owner || {};
+    target._openSeq = (target._openSeq || 0) + 1;
+    const mine = target._openSeq;
+    return () => target._openSeq !== mine;
+  },
+
   todayInputValue() {
     const d = new Date();
     const pad = n => String(n).padStart(2, '0');
@@ -3813,6 +3836,7 @@ MApp.Production = {
 
   // ── Log Lot sheet ──────────────────────────────────────────────────
   async openLogLotSheet() {
+    const stale = MApp.Util.openGuard(this);
     this.editingLot = null;
     this.selection = { size: '', model: '', type: '', processId: '', process: null, productId: '', productName: '' };
     this.flatColors = [];
@@ -3838,6 +3862,7 @@ MApp.Production = {
 
     try {
       await this._ensureRefData();
+      if (stale()) return;
       document.getElementById('log-lot-body').innerHTML = this._formHtml();
     } catch (err) {
       MApp.Toast.error('Could not load production reference data: ' + (err.message || ''));
@@ -3858,6 +3883,7 @@ MApp.Production = {
   // machinery (onProcessSelected) but skips the size/model/type/process
   // cascade entirely, replacing it with a locked, read-only process label.
   async openEditSheet(lot) {
+    const stale = MApp.Util.openGuard(this);
     this.editingLot = lot;
     this.selection = { size: '', model: '', type: '', processId: lot.processId, process: null, productId: lot.productId || '', productName: lot.productName || '' };
     this.flatColors = [];
@@ -3882,6 +3908,7 @@ MApp.Production = {
 
     try {
       await this._ensureRefData();
+      if (stale()) return;
       const process = this.processById[lot.processId] || this.allProcesses.find(p => p.processId === lot.processId) || null;
       this.selection.process = process;
       document.getElementById('log-lot-body').innerHTML = this._editFormHtml(lot, process);
@@ -4909,7 +4936,7 @@ MApp.Dispatch = {
           </div>
           <div class="mb-card-sub mb-mt-2">${MApp.Util.escapeHtml(d.productName)}</div>
           <button type="button" class="mb-btn mb-btn-secondary mb-mt-2" style="min-height:40px;" data-print-idx="${idx}">Challan…</button>
-          <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+          <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4); flex-wrap:wrap;">
             <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-dispatch-action="edit" data-dispatch-number="${MApp.Util.escapeHtml(d.dispatchNumber)}">Edit</button>
             <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-dispatch-action="delete" data-dispatch-number="${MApp.Util.escapeHtml(d.dispatchNumber)}">Delete</button>
           </div>
@@ -4987,6 +5014,7 @@ MApp.Dispatch = {
 
   // ── New Dispatch sheet ──────────────────────────────────────────────
   async openNewDispatchSheet() {
+    const stale = MApp.Util.openGuard(this);
     this.editingDispatchNumber = null;
     this.selection = { clientName: '', logisticsContractor: '' };
     this.lines = [{ productId: '', productName: '', qty: '', readyQty: null }];
@@ -5006,6 +5034,7 @@ MApp.Dispatch = {
 
     try {
       await this._ensureRefData();
+      if (stale()) return;
       document.getElementById('new-dispatch-body').innerHTML = this._formHtml();
     } catch (err) {
       MApp.Toast.error('Could not load dispatch reference data: ' + (err.message || ''));
@@ -5025,6 +5054,7 @@ MApp.Dispatch = {
   // and reuses the header fields off any one of those rows (they're
   // duplicated per line in the flattened list).
   async openEditSheet(dispatchNumber) {
+    const stale = MApp.Util.openGuard(this);
     const groupLines = this.dispatches.filter(d => d.dispatchNumber === dispatchNumber);
     if (groupLines.length === 0) return;
     const header = groupLines[0];
@@ -5047,6 +5077,7 @@ MApp.Dispatch = {
 
     try {
       await this._ensureRefData();
+      if (stale()) return;
       document.getElementById('new-dispatch-body').innerHTML = this._formHtml();
 
       const setValue = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
@@ -5375,7 +5406,7 @@ MApp.Returns = {
             <div class="mb-card-sub">${MApp.Util.escapeHtml(r.returnDate || '')}</div>
           </div>
         </div>
-        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4); flex-wrap:wrap;">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-return-action="edit" data-return-index="${i}">Edit</button>
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-return-action="print" data-return-index="${i}">Print Note</button>
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-return-action="delete" data-return-index="${i}">Delete</button>
@@ -5397,6 +5428,7 @@ MApp.Returns = {
   },
 
   async openNewReturnSheet() {
+    const stale = MApp.Util.openGuard(this);
     this.editingReturnNumber = null;
     this.selection = { vendor: '' };
     this.lines = [{ name: '', size: '', unit: 'Pcs', qty: '', price: '', reason: '' }];
@@ -5416,6 +5448,7 @@ MApp.Returns = {
 
     try {
       await this._ensureRefData();
+      if (stale()) return;
       document.getElementById('log-return-body').innerHTML = this._formHtml();
     } catch (err) {
       MApp.Toast.error('Could not load return reference data: ' + (err.message || ''));
@@ -5446,6 +5479,7 @@ MApp.Returns = {
   // Dispatch/Production's flattened lists), so the tapped record already
   // carries its full `items` array; just adopt it as `this.lines`.
   async openEditSheet(record) {
+    const stale = MApp.Util.openGuard(this);
     this.editingReturnNumber = record.returnNumber;
     this.selection = { vendor: record.vendor || '' };
     this.lines = (record.items || []).map(it => ({
@@ -5468,6 +5502,7 @@ MApp.Returns = {
 
     try {
       await this._ensureRefData();
+      if (stale()) return;
       document.getElementById('log-return-body').innerHTML = this._formHtml();
 
       const dateEl = document.getElementById('return-date');
@@ -5831,7 +5866,7 @@ MApp.PO = {
         </div>
         <div class="mb-card-sub" style="margin-top:4px;">Qty: ${MApp.Util.formatQty(po.totalQty)} · Total: ${MApp.Util.formatCurrency(po.grandTotal)}</div>
         ${pendingLines ? `<div class="mb-card-sub" style="margin-top:4px;color:var(--mb-enamel-amber-ink);">${pendingLines}</div>` : ''}
-        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4); flex-wrap:wrap;">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-po-action="edit" data-po-index="${idx}">Edit</button>
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-po-action="delete" data-po-index="${idx}">Delete</button>
         </div>
@@ -5879,6 +5914,7 @@ MApp.PO = {
 
   // ── New PO sheet ─────────────────────────────────────────────────────
   async openNewSheet() {
+    const stale = MApp.Util.openGuard(this);
     this.editingPoNumber = null;
     this.selection = { vendor: '', contact: '' };
     this.lines = [{ name: '', size: '', unit: 'Pcs', qty: '', price: '' }];
@@ -5898,6 +5934,7 @@ MApp.PO = {
 
     try {
       await this._ensureNewPoRefData();
+      if (stale()) return;
       document.getElementById('new-po-body').innerHTML = this._newPoFormHtml();
     } catch (err) {
       MApp.Toast.error('Could not load PO reference data: ' + (err.message || ''));
@@ -5917,6 +5954,7 @@ MApp.PO = {
   // just adopt it as `this.lines`. PO number itself is left unchanged
   // (existingPoNumber only) -- renaming a PO number is a desktop task.
   async openEditSheet(po) {
+    const stale = MApp.Util.openGuard(this);
     this.editingPoNumber = po.poNumber;
     this.selection = { vendor: po.vendor || '', contact: po.contact || '' };
     this.lines = (po.items || []).map(it => ({
@@ -5938,6 +5976,7 @@ MApp.PO = {
 
     try {
       await this._ensureNewPoRefData();
+      if (stale()) return;
       document.getElementById('new-po-body').innerHTML = this._newPoFormHtml();
 
       const setValue = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
@@ -6273,7 +6312,7 @@ MApp.Bill = {
         </div>
         <div class="mb-card-sub" style="margin-top:4px;">Qty: ${MApp.Util.formatQty(bill.totalQty)} · Total: ${MApp.Util.formatCurrency(bill.totalAmount)}</div>
         <div class="mb-card-sub" style="margin-top:4px;">${poRef}</div>
-        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4); flex-wrap:wrap;">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-bill-action="edit" data-bill-index="${idx}">Edit</button>
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-bill-action="delete" data-bill-index="${idx}">Delete</button>
         </div>
@@ -6843,7 +6882,7 @@ MApp.Issue = {
           </div>
         </div>
         ${r.reference ? `<div class="mb-card-sub mb-mt-2">Ref: ${MApp.Util.escapeHtml(r.reference)}</div>` : ''}
-        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4); flex-wrap:wrap;">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-issue-action="edit" data-issue-index="${i}">Edit</button>
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-issue-action="delete" data-issue-index="${i}">Delete</button>
         </div>
@@ -6870,6 +6909,7 @@ MApp.Issue = {
   // screen could not, so correcting a mistyped issue meant deleting the
   // record and retyping it.
   async openForm(record) {
+    const stale = MApp.Util.openGuard(this);
     this.editingIssueId = record ? record.issueId : null;
     this.lines = record && (record.items || []).length
       ? record.items.map(it => ({
@@ -6896,6 +6936,7 @@ MApp.Issue = {
       // Always refetch (not just "if empty") so an item added earlier in
       // this same session shows up in the picker without a page reload.
       const itemsRes = await MApp.Api.call('getItemsData');
+      if (stale()) return;
       this.items = (itemsRes && itemsRes.success) ? (itemsRes.data || []) : [];
       document.getElementById('issue-form-body').innerHTML = this._formHtml();
     } catch (err) {
@@ -7202,7 +7243,7 @@ MApp.Wastage = {
             <div class="mb-card-sub">${MApp.Util.escapeHtml(r.date || '')}</div>
           </div>
         </div>
-        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4); flex-wrap:wrap;">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-wastage-action="edit" data-wastage-index="${i}">Edit</button>
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-wastage-action="delete" data-wastage-index="${i}">Delete</button>
         </div>
@@ -7228,6 +7269,7 @@ MApp.Wastage = {
   // one optional field), so the server could edit a wastage record while
   // the screen could only delete and retype it.
   async openForm(record) {
+    const stale = MApp.Util.openGuard(this);
     this.editingWastageId = record ? record.wastageId : null;
     this._editingRecord = record || null;
     this.lines = record && (record.items || []).length
@@ -7254,6 +7296,7 @@ MApp.Wastage = {
       // Always refetch (not just "if empty") so an item added earlier in
       // this same session shows up in the picker without a page reload.
       const itemsRes = await MApp.Api.call('getItemsData');
+      if (stale()) return;
       this.items = (itemsRes && itemsRes.success) ? (itemsRes.data || []) : [];
       document.getElementById('wastage-form-body').innerHTML = this._formHtml();
     } catch (err) {
@@ -7427,6 +7470,7 @@ MApp.Items = {
   photoBase64: null,
 
   async openLookupSheet() {
+    const stale = MApp.Util.openGuard(this);
     const listEl = document.getElementById('items-lookup-list');
     const searchInput = document.getElementById('items-lookup-search');
     if (searchInput) searchInput.value = '';
@@ -7437,6 +7481,7 @@ MApp.Items = {
 
     try {
       const res = await MApp.Api.call('getItemsData');
+      if (stale()) return;
       if (!res || !res.success) {
         MApp.Util.renderError(listEl, res && res.message, () => this.openLookupSheet());
         return;
@@ -7510,7 +7555,7 @@ MApp.Items = {
           </div>` : `<div class="mb-card-sub">${MApp.Util.escapeHtml(it.baseUnit)}</div>`}
         </div>
         ${it.isLowStock ? '<div class="mb-mt-2"><span class="mb-chip mb-chip-lowstock">Low stock</span></div>' : ''}
-        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4); flex-wrap:wrap;">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-item-action="edit" data-edit-item="${i}">Edit</button>
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-item-action="processes" data-edit-item="${i}">Used in</button>
         </div>
@@ -7596,12 +7641,12 @@ MApp.Items = {
       </div>
       <div class="mb-field">
         <label for="item-form-weight">Weight per Base Unit</label>
-        <input type="number" id="item-form-weight" inputmode="decimal" step="any" value="${it.weightPerBaseUnit != null ? it.weightPerBaseUnit : ''}">
+        <input type="number" id="item-form-weight" inputmode="decimal" min="0" step="any" value="${it.weightPerBaseUnit != null ? it.weightPerBaseUnit : ''}">
       </div>
       ${!this.editingItem ? `
       <div class="mb-field">
         <label for="item-form-initial-stock">Initial Stock</label>
-        <input type="number" id="item-form-initial-stock" inputmode="decimal" step="any" placeholder="0">
+        <input type="number" id="item-form-initial-stock" inputmode="decimal" min="0" step="any" placeholder="0">
       </div>` : ''}
       <div class="mapp-section-label mb-mt-4">Vendors &amp; Rates</div>
       <div id="item-form-vendor-rows">${this._vendorRowsHtml()}</div>
@@ -7619,7 +7664,7 @@ MApp.Items = {
         </div>
         <div class="mb-field" style="margin-bottom:0;">
           <label>Rate</label>
-          <input type="number" inputmode="decimal" step="any" value="${row.rate != null ? row.rate : ''}" oninput="MApp.Items.updateVendorRow(${i}, 'rate', this.value)">
+          <input type="number" inputmode="decimal" min="0" step="any" value="${row.rate != null ? row.rate : ''}" oninput="MApp.Items.updateVendorRow(${i}, 'rate', this.value)">
         </div>
         <button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" onclick="MApp.Items.removeVendorRow(${i})">Remove</button>
       </div>
@@ -7910,7 +7955,7 @@ MApp.Directory = {
           <div class="mb-card-title">${MApp.Util.escapeHtml(MApp.Util.formatNameCase(e.name))}</div>
           <div class="mb-card-sub">${contactHtml}</div>
           ${e.address ? `<div class="mb-card-sub" style="margin-top:2px;">${MApp.Util.escapeHtml(e.address)}</div>` : ''}
-          <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">${actionsHtml}</div>
+          <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4); flex-wrap:wrap;">${actionsHtml}</div>
         </div>
       `;
     }).join('') + MApp.Paging.moreHtml(page);
@@ -8287,7 +8332,7 @@ MApp.Roles = {
             <div class="mb-card-sub">${r.userCount === 1 ? 'user' : 'users'}</div>
           </div>
         </div>
-        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4); flex-wrap:wrap;">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-role-action="edit" data-role-index="${i}">Edit</button>
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-role-action="delete" data-role-index="${i}">Delete</button>
         </div>
@@ -8525,7 +8570,7 @@ MApp.Admin = {
     listEl.innerHTML = page.rows.map((u, i) => {
       const isSelf = u.email.toLowerCase() === myEmail;
       const actions = isSelf ? '<div class="mb-mt-2 mb-text-sm mb-text-steel">This is you</div>' : `
-        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4); flex-wrap:wrap;">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-admin-action="role" data-admin-index="${i}">Change Role</button>
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;${u.active ? 'color:var(--mb-enamel-red-ink);' : ''}" data-admin-action="${u.active ? 'deactivate' : 'reactivate'}" data-admin-index="${i}">${u.active ? 'Deactivate' : 'Reactivate'}</button>
         </div>`;
@@ -8814,7 +8859,7 @@ MApp.Process = {
           </div>
         </div>
         ${!p.active ? '<div class="mb-mt-2"><span class="mb-chip mb-chip-cancelled">Inactive</span></div>' : ''}
-        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4); flex-wrap:wrap;">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-process-action="edit" data-process-index="${i}">Edit</button>
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-process-action="wip" data-process-index="${i}">Availability</button>
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-process-action="colors" data-process-index="${i}">Colours</button>
@@ -8900,6 +8945,7 @@ MApp.Process = {
   },
 
   async openForm(process) {
+    const stale = MApp.Util.openGuard(this);
     const mySeq = ++this._formSeq;
     this.editingProcess = process || null;
     this.preservedComponents = [];
@@ -8923,6 +8969,7 @@ MApp.Process = {
         const itemsRes = await MApp.Api.call('getItemsData');
         if (mySeq !== this._formSeq) return;
         this.items = (itemsRes && itemsRes.success) ? (itemsRes.data || []) : [];
+        if (stale()) return;
       }
 
       if (process) {
@@ -8974,7 +9021,7 @@ MApp.Process = {
       </div>
       <div class="mb-field">
         <label for="process-form-sequence">Sequence</label>
-        <input type="number" id="process-form-sequence" min="1" step="1" value="${process ? process.sequence : ''}">
+        <input type="number" id="process-form-sequence" inputmode="numeric" min="1" step="1" value="${process ? process.sequence : ''}">
       </div>
       <div class="mb-field">
         <label for="process-form-prefix">Lot Prefix</label>
@@ -9320,7 +9367,7 @@ MApp.BOM = {
             ${reorderable ? MApp.Reorder.controlsHtml('bom-move', this.products.indexOf(p), this.products.length) : ''}
           </div>
         </div>
-        <div class="mb-mt-2" style="display:flex;gap:var(--mb-sp-4);">
+        <div class="mb-mt-2" style="display:flex;gap:var(--mb-sp-4);flex-wrap:wrap;">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-bom-index="${i}">Edit</button>
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-bom-print="${i}">Cost Sheet</button>
         </div>
@@ -9368,6 +9415,7 @@ MApp.BOM = {
   },
 
   async openForm(product) {
+    const stale = MApp.Util.openGuard(this);
     this.editingProduct = product || null;
     this.components = product
       ? (product.components || []).map(c => ({ ...c }))
@@ -9391,7 +9439,8 @@ MApp.BOM = {
         const itemsRes = await MApp.Api.call('getItemsData');
         this.items = (itemsRes && itemsRes.success) ? (itemsRes.data || []) : [];
       }
-      document.getElementById('bom-form-body').innerHTML = this._formHtml(product);
+            if (stale()) return;
+document.getElementById('bom-form-body').innerHTML = this._formHtml(product);
     } catch (err) {
       MApp.Toast.error('Could not load reference data: ' + (err.message || ''));
       this.closeForm();
@@ -10319,7 +10368,7 @@ MApp.Master = {
     : (r.remarks ? `<div class="mb-card-sub">${MApp.Util.escapeHtml(r.remarks)}</div>` : '')}
           </div>
         </div>
-        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4); flex-wrap:wrap;">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-master-action="edit" data-master-index="${i}">Edit</button>
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-master-action="delete" data-master-index="${i}">Delete</button>
         </div>
@@ -10893,7 +10942,7 @@ MApp.DispatchPlan = {
     // refuses to edit or remove one, so offering either would be
     // offering a save that bounces.
     ? `<div class="mb-mt-2"><span class="mb-chip mb-chip-completed">Dispatched${l.fulfilledDispatchNumber ? ' · ' + MApp.Util.escapeHtml(l.fulfilledDispatchNumber) : ''}</span></div>`
-    : `<div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+    : `<div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4); flex-wrap:wrap;">
              <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-plan-action="edit" data-plan-line="${l.lineId}">Edit</button>
              <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-plan-action="remove" data-plan-line="${l.lineId}">Remove</button>
            </div>`}
@@ -10912,6 +10961,7 @@ MApp.DispatchPlan = {
 
   // ── The form ─────────────────────────────────────────────────────────
   async openForm(line) {
+    const stale = MApp.Util.openGuard(this);
     this.editing = line || null;
     this.selection = {
       clientName: line ? line.clientName : '',
@@ -10936,6 +10986,7 @@ MApp.DispatchPlan = {
       MApp.Api.call('getClientsData').catch(() => null),
       MApp.Api.call('getBOMProductionData').catch(() => null)
     ]);
+      if (stale()) return;
     this.clients = clientsRes && clientsRes.success ? (clientsRes.data || []) : [];
     this.products = productsRes && productsRes.success ? (productsRes.data || []) : [];
   },
@@ -11213,6 +11264,7 @@ MApp.ClientOrders = {
 
   // ── Form ─────────────────────────────────────────────────────────────
   async openForm(order) {
+    const stale = MApp.Util.openGuard(this);
     this.editing = order || null;
     this.selection = {
       clientName: order ? order.clientName : '',
@@ -11246,7 +11298,8 @@ MApp.ClientOrders = {
       MApp.Api.call('getClientsData').catch(() => null),
       MApp.Api.call('getBOMProductionData').catch(() => null)
     ]);
-    this.clients = clientsRes && clientsRes.success ? (clientsRes.data || []) : [];
+        if (stale()) return;
+this.clients = clientsRes && clientsRes.success ? (clientsRes.data || []) : [];
     this.products = productsRes && productsRes.success ? (productsRes.data || []) : [];
   },
 
@@ -12835,6 +12888,7 @@ MApp.PoolOpenings = {
 
   // ── The form ─────────────────────────────────────────────────────────
   async openForm() {
+    const stale = MApp.Util.openGuard(this);
     this.selection = { processId: '', process: null, color: '', productTag: '' };
     ['pool-opening-qty', 'pool-opening-remarks', 'pool-opening-output'].forEach(id => {
       const el = document.getElementById(id);
@@ -12852,7 +12906,8 @@ MApp.PoolOpenings = {
       MApp.Api.call('getProcessData').catch(() => null),
       MApp.Api.call('getBOMProductionData').catch(() => null)
     ]);
-    this.processes = procRes && procRes.success ? (procRes.data || []).filter(p => p.active) : [];
+        if (stale()) return;
+this.processes = procRes && procRes.success ? (procRes.data || []).filter(p => p.active) : [];
     this.products = bomRes && bomRes.success ? (bomRes.data || []) : [];
   },
 
