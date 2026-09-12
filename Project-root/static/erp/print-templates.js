@@ -1101,7 +1101,14 @@ const PrintTemplates = {
             narration: line.narration || '-',
             vendor: po.vendor,
             masterRate: null,
-            latestPoRate: line.price
+            // baseRate, not price. `price` is per ENTERED unit: a spoke
+            // ordered by the Gross carries 94.00 there and 0.6528 in
+            // baseRate, and the Item Master rate beside it is per piece.
+            // Comparing them printed a 144x price rise that did not
+            // happen, on the one table whose whole job is spotting a
+            // price change. The server has computed baseRate since
+            // po_service went in and nothing on the client had used it.
+            latestPoRate: line.baseRate != null ? line.baseRate : line.price
           };
         }
       });
@@ -1356,7 +1363,7 @@ const PrintTemplates = {
         ].join('|');
         let entry = index.get(key);
         if (!entry) { entry = { total: 0, byBill: new Map() }; index.set(key, entry); }
-        const qty = Number(bItem.baseQty) || 0;
+        const qty = this._baseUnits(bItem);
         entry.total += qty;
         entry.byBill.set(billNumber, (entry.byBill.get(billNumber) || 0) + qty);
       });
@@ -1381,6 +1388,15 @@ const PrintTemplates = {
     return entry.total;
   },
 
+  // How many base units a line represents. Mirrors po_service's own
+  // `effective_base_qty`: a legacy row that never went through unit
+  // conversion carries baseQty 0, and is 1:1 with its as-entered qty
+  // rather than being worth nothing.
+  _baseUnits(line) {
+    const base = Number((line || {}).baseQty) || 0;
+    return base > 0 ? base : (Number((line || {}).qty) || 0);
+  },
+
   pendingByItem(pos, bills) {
     const index = this.billedQtyIndex(bills);
     const map = new Map();
@@ -1389,7 +1405,10 @@ const PrintTemplates = {
         const name = String(line.name || '').trim();
         if (!name) return;
         const size = String(line.size || '').trim();
-        const ordered = Number(line.baseQty) || 0;
+        // Same fallback po_service applies: baseQty 0 means the row
+        // predates unit conversion, not that nothing was ordered. Without
+        // it every legacy line silently vanished from what is still owed.
+        const ordered = this._baseUnits(line);
         if (ordered <= 0) return;
 
         const billed = this.billedQty(index, po.poNumber, name, size, line.narration);
@@ -1652,11 +1671,20 @@ const PrintTemplates = {
 
     let itemMap = {};
 
+    // Ordered and received in BASE units, which is what the server's own
+    // remaining-qty calculations use (po_service, bill_service and
+    // dashboard_service all subtract base quantities) and what the Item
+    // Ledger reports. As-entered quantities made this table disagree with
+    // that one by the conversion factor -- 280 here against 40,320 there
+    // for the same outstanding spokes, neither stating a unit. It is also
+    // only safe while a PO and its bills share one unit: nothing enforces
+    // that, and the first bill entered in Pcs against a PO in Gross would
+    // have made this subtraction meaningless.
     vendorPOs.forEach(po => {
-      po.items.forEach(i => {
+      (po.items || []).forEach(i => {
         const key = `${i.name}|${i.size || ''}`;
         if (!itemMap[key]) itemMap[key] = { name: i.name, size: i.size, ordered: 0, received: 0 };
-        itemMap[key].ordered += (Number(i.qty) || 0);
+        itemMap[key].ordered += this._baseUnits(i);
       });
     });
 
@@ -1664,7 +1692,7 @@ const PrintTemplates = {
       b.items.forEach(i => {
         const name = typeof i === 'object' ? i.name : String(i).split(' [')[0];
         const size = typeof i === 'object' ? (i.size || '') : '';
-        const qty = typeof i === 'object' ? (Number(i.qty) || 0) : 0;
+        const qty = typeof i === 'object' ? this._baseUnits(i) : 0;
         const key = `${name}|${size}`;
         if (itemMap[key]) {
           itemMap[key].received += qty;

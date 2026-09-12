@@ -60,7 +60,12 @@
 // Also: three numeric fields that accepted negatives they have no meaning
 // for, one that still opened a full keyboard instead of a keypad, and
 // card action rows that now wrap rather than clip a third button.
-const CACHE_NAME = 'erp-mobile-shell-v58';
+// v59: the same two ledger fixes, plus the PO Print Options this shell
+// never had -- Rates and Total can be hidden from the action sheet, and
+// the choice is remembered, because whoever sends a PO out for a quote
+// sends every PO out for a quote. MApp.Prefs is the one place those
+// remembered choices now live.
+const CACHE_NAME = 'erp-mobile-shell-v59';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

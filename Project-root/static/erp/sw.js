@@ -318,7 +318,14 @@
 // print-templates.js. Desktop's output is unchanged -- moved, not
 // rewritten -- except the client sheet, which desktop never had as a page
 // at all and still prints by copying its modal.
-const CACHE_NAME = 'erp-shell-v67';
+// v68: two arithmetic bugs in documents both shells print. The Item
+// Ledger's rate comparison read `price` (per ENTERED unit) against the
+// Item Master rate (per piece), showing a 144x price rise on anything
+// bought by the Gross -- baseRate was on the wire all along and no client
+// had read it. And the Vendor Ledger's pending figures were as-entered
+// where the Item Ledger and every server calculation use base units.
+// Both tables now say which unit they are in.
+const CACHE_NAME = 'erp-shell-v68';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

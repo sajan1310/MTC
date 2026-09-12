@@ -1820,6 +1820,51 @@ MApp.PullToRefresh = {
 // print.html, the same templates desktop's App.Print populates), calls
 // window.print(), restores on 'afterprint'.
 // ================================================================
+// ================================================================
+// PREFS — the choices a person makes once and should not have to make
+// again. Four things already kept their own localStorage key (the last
+// tab, the Home layout, the tab bar, the theme); this is one place for
+// everything after that, so a new preference is a line rather than a
+// fifth private key-and-try/catch.
+//
+// Per browser, not per account: these are "how I like this phone to
+// behave", and there is no server round trip in the way of reading them.
+// Storage can be unavailable (a private window, cleared site data), so
+// every read falls back to the supplied default and every write is
+// allowed to fail silently -- a remembered preference is a convenience
+// and must never be the reason a screen does not open.
+// ================================================================
+MApp.Prefs = {
+  KEY: 'mapp.prefs.v1',
+  _cache: null,
+
+  _all() {
+    if (this._cache) return this._cache;
+    let stored = null;
+    try { stored = JSON.parse(localStorage.getItem(this.KEY) || 'null'); }
+    catch (e) { stored = null; }
+    this._cache = (stored && typeof stored === 'object') ? stored : {};
+    return this._cache;
+  },
+
+  get(key, fallback) {
+    const all = this._all();
+    return Object.prototype.hasOwnProperty.call(all, key) ? all[key] : fallback;
+  },
+
+  set(key, value) {
+    const all = this._all();
+    all[key] = value;
+    try { localStorage.setItem(this.KEY, JSON.stringify(all)); }
+    catch (e) { /* storage unavailable -- the preference lasts this session */ }
+    return value;
+  },
+
+  toggle(key, fallback) {
+    return this.set(key, !this.get(key, fallback));
+  }
+};
+
 MApp.Print = {
   // What print-templates.js asks for, in this shell's spelling. Desktop's
   // App.Print.templateDeps() is the same object said in App.Utils terms;
@@ -2103,17 +2148,42 @@ MApp.Print = {
   // `populate` fills the print container for the record in question --
   // the same call the Print path makes -- so all three actions describe
   // one document.
-  async chooseAction({ containerId, filename, title, populate, landscape }) {
-    const items = [
-      { value: 'print', label: 'Print', sublabel: 'Opens the print dialog' },
-      { value: 'download', label: 'Download PDF', sublabel: 'Saves a file' }
-    ];
-    if (this.canShareFiles()) {
-      items.push({ value: 'share', label: 'Share', sublabel: 'Send it from this phone' });
-    }
+  // `toggles` are per-document switches -- desktop's Print Options
+  // checkboxes, which this shell had nowhere to put. Each is
+  // { key, label, on, onLabel, offLabel }; tapping one flips the stored
+  // preference and reopens the list, so the state is visible at the moment
+  // of choosing rather than buried in a settings screen. The choice is
+  // remembered (MApp.Prefs), because somebody who prints POs without rates
+  // prints every PO without rates.
+  async chooseAction({ containerId, filename, title, populate, landscape, toggles }) {
+    const switches = toggles || [];
+    for (;;) {
+      const items = [
+        { value: 'print', label: 'Print', sublabel: 'Opens the print dialog' },
+        { value: 'download', label: 'Download PDF', sublabel: 'Saves a file' }
+      ];
+      if (this.canShareFiles()) {
+        items.push({ value: 'share', label: 'Share', sublabel: 'Send it from this phone' });
+      }
+      switches.forEach((t, i) => items.push({
+        value: `toggle:${i}`,
+        label: t.on() ? t.onLabel : t.offLabel,
+        sublabel: 'Tap to change'
+      }));
 
-    const picked = await MApp.Picker.open({ title: title || 'Document', items });
-    if (!picked) return;
+      const chosen = await MApp.Picker.open({
+        title: title || 'Document', items, searchable: false
+      });
+      if (!chosen) return;
+      if (String(chosen.value).startsWith('toggle:')) {
+        switches[Number(String(chosen.value).split(':')[1])].flip();
+        continue;
+      }
+      return this._runAction(chosen, { containerId, filename, landscape, populate });
+    }
+  },
+
+  async _runAction(picked, { containerId, filename, landscape, populate }) {
 
     // Awaited: the challan's populate has to fetch Client Master and
     // Items Master for the consignee's GSTIN and each line's HSN, and an
@@ -5891,6 +5961,21 @@ MApp.PO = {
 
   // Print, Download and Share over one populated container, so all three
   // describe the same document.
+  // Desktop's two Print Options checkboxes, which this shell had no
+  // equivalent of: a PO sent to a vendor for a quote should not carry the
+  // rates you already agreed, and a PO printed for the gate needs neither
+  // rates nor a total. Both are remembered, because whoever prints POs
+  // without rates prints every PO without rates.
+  PREF_RATES: 'po.print.includeRates',
+  PREF_TOTAL: 'po.print.includeTotal',
+
+  _printOptions() {
+    return {
+      includeRates: MApp.Prefs.get(this.PREF_RATES, true),
+      includeTotal: MApp.Prefs.get(this.PREF_TOTAL, true)
+    };
+  },
+
   documentActions(index) {
     const po = this.pos[index];
     if (!po) return;
@@ -5898,6 +5983,22 @@ MApp.PO = {
       containerId: 'print-po-container',
       filename: this._printTitle(po),
       title: `PO ${po.poNumber}`,
+      toggles: [
+        {
+          on: () => MApp.Prefs.get(this.PREF_RATES, true),
+          flip: () => MApp.Prefs.toggle(this.PREF_RATES, true),
+          onLabel: 'Rates: shown', offLabel: 'Rates: hidden'
+        },
+        {
+          // A total with no rates to add up is a number from nowhere, so
+          // hiding the rates hides the total with them -- which is what
+          // the shared builder does too.
+          on: () => MApp.Prefs.get(this.PREF_RATES, true)
+            && MApp.Prefs.get(this.PREF_TOTAL, true),
+          flip: () => MApp.Prefs.toggle(this.PREF_TOTAL, true),
+          onLabel: 'Total: shown', offLabel: 'Total: hidden'
+        }
+      ],
       populate: () => this._populatePrintData(po)
     });
   },
@@ -5909,7 +6010,7 @@ MApp.PO = {
   // copy printed the vendor raw where desktop title-cases it, and had
   // drifted on the rate/total columns.
   _populatePrintData(po) {
-    PrintTemplates.poDocument(po, MApp.Print.templateDeps());
+    PrintTemplates.poDocument(po, MApp.Print.templateDeps(), this._printOptions());
   },
 
   // ── New PO sheet ─────────────────────────────────────────────────────
