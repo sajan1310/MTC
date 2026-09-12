@@ -867,106 +867,16 @@ App.PO = {
 
   // ── Print / PDF (dead code until App.Print exists) ─────────────────
 
+  // See bill.js -- the builder is shared with MApp so both shells print
+  // one PO. The two Print Options checkboxes stay here: they are desktop
+  // UI, and the builder takes their answer rather than reading the DOM.
   populatePrintData(index) {
     const po = App.State.globalPOs[index];
     if (!po) return null;
-
-    const includeRates = document.getElementById('printWithRates')?.checked ?? true;
-    const includeTotal = document.getElementById('printWithTotal')?.checked ?? true;
-
-    const setText = (id, val) => {
-      const el = document.getElementById(id);
-      if (el) el.innerText = val ?? '';
-    };
-
-    setText('print-vendor', App.Utils.formatNameCase(po.vendor));
-    setText('print-contact', po.contact || '');
-    setText('print-supp-rem', po.supplierRemarks || '');
-    setText('print-ponum', po.poNumber || '');
-    setText('print-date', po.poDate || '');
-    setText('print-desc', po.poDescription || '');
-    setText('print-remarks', po.poRemarks || '');
-
-    const BRAND = App.BRAND_COLOR;
-    const thBase = `padding:8px 6px;background-color:${BRAND};color:#fff;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border:1px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;`;
-    const tdBase = 'padding:7px 6px;border:1px solid #e5e5e5;word-break:break-word;overflow-wrap:break-word;font-size:12px;';
-
-    const head = document.getElementById('print-table-head');
-    if (head) {
-      if (includeRates) {
-        head.innerHTML = includeTotal
-          ? `<tr>
-            <th style="${thBase}width:5%;text-align:center">#</th>
-            <th style="${thBase}width:20%;text-align:left">Item Name</th>
-            <th style="${thBase}width:17%;text-align:left">Narration</th>
-            <th style="${thBase}width:12%;text-align:left">Size</th>
-            <th style="${thBase}width:14%;text-align:center">Qty</th>
-            <th style="${thBase}width:14%;text-align:right">Rate</th>
-            <th style="${thBase}width:18%;text-align:right">Total</th>
-           </tr>`
-          : `<tr>
-            <th style="${thBase}width:5%;text-align:center">#</th>
-            <th style="${thBase}width:25%;text-align:left">Item Name</th>
-            <th style="${thBase}width:22%;text-align:left">Narration</th>
-            <th style="${thBase}width:15%;text-align:left">Size</th>
-            <th style="${thBase}width:15%;text-align:center">Qty</th>
-            <th style="${thBase}width:18%;text-align:right">Rate</th>
-           </tr>`;
-      } else {
-        head.innerHTML = `<tr>
-        <th style="${thBase}width:5%;text-align:center">#</th>
-        <th style="${thBase}width:30%;text-align:left">Item Name</th>
-        <th style="${thBase}width:28%;text-align:left">Narration</th>
-        <th style="${thBase}width:15%;text-align:left">Size</th>
-        <th style="${thBase}width:22%;text-align:center">Quantity</th>
-       </tr>`;
-      }
-    }
-
-    let grandTotal = 0;
-
-    const bodyHtml = (po.items || [])
-      .map((item, idx) => {
-        const qty = toNumber(item.qty);
-        const price = toNumber(item.price);
-        const rowBg = idx % 2 === 0 ? '#ffffff' : '#FFF5F5';
-        const rowStyle = `background-color:${rowBg};-webkit-print-color-adjust:exact;print-color-adjust:exact;page-break-inside:avoid;break-inside:avoid;`;
-
-        let row = `
-      <tr style="${rowStyle}">
-        <td style="${tdBase}text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
-        <td style="${tdBase}text-align:left;font-weight:600;">${escapeHtml(item.name || '')}</td>
-        <td style="${tdBase}text-align:left;color:#555;">${escapeHtml(item.narration || '')}</td>
-        <td style="${tdBase}text-align:left;">${escapeHtml(item.size || '')}</td>
-        <td style="${tdBase}text-align:center;font-weight:600;">${escapeHtml(String(qty))} ${escapeHtml(item.unit || 'Pcs')}</td>`;
-
-        if (includeRates) {
-          row += `<td style="${tdBase}text-align:right;">${formatCurrency(price)}</td>`;
-          if (includeTotal) {
-            const lineTotal = qty * price;
-            grandTotal += lineTotal;
-            row += `<td style="${tdBase}text-align:right;font-weight:700;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${formatCurrency(lineTotal)}</td>`;
-          }
-        }
-
-        return row + '</tr>';
-      })
-      .join('');
-
-    const tblBody = document.getElementById('print-items-body');
-    if (tblBody) tblBody.innerHTML = bodyHtml;
-
-    const totalContainer = document.getElementById(
-      'print-grand-total-container'
-    );
-    if (includeRates && includeTotal) {
-      setText('print-grand-total', toNumber(grandTotal).toFixed(2));
-      if (totalContainer) totalContainer.style.display = 'block';
-    } else if (totalContainer) {
-      totalContainer.style.display = 'none';
-    }
-
-    return po;
+    return PrintTemplates.poDocument(po, App.Print.templateDeps(), {
+      includeRates: document.getElementById('printWithRates')?.checked ?? true,
+      includeTotal: document.getElementById('printWithTotal')?.checked ?? true
+    });
   },
 
   print(index) {

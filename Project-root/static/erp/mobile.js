@@ -1422,6 +1422,13 @@ MApp.Sheet = {
   // time -- which matters through indirection like popstate -> onDismiss
   // -> Picker.cancel() -> Sheet.close().
   _inPopstate: false,
+  // How many history entries close() has asked the browser to unwind that
+  // have not come back as popstate yet. history.back() is asynchronous, so
+  // without this the popstate it causes arrives AFTER the sheet is already
+  // off the stack and gets read as a Back press against the sheet
+  // underneath. Picking a vendor in New Bill closed the whole bill form
+  // that way -- and so did every other picker opened over a form.
+  _pendingBack: 0,
   DRAG_DISMISS_PX: 110,
 
   open(sheetId, opts) {
@@ -1473,7 +1480,14 @@ MApp.Sheet = {
     // closing something mid-stack out of order would pop the wrong entry,
     // and leaving that one behind is the safer of the two failures.
     if (!fromHistory && !this._inPopstate && wasTop) {
-      try { history.back(); } catch (e) { /* history API unavailable */ }
+      // Counted, not flagged: two sheets can close in the same tick (a
+      // picker resolving a form that then saves and closes itself), and a
+      // boolean would let the second popstate through to dismiss a third
+      // sheet that nobody asked to close.
+      try {
+        history.back();
+        this._pendingBack += 1;
+      } catch (e) { /* history API unavailable */ }
     }
   },
 
@@ -1490,6 +1504,13 @@ MApp.Sheet = {
 
   initHistory() {
     window.addEventListener('popstate', () => {
+      // Our own history.back() coming back to us. The sheet it belonged to
+      // is already closed; dismissing anything now would take a sheet the
+      // user is still using.
+      if (this._pendingBack > 0) {
+        this._pendingBack -= 1;
+        return;
+      }
       if (this._stack.length === 0) return; // not ours -- let Shell's hashchange handle it
       this._inPopstate = true;
       try {
@@ -1777,6 +1798,26 @@ MApp.PullToRefresh = {
 // window.print(), restores on 'afterprint'.
 // ================================================================
 MApp.Print = {
+  // What print-templates.js asks for, in this shell's spelling. Desktop's
+  // App.Print.templateDeps() is the same object said in App.Utils terms;
+  // between them they are the whole shell-specific part of a document.
+  // sameText is deliberately absent -- the shared default already matches
+  // App.Utils.sameText exactly, and a second spelling of it is one more
+  // thing to drift.
+  templateDeps() {
+    return {
+      escapeHtml: MApp.Util.escapeHtml.bind(MApp.Util),
+      toNumber: MApp.Util.toNumber.bind(MApp.Util),
+      formatCurrency: MApp.Util.formatCurrency.bind(MApp.Util),
+      formatNameCase: MApp.Util.formatNameCase.bind(MApp.Util),
+      brandColor: MApp.Print.BRAND_COLOR
+    };
+  },
+
+  // Desktop's App.BRAND_COLOR. The printed PO's table header is this red
+  // on both shells.
+  BRAND_COLOR: '#C0392B',
+
   // Data URL of the company logo, or null for the text fallback. Same
   // contract as desktop's App.companyLogo.
   companyLogo: null,
@@ -2051,7 +2092,10 @@ MApp.Print = {
     const picked = await MApp.Picker.open({ title: title || 'Document', items });
     if (!picked) return;
 
-    if (typeof populate === 'function') populate();
+    // Awaited: the challan's populate has to fetch Client Master and
+    // Items Master for the consignee's GSTIN and each line's HSN, and an
+    // un-awaited populate would print the container before they land.
+    if (typeof populate === 'function') await populate();
     if (picked.value === 'print') { this.trigger(containerId, filename); return; }
     if (picked.value === 'download') { await this.download(containerId, filename, { landscape }); return; }
     await this.share(containerId, filename, { landscape });
@@ -4781,37 +4825,30 @@ MApp.Dispatch = {
   // Fills #print-dispatch-container for one challan. Split out of the old
   // print(idx) so Download and Share populate the identical document
   // rather than each building their own.
-  _populatePrintData(d) {
-    if (!d) return;
+  // The challan comes from print-templates.js, the same builder desktop
+  // uses. The phone's own copy used to omit the consignee address, the
+  // GSTIN and every line's HSN -- on a GST delivery challan that is not a
+  // styling difference, it is a different document.
+  async _populatePrintData(d) {
+    const deps = await this._printDeps();
+    PrintTemplates.dispatchDocument(d, deps);
+  },
 
-    const client = (this.clients || []).find(c => c.name === d.clientName);
-    const setText = (id, val) => {
-      const el = document.getElementById(id);
-      if (el) el.textContent = val || '';
-    };
-
-    setText('print-dispatch-number', d.dispatchNumber);
-    setText('print-dispatch-date', d.dispatchDate);
-    setText('print-dispatch-client', MApp.Util.formatNameCase(d.clientName) || 'Direct Supply');
-    setText('print-dispatch-client-address', client ? client.address : '');
-    setText('print-dispatch-client-gstin', client && client.gstin ? 'GSTIN: ' + client.gstin : '');
-    setText('print-dispatch-transport', d.transport);
-    setText('print-dispatch-order-ref', d.orderNumber);
-    setText('print-dispatch-gr-ref', d.grNumber || d.invoiceNumber || '');
-    setText('print-dispatch-remarks', d.remarks);
-
-    const body = document.getElementById('print-dispatch-items-body');
-    if (body) {
-      body.innerHTML = `
-        <tr>
-          <td style="padding:8px 6px;border:1px solid #ccc;">1</td>
-          <td style="padding:8px 6px;border:1px solid #ccc;text-align:left;">${MApp.Util.escapeHtml(d.productName)} (${MApp.Util.escapeHtml(d.productId)})</td>
-          <td style="padding:8px 6px;border:1px solid #ccc;"></td>
-          <td style="padding:8px 6px;border:1px solid #ccc;">${d.qty}</td>
-          <td style="padding:8px 6px;border:1px solid #ccc;">Pcs</td>
-        </tr>`;
+  // Client Master and Items Master, fetched once per session: the challan
+  // needs the consignee's address/GSTIN and each line's HSN, and none of
+  // the three lives on the dispatch record.
+  async _printDeps() {
+    if (!this._printLookups) {
+      const [clientsRes, itemsRes] = await Promise.all([
+        MApp.Api.call('getClientsData').catch(() => null),
+        MApp.Api.call('getItemsData').catch(() => null)
+      ]);
+      this._printLookups = {
+        clients: (clientsRes && clientsRes.success && clientsRes.data) || [],
+        items: (itemsRes && itemsRes.success && itemsRes.data) || []
+      };
     }
-
+    return { ...MApp.Print.templateDeps(), ...this._printLookups };
   },
 
   // Print, Download and Share over one populated container, so all three
@@ -5698,60 +5735,11 @@ MApp.PO = {
   // Mirrors desktop po.js's populatePrintData() -- same #print-po-container
   // field IDs (shared markup from print.html) -- but always includes
   // rates/totals, no printWithRates/printWithTotal checkboxes like desktop has.
+  // One builder for both shells (print-templates.js). The phone's own
+  // copy printed the vendor raw where desktop title-cases it, and had
+  // drifted on the rate/total columns.
   _populatePrintData(po) {
-    const setText = (id, val) => {
-      const el = document.getElementById(id);
-      if (el) el.innerText = val ?? '';
-    };
-    setText('print-vendor', po.vendor || '');
-    setText('print-contact', po.contact || '');
-    setText('print-supp-rem', po.supplierRemarks || '');
-    setText('print-ponum', po.poNumber || '');
-    setText('print-date', po.poDate || '');
-    setText('print-desc', po.poDescription || '');
-    setText('print-remarks', po.poRemarks || '');
-
-    const BRAND = '#C0392B';
-    const thBase = `padding:8px 6px;background-color:${BRAND};color:#fff;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border:1px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;`;
-    const tdBase = 'padding:7px 6px;border:1px solid #e5e5e5;word-break:break-word;overflow-wrap:break-word;font-size:12px;';
-
-    const head = document.getElementById('print-table-head');
-    if (head) {
-      head.innerHTML = `<tr>
-        <th style="${thBase}width:5%;text-align:center">#</th>
-        <th style="${thBase}width:20%;text-align:left">Item Name</th>
-        <th style="${thBase}width:17%;text-align:left">Narration</th>
-        <th style="${thBase}width:12%;text-align:left">Size</th>
-        <th style="${thBase}width:14%;text-align:center">Qty</th>
-        <th style="${thBase}width:14%;text-align:right">Rate</th>
-        <th style="${thBase}width:18%;text-align:right">Total</th>
-      </tr>`;
-    }
-
-    let grandTotal = 0;
-    const bodyHtml = (po.items || []).map((item, idx) => {
-      const qty = MApp.Util.toNumber(item.qty);
-      const price = MApp.Util.toNumber(item.price);
-      const lineTotal = qty * price;
-      grandTotal += lineTotal;
-      const rowBg = idx % 2 === 0 ? '#ffffff' : '#FFF5F5';
-      return `<tr style="background-color:${rowBg};-webkit-print-color-adjust:exact;print-color-adjust:exact;page-break-inside:avoid;break-inside:avoid;">
-        <td style="${tdBase}text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
-        <td style="${tdBase}text-align:left;font-weight:600;">${MApp.Util.escapeHtml(item.name || '')}</td>
-        <td style="${tdBase}text-align:left;color:#555;">${MApp.Util.escapeHtml(item.narration || '')}</td>
-        <td style="${tdBase}text-align:left;">${MApp.Util.escapeHtml(item.size || '')}</td>
-        <td style="${tdBase}text-align:center;font-weight:600;">${MApp.Util.escapeHtml(String(qty))} ${MApp.Util.escapeHtml(item.unit || 'Pcs')}</td>
-        <td style="${tdBase}text-align:right;">${MApp.Util.formatCurrency(price)}</td>
-        <td style="${tdBase}text-align:right;font-weight:700;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${MApp.Util.formatCurrency(lineTotal)}</td>
-      </tr>`;
-    }).join('');
-
-    const tblBody = document.getElementById('print-items-body');
-    if (tblBody) tblBody.innerHTML = bodyHtml;
-
-    const totalContainer = document.getElementById('print-grand-total-container');
-    setText('print-grand-total', grandTotal.toFixed(2));
-    if (totalContainer) totalContainer.style.display = 'block';
+    PrintTemplates.poDocument(po, MApp.Print.templateDeps());
   },
 
   // ── New PO sheet ─────────────────────────────────────────────────────
@@ -6188,43 +6176,9 @@ MApp.Bill = {
   // -container field IDs (shared markup from print.html). Unlike PO's
   // print container, the items-table header here is static HTML already,
   // so only the body + summary fields need populating.
+  // Shared with desktop -- see _populatePrintData on PO above.
   _populatePrintData(bill) {
-    const setText = (id, val) => {
-      const el = document.getElementById(id);
-      if (el) el.innerText = val ?? '';
-    };
-    setText('print-bill-number', bill.billNumber || '');
-    setText('print-bill-date', bill.billDate || '');
-    setText('print-bill-vendor', bill.vendor || '');
-    setText('print-bill-remarks', bill.remarks || '');
-    setText('print-bill-contact', bill.contact || '');
-
-    const poNums = (bill.poNumbers && bill.poNumbers.length) ? bill.poNumbers : (bill.poNumber ? [bill.poNumber] : []);
-    const poRefEl = document.getElementById('print-bill-po-ref');
-    if (poRefEl) {
-      poRefEl.innerHTML = poNums.length
-        ? poNums.map(p => p === 'DIRECT' ? 'Direct Purchase (No PO)' : `PO-${MApp.Util.escapeHtml(String(p))}`).join(' | ')
-        : 'N/A';
-    }
-
-    const bodyHtml = (bill.items || []).map((item, idx) => {
-      const rowBg = idx % 2 === 0 ? '#ffffff' : '#F5F0FB';
-      const rowStyle = `background-color:${rowBg};-webkit-print-color-adjust:exact;print-color-adjust:exact;page-break-inside:avoid;break-inside:avoid;`;
-      return `<tr style="${rowStyle}">
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;font-weight:600;">${MApp.Util.escapeHtml(item.name || '')}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;color:#555;">${MApp.Util.escapeHtml(item.narration || '')}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;">${MApp.Util.escapeHtml(item.size || '')}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;font-weight:600;">${MApp.Util.escapeHtml(String(MApp.Util.toNumber(item.qty)))} ${MApp.Util.escapeHtml(item.unit || 'Pcs')}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;">${MApp.Util.formatCurrency(item.price)}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;">${MApp.Util.escapeHtml(String(item.gstRatePct ?? 0))}%</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;font-weight:700;color:#6F42C1;-webkit-print-color-adjust:exact;print-color-adjust:exact;">${MApp.Util.formatCurrency(item.lineTotal)}</td>
-      </tr>`;
-    }).join('');
-    const tblBody = document.getElementById('print-bill-items-body');
-    if (tblBody) tblBody.innerHTML = bodyHtml;
-
-    setText('print-bill-grand-total', MApp.Util.toNumber(bill.totalAmount).toFixed(2));
+    PrintTemplates.billDocument(bill, MApp.Print.templateDeps());
   },
 
   // ── New/Edit Bill sheet (Phase 3) ────────────────────────────────────

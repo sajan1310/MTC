@@ -445,50 +445,30 @@ App.Dispatch = {
   // address/GSTIN aren't stored on the bill itself (only clientName is),
   // so they're looked up from Client Master here. Renders one table row per
   // line item (a real items loop now that a bill can carry more than one).
+  // Shared with MApp (print-templates.js). Client Master and Items Master
+  // are passed in rather than read from App.State inside the builder, so
+  // the phone can supply its own copies of the same two lookups.
   populateDispatchPrintData(dispatchNumber) {
     const b = (App.State.globalDispatchBills || []).find(x => x.dispatchNumber === dispatchNumber);
     if (!b) return null;
-
-    const setText = (id, val) => {
-      const el = document.getElementById(id);
-      if (el) el.innerText = val ?? '';
-    };
-
-    const client = (App.State.globalClients || []).find(c => App.Utils.sameText(c.name, b.clientName));
-
-    setText('print-dispatch-number', b.dispatchNumber || '');
-    setText('print-dispatch-date', b.dispatchDate || '');
-    setText('print-dispatch-client', App.Utils.formatNameCase(b.clientName));
-    setText('print-dispatch-client-address', client?.address || '');
-    setText('print-dispatch-client-gstin', client?.gstin || '');
-    setText('print-dispatch-transport', b.transport || '');
-    setText('print-dispatch-order-ref', b.orderNumber || '');
-
-    const grRefParts = [];
-    if (b.invoiceNumber) grRefParts.push(`Inv: ${b.invoiceNumber}`);
-    if (b.grNumber) grRefParts.push(`GR: ${b.grNumber}`);
-    setText('print-dispatch-gr-ref', grRefParts.join(' | '));
-    setText('print-dispatch-remarks', b.remarks || '');
-
-    const tbody = document.getElementById('print-dispatch-items-body');
-    if (tbody) tbody.innerHTML = this.dispatchPrintItemRowsHtml(b.items || []);
-
-    return b;
+    return PrintTemplates.dispatchDocument(b, this.printDeps());
   },
 
-  // One <tr> per line item for the printed Delivery Challan. HSN looked up
-  // from Items Master by product name (Dispatch itself has no HSN column).
+  printDeps() {
+    return {
+      ...App.Print.templateDeps(),
+      clients: App.State.globalClients || [],
+      items: App.State.globalItems || []
+    };
+  },
+
+  // Bulk printing (print.js) builds several challans into one page and
+  // asks for just the rows, so this renders through the shared builder and
+  // hands back what it wrote.
   dispatchPrintItemRowsHtml(items) {
-    return items.map((i, idx) => {
-      const item = (App.State.globalItems || []).find(it => App.Utils.sameText(it.name, i.productName));
-      return `<tr>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;font-weight:600;">${escapeHtml(i.productName || '')}${i.productId ? ` <small style="color:#888;">(${escapeHtml(i.productId)})</small>` : ''}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;">${escapeHtml(item?.hsn || '')}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;font-weight:600;">${escapeHtml(String(toNumber(i.qty)))}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;">Pcs</td>
-      </tr>`;
-    }).join('');
+    PrintTemplates.dispatchDocument({ items: items || [] }, this.printDeps());
+    const tbody = document.getElementById('print-dispatch-items-body');
+    return tbody ? tbody.innerHTML : '';
   },
 
   print(dispatchNumber) {

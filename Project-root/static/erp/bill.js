@@ -376,50 +376,13 @@ App.Bill = {
 
   // Populates #print-bill-container's fields from one Bill for the
   // per-row "Print" button. Mirrors App.PO.populatePrintData.
+  // The document itself lives in print-templates.js, which MApp loads
+  // too -- one builder, so a bill printed from the phone is the same
+  // paper as a bill printed from this desk.
   populatePrintData(index) {
     const bill = App.State.globalBills[index];
     if (!bill) return null;
-
-    const setText = (id, val) => {
-      const el = document.getElementById(id);
-      if (el) el.innerText = val ?? '';
-    };
-
-    setText('print-bill-number', bill.billNumber || '');
-    setText('print-bill-date', bill.billDate || '');
-    setText('print-bill-vendor', App.Utils.formatNameCase(bill.vendor));
-    setText('print-bill-remarks', bill.remarks || '');
-    setText('print-bill-contact', bill.contact || '');
-
-    const poNums = bill.poNumbers?.length ? bill.poNumbers : (bill.poNumber ? [bill.poNumber] : []);
-    const poRefEl = document.getElementById('print-bill-po-ref');
-    if (poRefEl) {
-      poRefEl.innerHTML = poNums.length
-        ? poNums.map(p => p === 'DIRECT' ? 'Direct Purchase (No PO)' : `PO-${escapeHtml(String(p))}`).join(' | ')
-        : 'N/A';
-    }
-
-    const bodyHtml = (bill.items || []).map((item, idx) => {
-      const rowBg = idx % 2 === 0 ? '#ffffff' : '#F5F0FB';
-      const rowStyle = `background-color:${rowBg};-webkit-print-color-adjust:exact;print-color-adjust:exact;page-break-inside:avoid;break-inside:avoid;`;
-      return `
-      <tr style="${rowStyle}">
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;font-weight:600;">${escapeHtml(item.name || '')}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;color:#555;">${escapeHtml(item.narration || '')}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;">${escapeHtml(item.size || '')}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;font-weight:600;">${escapeHtml(String(toNumber(item.qty)))} ${escapeHtml(item.unit || 'Pcs')}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;">${formatCurrency(item.price)}</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;">${escapeHtml(String(item.gstRatePct ?? 0))}%</td>
-        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;font-weight:700;color:#6F42C1;-webkit-print-color-adjust:exact;print-color-adjust:exact;">${formatCurrency(item.lineTotal)}</td>
-      </tr>`;
-    }).join('');
-    const tblBody = document.getElementById('print-bill-items-body');
-    if (tblBody) tblBody.innerHTML = bodyHtml;
-
-    setText('print-bill-grand-total', toNumber(bill.totalAmount).toFixed(2));
-
-    return bill;
+    return PrintTemplates.billDocument(bill, App.Print.templateDeps());
   },
 
   print(index) {

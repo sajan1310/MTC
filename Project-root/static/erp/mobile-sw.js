@@ -16,7 +16,20 @@
 // open. This does NOT import mobile.js itself -- that file is full of
 // DOM/UI code that assumes a live page and would throw immediately in
 // a worker.
-const CACHE_NAME = 'erp-mobile-shell-v53';
+// v54: two fixes the floor will notice immediately.
+//
+// Picking any option in any picker closed the form underneath it. Sheet
+// .close() calls history.back() to consume the entry it pushed, and that
+// is asynchronous -- the popstate landed after the picker was off the
+// stack and was read as a Back press against the form. Choosing a vendor
+// in New Bill therefore threw the half-entered bill away. Every picker
+// over a form did this, not just that one.
+//
+// And the PO, bill and challan now render through print-templates.js, the
+// same builder desktop uses, instead of this shell's own drifted copies.
+// LOAD-BEARING both ways: one decides whether a bill can be entered at
+// all, the other what a client receives with their goods.
+const CACHE_NAME = 'erp-mobile-shell-v54';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

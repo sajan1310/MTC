@@ -38,6 +38,21 @@
 // underneath, not what the user reaches for.
 
 App.Print = {
+  // The names print-templates.js asks for, spelled the way this shell
+  // spells them. MApp has its own templateDeps() saying the same thing in
+  // MApp.Util terms -- that one object is the entire shell-specific part
+  // of a printed document.
+  templateDeps() {
+    return {
+      escapeHtml,
+      toNumber,
+      formatCurrency,
+      formatNameCase: App.Utils.formatNameCase.bind(App.Utils),
+      sameText: App.Utils.sameText.bind(App.Utils),
+      brandColor: App.BRAND_COLOR
+    };
+  },
+
   // ── Canonical A4 page geometry ───────────────────────────────
   // Must stay in step with the @page rule in styles.css AND its copy in
   // mobile_styles.css. PAGE_WIDTH_PX / PAGE_HEIGHT_PX are the printable box

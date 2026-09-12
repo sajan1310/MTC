@@ -263,3 +263,193 @@ describe('both shells reach the same builder', () => {
     expect(read('mobile-sw.js')).toContain('/static/erp/print-templates.js');
   });
 });
+
+describe('the documents both shells print', () => {
+  // partials/print.html is included by index.html AND mobile.html, so these
+  // are the real ids each builder writes into.
+  function documentDom() {
+    document.body.innerHTML = `
+      <div id="print-po-container">
+        <span id="print-vendor"></span><span id="print-contact"></span>
+        <span id="print-supp-rem"></span><span id="print-ponum"></span>
+        <span id="print-date"></span><span id="print-desc"></span>
+        <span id="print-remarks"></span>
+        <table><thead id="print-table-head"></thead><tbody id="print-items-body"></tbody></table>
+        <div id="print-grand-total-container"><span id="print-grand-total"></span></div>
+      </div>
+      <div id="print-bill-container">
+        <span id="print-bill-number"></span><span id="print-bill-date"></span>
+        <span id="print-bill-vendor"></span><span id="print-bill-remarks"></span>
+        <span id="print-bill-contact"></span><span id="print-bill-po-ref"></span>
+        <table><tbody id="print-bill-items-body"></tbody></table>
+        <span id="print-bill-grand-total"></span>
+      </div>
+      <div id="print-dispatch-container">
+        <span id="print-dispatch-number"></span><span id="print-dispatch-date"></span>
+        <span id="print-dispatch-client"></span>
+        <span id="print-dispatch-client-address"></span>
+        <span id="print-dispatch-client-gstin"></span>
+        <span id="print-dispatch-transport"></span>
+        <span id="print-dispatch-order-ref"></span>
+        <span id="print-dispatch-gr-ref"></span>
+        <span id="print-dispatch-remarks"></span>
+        <table><tbody id="print-dispatch-items-body"></tbody></table>
+      </div>`;
+  }
+
+  // Desktop's App.Utils spellings, which is what App.Print.templateDeps()
+  // hands over. MApp passes the same shape from MApp.Util.
+  const DOC_DEPS = {
+    escapeHtml: s => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
+    toNumber: v => Number(v) || 0,
+    formatCurrency: v => `₹${(Number(v) || 0).toFixed(2)}`,
+    formatNameCase: s => String(s == null ? '' : s)
+      .toLowerCase().replace(/\b\w/g, c => c.toUpperCase()),
+    brandColor: '#C0392B'
+  };
+
+  const PO = {
+    poNumber: 'PO-42', poDate: '01/09/2026', vendor: 'acme CYCLES',
+    contact: 'Ramesh', poDescription: 'Rims', poRemarks: 'urgent',
+    supplierRemarks: 'pack well',
+    items: [{ name: 'Rim 26', size: '26 inch', unit: 'Pcs', qty: 10, price: 150, narration: 'chrome' }]
+  };
+
+  const BILL = {
+    billNumber: 'B-7', billDate: '02/09/2026', vendor: 'acme CYCLES',
+    contact: 'Ramesh', remarks: 'part load', poNumbers: ['42'], totalAmount: 1770,
+    items: [{ name: 'Rim 26', size: '26 inch', unit: 'Pcs', qty: 10, price: 150, gstRatePct: 18, lineTotal: 1770 }]
+  };
+
+  const DISPATCH = {
+    dispatchNumber: 'DC-9', dispatchDate: '08/09/2026', clientName: 'nova MOTORS',
+    transport: 'Blue Dart', orderNumber: 'SO-3', invoiceNumber: 'INV-1', grNumber: 'GR-2',
+    items: [{ productName: 'Kalpi 26', productId: 'PRD-1', qty: 40 }]
+  };
+
+  const CHALLAN_DEPS = {
+    ...DOC_DEPS,
+    clients: [{ name: 'Nova Motors', address: '12 Mill Road, Ludhiana', gstin: '03ABCDE1234F1Z5' }],
+    items: [{ name: 'Kalpi 26', hsn: '87141090' }]
+  };
+
+  beforeEach(documentDom);
+
+  test('the PO names its vendor in title case, as desktop does', () => {
+    // The phone printed `po.vendor` raw. Same PO, two spellings of the
+    // vendor, depending on which device was nearest.
+    PrintTemplates.poDocument(PO, DOC_DEPS);
+    expect(document.getElementById('print-vendor').innerText).toBe('Acme Cycles');
+  });
+
+  test('the PO totals its lines and shows the grand total', () => {
+    PrintTemplates.poDocument(PO, DOC_DEPS);
+    expect(document.getElementById('print-items-body').innerHTML).toContain('Rim 26');
+    expect(document.getElementById('print-grand-total').innerText).toBe('1500.00');
+    expect(document.getElementById('print-grand-total-container').style.display).toBe('block');
+  });
+
+  test('a PO printed without rates drops both money columns', () => {
+    // Desktop's two Print Options checkboxes. They are desktop UI, so the
+    // builder takes their answer rather than reading the DOM itself --
+    // which is what lets the phone call the same function.
+    PrintTemplates.poDocument(PO, DOC_DEPS, { includeRates: false });
+    const head = document.getElementById('print-table-head').innerHTML;
+    expect(head).not.toContain('Rate');
+    expect(head).not.toContain('Total');
+    expect(document.getElementById('print-grand-total-container').style.display).toBe('none');
+  });
+
+  test('the bill names its vendor in title case too', () => {
+    PrintTemplates.billDocument(BILL, DOC_DEPS);
+    expect(document.getElementById('print-bill-vendor').innerText).toBe('Acme Cycles');
+  });
+
+  test('a bill against no PO says so rather than printing a blank', () => {
+    PrintTemplates.billDocument({ ...BILL, poNumbers: [] }, DOC_DEPS);
+    expect(document.getElementById('print-bill-po-ref').innerHTML).toBe('N/A');
+
+    PrintTemplates.billDocument({ ...BILL, poNumbers: ['DIRECT'] }, DOC_DEPS);
+    expect(document.getElementById('print-bill-po-ref').innerHTML)
+      .toBe('Direct Purchase (No PO)');
+  });
+
+  test('the challan carries the consignee address, GSTIN and HSN', () => {
+    // The difference that mattered most: the phone printed a GST delivery
+    // challan with none of these three. Goods leave the factory on this
+    // piece of paper.
+    PrintTemplates.dispatchDocument(DISPATCH, CHALLAN_DEPS);
+
+    expect(document.getElementById('print-dispatch-client').innerText).toBe('Nova Motors');
+    expect(document.getElementById('print-dispatch-client-address').innerText)
+      .toBe('12 Mill Road, Ludhiana');
+    expect(document.getElementById('print-dispatch-client-gstin').innerText)
+      .toBe('03ABCDE1234F1Z5');
+    expect(document.getElementById('print-dispatch-items-body').innerHTML)
+      .toContain('87141090');
+  });
+
+  test('the challan joins invoice and GR into one reference line', () => {
+    PrintTemplates.dispatchDocument(DISPATCH, CHALLAN_DEPS);
+    expect(document.getElementById('print-dispatch-gr-ref').innerText)
+      .toBe('Inv: INV-1 | GR: GR-2');
+  });
+
+  test('a client not in Client Master still prints a challan', () => {
+    expect(() => PrintTemplates.dispatchDocument(DISPATCH, DOC_DEPS)).not.toThrow();
+    expect(document.getElementById('print-dispatch-number').innerText).toBe('DC-9');
+    expect(document.getElementById('print-dispatch-client-gstin').innerText).toBe('');
+  });
+
+  test('all three escape what they print', () => {
+    const nasty = '<img src=x onerror=alert(1)>';
+    PrintTemplates.poDocument({ ...PO, items: [{ name: nasty, qty: 1, price: 1 }] }, DOC_DEPS);
+    expect(document.getElementById('print-items-body').innerHTML).not.toContain('<img src=x');
+
+    PrintTemplates.billDocument({ ...BILL, items: [{ name: nasty, qty: 1 }] }, DOC_DEPS);
+    expect(document.getElementById('print-bill-items-body').innerHTML).not.toContain('<img src=x');
+
+    PrintTemplates.dispatchDocument({ ...DISPATCH, items: [{ productName: nasty, qty: 1 }] }, CHALLAN_DEPS);
+    expect(document.getElementById('print-dispatch-items-body').innerHTML).not.toContain('<img src=x');
+  });
+
+  test('missing deps degrade rather than throw', () => {
+    expect(() => PrintTemplates.poDocument(PO, {})).not.toThrow();
+    expect(() => PrintTemplates.billDocument(BILL, {})).not.toThrow();
+    expect(() => PrintTemplates.dispatchDocument(DISPATCH, {})).not.toThrow();
+    expect(() => PrintTemplates.poDocument(null, DOC_DEPS)).not.toThrow();
+  });
+
+  describe('neither shell keeps a second copy', () => {
+    const read2 = f => require('fs').readFileSync(
+      require('path').join(__dirname, '..', f), 'utf8');
+
+    test('desktop delegates for PO, bill and challan', () => {
+      expect(read2('po.js')).toContain('PrintTemplates.poDocument(');
+      expect(read2('bill.js')).toContain('PrintTemplates.billDocument(');
+      expect(read2('dispatch.js')).toContain('PrintTemplates.dispatchDocument(');
+    });
+
+    test('mobile calls the same three', () => {
+      const m = read2('mobile.js');
+      expect(m).toContain('PrintTemplates.poDocument(');
+      expect(m).toContain('PrintTemplates.billDocument(');
+      expect(m).toContain('PrintTemplates.dispatchDocument(');
+    });
+
+    test('and neither still builds its own rows inline', () => {
+      // The marker each old copy was built around. If one comes back, the
+      // documents have started drifting again.
+      expect(read2('mobile.js')).not.toContain("setText('print-bill-grand-total'");
+      expect(read2('mobile.js')).not.toContain("setText('print-ponum'");
+      expect(read2('bill.js')).not.toContain("setText('print-bill-grand-total'");
+      expect(read2('po.js')).not.toContain("setText('print-ponum'");
+    });
+
+    test('each shell states its own spelling of the deps once', () => {
+      expect(read2('print.js')).toContain('templateDeps()');
+      expect(read2('mobile.js')).toContain('templateDeps()');
+    });
+  });
+});

@@ -296,7 +296,14 @@
 // be reached for again. production.js keeps only the step that gathers
 // what the sheet dialog is showing. LOAD-BEARING: it decides what the
 // floor receives on paper.
-const CACHE_NAME = 'erp-shell-v63';
+// v64: the PO, the vendor bill and the delivery challan move into the
+// shared print-templates.js, so both shells build one document each. The
+// phone's own copies had drifted: it printed a vendor raw where this shell
+// title-cases it, and it printed a GST delivery challan with no consignee
+// address, no GSTIN and no HSN on any line. Desktop's output is byte-for-
+// byte what it was -- the builders were moved, not rewritten -- but the
+// bundles that call them changed, so the cache moves with them.
+const CACHE_NAME = 'erp-shell-v64';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

@@ -517,5 +517,214 @@ const PrintTemplates = {
       remarksSection.style.display = remarksText ? '' : 'none';
       setText('print-prod-remarks-text', remarksText);
     }
+  },
+  // ── Shared document helpers ──────────────────────────────────────────
+  // Every builder below needs the same handful, and each shell spells them
+  // differently (App.Utils.* vs MApp.Util.*). Resolved once, here, with
+  // fallbacks so a shell that forgets one prints a barer document rather
+  // than throwing at the moment somebody needs the paper.
+  _deps(deps) {
+    const d = deps || {};
+    return {
+      esc: d.escapeHtml || (typeof escapeHtml === 'function' ? escapeHtml : String),
+      num: d.toNumber || (v => Number(v) || 0),
+      money: d.formatCurrency || (v => String(Number(v) || 0)),
+      nameCase: d.formatNameCase || (v => String(v == null ? '' : v)),
+      sameText: d.sameText || ((a, b) =>
+        String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase()),
+      brand: d.brandColor || this.BRAND
+    };
+  },
+
+  _setText(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.innerText = val == null ? '' : val;
+  },
+
+  // ── Purchase Order ───────────────────────────────────────────────────
+  // `options.includeRates` / `options.includeTotal` are desktop's two Print
+  // Options checkboxes. Both default to on, which is what desktop sends
+  // when the boxes are absent and what the phone (which has no such
+  // checkboxes) wants every time.
+  poDocument(po, deps, options) {
+    const p = po || {};
+    const { esc, num, money, nameCase, brand } = this._deps(deps);
+    const opt = options || {};
+    const includeRates = opt.includeRates !== false;
+    const includeTotal = opt.includeTotal !== false;
+
+    this._setText('print-vendor', nameCase(p.vendor));
+    this._setText('print-contact', p.contact || '');
+    this._setText('print-supp-rem', p.supplierRemarks || '');
+    this._setText('print-ponum', p.poNumber || '');
+    this._setText('print-date', p.poDate || '');
+    this._setText('print-desc', p.poDescription || '');
+    this._setText('print-remarks', p.poRemarks || '');
+
+    const thBase = `padding:8px 6px;background-color:${brand};color:#fff;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border:1px solid ${brand};-webkit-print-color-adjust:exact;print-color-adjust:exact;`;
+    const tdBase = 'padding:7px 6px;border:1px solid #e5e5e5;word-break:break-word;overflow-wrap:break-word;font-size:12px;';
+
+    const head = document.getElementById('print-table-head');
+    if (head) {
+      if (includeRates) {
+        head.innerHTML = includeTotal
+          ? `<tr>
+            <th style="${thBase}width:5%;text-align:center">#</th>
+            <th style="${thBase}width:20%;text-align:left">Item Name</th>
+            <th style="${thBase}width:17%;text-align:left">Narration</th>
+            <th style="${thBase}width:12%;text-align:left">Size</th>
+            <th style="${thBase}width:14%;text-align:center">Qty</th>
+            <th style="${thBase}width:14%;text-align:right">Rate</th>
+            <th style="${thBase}width:18%;text-align:right">Total</th>
+           </tr>`
+          : `<tr>
+            <th style="${thBase}width:5%;text-align:center">#</th>
+            <th style="${thBase}width:25%;text-align:left">Item Name</th>
+            <th style="${thBase}width:22%;text-align:left">Narration</th>
+            <th style="${thBase}width:15%;text-align:left">Size</th>
+            <th style="${thBase}width:15%;text-align:center">Qty</th>
+            <th style="${thBase}width:18%;text-align:right">Rate</th>
+           </tr>`;
+      } else {
+        head.innerHTML = `<tr>
+        <th style="${thBase}width:5%;text-align:center">#</th>
+        <th style="${thBase}width:30%;text-align:left">Item Name</th>
+        <th style="${thBase}width:28%;text-align:left">Narration</th>
+        <th style="${thBase}width:15%;text-align:left">Size</th>
+        <th style="${thBase}width:22%;text-align:center">Quantity</th>
+       </tr>`;
+      }
+    }
+
+    let grandTotal = 0;
+    const bodyHtml = (p.items || []).map((item, idx) => {
+      const qty = num(item.qty);
+      const price = num(item.price);
+      const rowBg = idx % 2 === 0 ? '#ffffff' : '#FFF5F5';
+      const rowStyle = `background-color:${rowBg};-webkit-print-color-adjust:exact;print-color-adjust:exact;page-break-inside:avoid;break-inside:avoid;`;
+
+      let row = `
+      <tr style="${rowStyle}">
+        <td style="${tdBase}text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
+        <td style="${tdBase}text-align:left;font-weight:600;">${esc(item.name || '')}</td>
+        <td style="${tdBase}text-align:left;color:#555;">${esc(item.narration || '')}</td>
+        <td style="${tdBase}text-align:left;">${esc(item.size || '')}</td>
+        <td style="${tdBase}text-align:center;font-weight:600;">${esc(String(qty))} ${esc(item.unit || 'Pcs')}</td>`;
+
+      if (includeRates) {
+        row += `<td style="${tdBase}text-align:right;">${money(price)}</td>`;
+        if (includeTotal) {
+          const lineTotal = qty * price;
+          grandTotal += lineTotal;
+          row += `<td style="${tdBase}text-align:right;font-weight:700;color:${brand};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${money(lineTotal)}</td>`;
+        }
+      }
+      return row + '</tr>';
+    }).join('');
+
+    const tblBody = document.getElementById('print-items-body');
+    if (tblBody) tblBody.innerHTML = bodyHtml;
+
+    const totalContainer = document.getElementById('print-grand-total-container');
+    if (includeRates && includeTotal) {
+      this._setText('print-grand-total', num(grandTotal).toFixed(2));
+      if (totalContainer) totalContainer.style.display = 'block';
+    } else if (totalContainer) {
+      totalContainer.style.display = 'none';
+    }
+
+    return p;
+  },
+
+  // ── Vendor Bill ──────────────────────────────────────────────────────
+  billDocument(bill, deps) {
+    const b = bill || {};
+    const { esc, num, money, nameCase } = this._deps(deps);
+
+    this._setText('print-bill-number', b.billNumber || '');
+    this._setText('print-bill-date', b.billDate || '');
+    this._setText('print-bill-vendor', nameCase(b.vendor));
+    this._setText('print-bill-remarks', b.remarks || '');
+    this._setText('print-bill-contact', b.contact || '');
+
+    const poNums = (b.poNumbers && b.poNumbers.length)
+      ? b.poNumbers
+      : (b.poNumber ? [b.poNumber] : []);
+    const poRefEl = document.getElementById('print-bill-po-ref');
+    if (poRefEl) {
+      poRefEl.innerHTML = poNums.length
+        ? poNums.map(x => x === 'DIRECT' ? 'Direct Purchase (No PO)' : `PO-${esc(String(x))}`).join(' | ')
+        : 'N/A';
+    }
+
+    const bodyHtml = (b.items || []).map((item, idx) => {
+      const rowBg = idx % 2 === 0 ? '#ffffff' : '#F5F0FB';
+      const rowStyle = `background-color:${rowBg};-webkit-print-color-adjust:exact;print-color-adjust:exact;page-break-inside:avoid;break-inside:avoid;`;
+      return `
+      <tr style="${rowStyle}">
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;font-weight:600;">${esc(item.name || '')}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;color:#555;">${esc(item.narration || '')}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;">${esc(item.size || '')}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;font-weight:600;">${esc(String(num(item.qty)))} ${esc(item.unit || 'Pcs')}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;">${money(item.price)}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;">${esc(String(item.gstRatePct == null ? 0 : item.gstRatePct))}%</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;font-weight:700;color:#6F42C1;-webkit-print-color-adjust:exact;print-color-adjust:exact;">${money(item.lineTotal)}</td>
+      </tr>`;
+    }).join('');
+
+    const tblBody = document.getElementById('print-bill-items-body');
+    if (tblBody) tblBody.innerHTML = bodyHtml;
+
+    this._setText('print-bill-grand-total', num(b.totalAmount).toFixed(2));
+    return b;
+  },
+
+  // ── Delivery Challan ─────────────────────────────────────────────────
+  // A GST challan: goods physically leave the factory on a Dispatch, so the
+  // consignee's address and GSTIN and each line's HSN have to be on the
+  // paper. None of the three is stored on the dispatch itself, so they are
+  // looked up from Client Master and Items Master -- `deps.clients` and
+  // `deps.items`. The phone used to print this challan without any of them,
+  // which is the difference that matters most in this file: a challan
+  // missing the consignee's GSTIN is not the same document.
+  dispatchDocument(dispatch, deps) {
+    const b = dispatch || {};
+    const { esc, num, nameCase, sameText } = this._deps(deps);
+    const d = deps || {};
+    const clients = d.clients || [];
+    const items = d.items || [];
+
+    const client = clients.find(c => sameText(c.name, b.clientName));
+
+    this._setText('print-dispatch-number', b.dispatchNumber || '');
+    this._setText('print-dispatch-date', b.dispatchDate || '');
+    this._setText('print-dispatch-client', nameCase(b.clientName));
+    this._setText('print-dispatch-client-address', (client && client.address) || '');
+    this._setText('print-dispatch-client-gstin', (client && client.gstin) || '');
+    this._setText('print-dispatch-transport', b.transport || '');
+    this._setText('print-dispatch-order-ref', b.orderNumber || '');
+
+    const grRefParts = [];
+    if (b.invoiceNumber) grRefParts.push(`Inv: ${b.invoiceNumber}`);
+    if (b.grNumber) grRefParts.push(`GR: ${b.grNumber}`);
+    this._setText('print-dispatch-gr-ref', grRefParts.join(' | '));
+    this._setText('print-dispatch-remarks', b.remarks || '');
+
+    const tbody = document.getElementById('print-dispatch-items-body');
+    if (tbody) {
+      tbody.innerHTML = (b.items || []).map((i, idx) => {
+        const item = items.find(it => sameText(it.name, i.productName));
+        return `<tr>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;font-weight:600;">${esc(i.productName || '')}${i.productId ? ` <small style="color:#888;">(${esc(i.productId)})</small>` : ''}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;">${esc((item && item.hsn) || '')}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;font-weight:600;">${esc(String(num(i.qty)))}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;">Pcs</td>
+      </tr>`;
+      }).join('');
+    }
+
+    return b;
   }
 };

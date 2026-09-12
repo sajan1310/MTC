@@ -182,4 +182,47 @@ describe('MApp.Sheet history integration', () => {
     await expect(pending).resolves.toBeNull();
     expect(isOpen('mapp-picker-sheet')).toBe(false);
   });
+  test('picking an option leaves the form underneath open', async () => {
+    // The reported defect: New Bill -> Vendor -> tap a vendor, and the
+    // whole bill form closed with the half-entered bill in it.
+    //
+    // close() calls history.back() to consume the entry open() pushed.
+    // That is asynchronous, so its popstate arrived after the picker was
+    // already off the stack and the handler read it as a Back press
+    // against the sheet underneath. Every picker opened over a form did
+    // this, not just the vendor one.
+    MApp.Sheet.open('sheet-entity-form');
+
+    const pending = MApp.Picker.open({
+      title: 'Choose a vendor',
+      items: [{ value: 'Acme Cycles', label: 'Acme Cycles' }]
+    });
+    document.querySelectorAll('#mapp-picker-list .mb-picker-option')[0].click();
+
+    await expect(pending).resolves.toMatchObject({ value: 'Acme Cycles' });
+    await settle();
+    await settle();
+
+    expect(isOpen('mapp-picker-sheet')).toBe(false);
+    expect(isOpen('sheet-entity-form')).toBe(true);
+    expect(MApp.Sheet._stack.map(e => e.id)).toEqual(['sheet-entity-form']);
+  });
+
+  test('the form that outlived a picker still answers its own Back press', async () => {
+    // The counter must come back to zero, or the next genuine Back press
+    // is swallowed and the form cannot be dismissed at all.
+    MApp.Sheet.open('sheet-entity-form');
+    const pending = MApp.Picker.open({ title: 'Pick', items: [{ value: 'a', label: 'A' }] });
+    document.querySelectorAll('#mapp-picker-list .mb-picker-option')[0].click();
+    await pending;
+    // The browser unwinds that entry on its own schedule. A real Back press
+    // happens after it has landed, so wait for that rather than racing it.
+    for (let i = 0; i < 20 && MApp.Sheet._pendingBack > 0; i += 1) await settle();
+    expect(MApp.Sheet._pendingBack).toBe(0);
+
+    await goBack();
+
+    expect(isOpen('sheet-entity-form')).toBe(false);
+    expect(MApp.Sheet._stack).toHaveLength(0);
+  });
 });
