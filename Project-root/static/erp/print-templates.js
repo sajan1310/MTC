@@ -1063,5 +1063,346 @@ const PrintTemplates = {
       if (value && value < from) { carried = e.balance; sawAny = true; }
     });
     return sawAny ? carried : 0;
+  },
+  // ── Item Ledger & Comparison ─────────────────────────────────────────
+  // Three sections: what is on the shelf per size, how each vendor's rate
+  // compares, and every movement that got the item to its current figure.
+  //
+  // Not a renderer so much as an assembler -- it reads six collections
+  // (items, stock, vendors, POs, bills and the server's own ledger) and
+  // that is exactly why the phone never had this document: the data was
+  // reachable but nothing joined it up. `src` is that bag, so each shell
+  // hands over its own copies and the joining happens once, here.
+  //
+  // The rows use Bootstrap utility classes, which mobile.html does not
+  // load -- partials/print.html defines the handful they need, scoped to
+  // .print-container, so the same markup prints on both shells.
+  itemLedgerSections(name, src, deps) {
+    const { esc, num, money } = this._deps(deps);
+    const getPendingByItem = (deps && deps.getPendingByItem) || (() => ({}));
+    src = src || {};
+    const nameLower = name.toLowerCase();
+    const compMap = {};
+
+    const getCKey = (size, vendor) => `${String(size || '').trim().toLowerCase()}|${String(vendor || '').trim().toLowerCase()}`;
+
+    const sortedPOs = [...(src.pos || [])].sort((a, b) => {
+      const ad = parseRecordDate(a.poDateRaw, a.poDate);
+      const bd = parseRecordDate(b.poDateRaw, b.poDate);
+      return ad - bd;
+    });
+
+    sortedPOs.forEach(po => {
+      (po.items || []).forEach(line => {
+        if ((line.name || '').toLowerCase() === nameLower) {
+          const key = getCKey(line.size, po.vendor);
+          compMap[key] = {
+            size: line.size || '-',
+            narration: line.narration || '-',
+            vendor: po.vendor,
+            masterRate: null,
+            latestPoRate: line.price
+          };
+        }
+      });
+    });
+
+    const itemMasterVariants = (src.items || []).filter(i => (i.name || '').toLowerCase() === nameLower);
+    itemMasterVariants.forEach(item => {
+      (item.vendors || []).forEach(v => {
+        const key = getCKey(item.size, v.vendor);
+        if (compMap[key]) {
+          compMap[key].masterRate = v.rate;
+        } else {
+          compMap[key] = { size: item.size || '-', narration: item.narration || '-', vendor: v.vendor, masterRate: v.rate, latestPoRate: null };
+        }
+      });
+    });
+
+    let compHtml = '';
+    const compList = Object.values(compMap);
+    compList.sort((a, b) => {
+      const sc = a.size.localeCompare(b.size);
+      if (sc !== 0) return sc;
+      return a.vendor.localeCompare(b.vendor);
+    });
+
+    compList.forEach(entry => {
+      const vendorInfo = (src.vendors || []).find(vendor => vendor.name.toLowerCase() === entry.vendor.toLowerCase());
+      const contact = vendorInfo ? (vendorInfo.contact || vendorInfo.address || '-') : '-';
+      const mRateText = entry.masterRate !== null ? money(entry.masterRate) : '-';
+      const pRateText = entry.latestPoRate !== null ? money(entry.latestPoRate) : '-';
+
+      compHtml += `<tr>
+        <td><strong>${esc(entry.size)}</strong></td>
+        <td><small class="text-muted">${esc(entry.narration)}</small></td>
+        <td><strong class="text-primary">${esc(entry.vendor)}</strong></td>
+        <td><small>${esc(contact)}</small></td>
+        <td class="text-end fw-bold">${mRateText}</td>
+        <td class="text-end fw-bold text-success">${pRateText}</td>
+      </tr>`;
+    });
+
+    // History comes straight from the server (getItemLedgerData), which
+    // builds it from the SAME terms, signs and unit conversions as the
+    // Current Stock formula -- so it reconciles with the Stock page by
+    // construction. It used to be reassembled here from whichever
+    // collections the browser happened to have loaded, which silently
+    // dropped Wastage and Issue entirely, showed as-entered instead of
+    // base-unit quantities, and reconstructed Production consumption from
+    // the BOM recipe (an estimate that missed every non-final-stage lot,
+    // since only final-stage lots carry a productId to match a BOM by).
+    // Populated by ensureItemLedgerLoaded(), which every caller of this
+    // function awaits first.
+    const ledger = src.itemLedgers[nameLower];
+    const historyList = (ledger && ledger.entries) || [];
+
+    const BADGE_BY_KIND = {
+      PO: 'bg-primary',
+      BILL: 'bg-success',
+      RETURN: 'bg-danger',
+      WASTAGE: 'bg-danger',
+      ISSUE: 'bg-danger',
+      PRODUCTION: 'bg-danger',
+      ADJUSTMENT: 'bg-warning text-dark'
+    };
+
+    const fmtQty = v => {
+      const n = num(v);
+      if (!n) return '-';
+      return String(Math.round(n * 10000) / 10000);
+    };
+
+    // Unlike fmtQty, a balance of exactly zero is a real reading -- the
+    // stock ran out on this row -- so it prints "0" rather than the "-"
+    // fmtQty uses for "this column does not apply to this row". A negative
+    // balance is shown in red and never clamped: it means the ledger says
+    // more went out than came in, which is a signal to investigate, not a
+    // number to tidy away.
+    const fmtBalance = v => {
+      const n = num(v);
+      const text = String(Math.round(n * 10000) / 10000);
+      return n < 0 ? `<span class="text-danger">${text}</span>` : text;
+    };
+
+    // One entry -> one <tr>. Size itself is no longer a cell here -- entries
+    // are grouped into a separate mini-table per size below, so the size is
+    // said once in that group's heading instead of repeated down a column.
+    const buildHistRow = entry => {
+      const badgeClass = entry.kind === 'ADJUSTMENT' && entry.type === 'Stock Reset'
+        ? 'bg-info'
+        : (BADGE_BY_KIND[entry.kind] || 'bg-secondary');
+
+      // Quantities are base-unit. Show what was actually typed alongside it
+      // whenever the two differ, so a line entered in Dozen reads
+      // "12 (1 Dozen)" instead of silently disagreeing with the Stock page.
+      const enteredQty = num(entry.enteredQty);
+      const baseMoved = num(entry.incomingQty) || num(entry.outgoingQty) || num(entry.orderQty);
+      const showEntered = entry.unit && enteredQty && Math.abs(enteredQty - baseMoved) > 0.0001;
+      const enteredNote = showEntered
+        ? ` <small class="text-muted">(${fmtQty(enteredQty)} ${esc(entry.unit)})</small>`
+        : '';
+
+      // A row the Stock formula does not count -- a "Ledger only" bill, a
+      // PO (an order, not a movement), or a manual adjustment (already
+      // absorbed into Initial Stock). Muted so it can't be misread as a
+      // movement that failed to land.
+      const rowClass = entry.countsTowardStock ? '' : ' class="text-muted fst-italic"';
+
+      // Balance is the stock on hand after this row, from the server (which
+      // starts it at the same initial_stock the Current Stock formula uses).
+      // null on a row that moved no stock -- a PO, a "Ledger only" bill, an
+      // adjustment -- so the column never implies those settled at a figure.
+      const balanceCell = (entry.balance === null || entry.balance === undefined)
+        ? '<span class="text-muted">-</span>'
+        : fmtBalance(entry.balance);
+
+      return `<tr${rowClass}>
+        <td>${esc(entry.date || '')}</td>
+        <td><span class="badge ${badgeClass}">${esc(entry.type || '')}</span></td>
+        <td><strong class="text-dark">${esc(entry.ref || '-')}</strong></td>
+        <td><strong class="text-primary">${esc(entry.party || '-')}</strong></td>
+        <td><small class="text-muted">${esc(entry.narration || '-')}</small></td>
+        <td class="text-end">${entry.price !== null && entry.price !== undefined ? money(entry.price) : '-'}</td>
+        <td class="text-center text-primary fw-bold">${fmtQty(entry.orderQty)}</td>
+        <td class="text-center text-success fw-bold">${fmtQty(entry.incomingQty)}${entry.incomingQty ? enteredNote : ''}</td>
+        <td class="text-center text-danger fw-bold">${fmtQty(entry.outgoingQty)}${entry.outgoingQty ? enteredNote : ''}</td>
+        <td class="text-center fw-bold">${balanceCell}</td>
+      </tr>`;
+    };
+
+    // Group by size (preserving each size's own chronological order from
+    // the server), then sort the groups themselves by size so the
+    // Comparison/Stock tables above and the History groups below list
+    // sizes in the same order.
+    const bySize = new Map();
+    historyList.forEach(entry => {
+      const sizeKey = entry.size || '-';
+      if (!bySize.has(sizeKey)) bySize.set(sizeKey, []);
+      bySize.get(sizeKey).push(entry);
+    });
+    const sizeKeys = [...bySize.keys()].sort((a, b) => String(a).localeCompare(String(b)));
+
+    // Namespaced by item name so bulk-print pages (which concatenate many
+    // items' ledgers, each rebuilding its own groups) don't hand out
+    // duplicate ids across items.
+    const idBase = (nameLower.replace(/[^a-z0-9]/g, '') || 'item');
+
+    let histHtml = sizeKeys.map((sizeKey, i) => {
+      const entries = bySize.get(sizeKey);
+      const rows = entries.map(buildHistRow).join('');
+      const groupId = `ledgerHist-${idBase}-${i}`;
+      return `
+      <div class="ledger-size-group mb-3">
+        <div class="ledger-size-toggle fw-bold px-3 py-2 d-flex justify-content-between align-items-center"
+             style="background:#eef6f8;border-left:4px solid #17a2b8;cursor:pointer;"
+             data-bs-toggle="collapse" data-bs-target="#${groupId}"
+             role="button" aria-expanded="true" aria-controls="${groupId}">
+          <span>Size: ${esc(sizeKey)} <span class="badge bg-secondary ms-2">${entries.length} txn${entries.length === 1 ? '' : 's'}</span></span>
+          <i class="bi bi-chevron-down"></i>
+        </div>
+        <div class="collapse show" id="${groupId}">
+          <div class="table-responsive">
+            <table class="table table-hover table-striped align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th scope="col" style="width: 8%;">Date</th>
+                  <th scope="col" style="width: 11%;">Type</th>
+                  <th scope="col" style="width: 10%;">Ref #</th>
+                  <th scope="col" style="width: 16%;">Vendor / Source</th>
+                  <th scope="col" style="width: 13%;">Narration</th>
+                  <th scope="col" style="width: 8%; text-align: right;">Price</th>
+                  <th scope="col" style="width: 9%; text-align: center;">Order Qty</th>
+                  <th scope="col" style="width: 9%; text-align: center;">Incoming Qty</th>
+                  <th scope="col" style="width: 9%; text-align: center;">Outgoing Qty</th>
+                  <th scope="col" style="width: 7%; text-align: center;">Balance</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+
+    // Prefer the server's own freshly-computed figures over globalStock,
+    // which is a tab-load snapshot: a lot completed (or a bill saved) since
+    // the Items tab was last loaded would otherwise render a stale Current
+    // Stock next to fresh movements, and trip the mismatch badge below for
+    // no real reason. Falls back to globalStock only when the ledger call
+    // failed, so the table still renders something.
+    const reconList = (ledger && ledger.reconciliation) || [];
+    const stockVariants = (reconList.length
+      ? reconList.map(r => ({
+        size: r.size,
+        initialStock: r.initialStock,
+        currentStock: r.currentStock,
+        isLowStock: r.isLowStock,
+        computedStock: r.computedStock,
+        balanced: r.balanced
+      }))
+      : (src.stock || [])
+        .filter(s => (s.name || '').toLowerCase() === nameLower)
+        .map(s => ({ ...s, balanced: true }))
+    ).sort((a, b) => String(a.size || '').localeCompare(String(b.size || '')));
+
+    const pendingMap = getPendingByItem();
+
+    let stockHtml = '';
+    stockVariants.forEach(s => {
+      const pendingEntry = pendingMap.get(`${nameLower}|${(s.size || '').toLowerCase()}`);
+      const pendingText = pendingEntry
+        ? `${Math.round(pendingEntry.qty * 100) / 100} <small class="text-muted">(PO# ${[...pendingEntry.poNumbers].map(escapeHtml).join(', ')})</small>`
+        : '-';
+
+      // Server-side proof that the movements listed below actually add up
+      // to the Current Stock shown here. Silence means they agree; a
+      // mismatch is badged rather than hidden, since it would mean a
+      // movement exists that one side counts and the other doesn't.
+      const driftBadge = s.balanced === false
+        ? ` <span class="badge bg-danger" title="Ledger movements total ${s.computedStock}, but Current Stock is ${s.currentStock}. These should match -- please report this.">Mismatch</span>`
+        : '';
+
+      stockHtml += `<tr>
+        <td>${esc(s.size || '-')}</td>
+        <td class="text-center fw-bold">${s.initialStock}</td>
+        <td class="text-center fw-bold ${s.isLowStock ? 'text-danger' : 'text-success'}">${s.currentStock}${driftBadge}</td>
+        <td class="text-center fw-bold text-warning">${pendingText}</td>
+      </tr>`;
+    });
+
+    return { compHtml, histHtml, stockHtml };
+  },
+  // ── What is still owed on open POs ───────────────────────────────────
+  // Ordered minus billed, per item and size, with the PO numbers it is
+  // outstanding on. The Item Ledger prints it, so both shells need the
+  // same answer -- and it used to be reachable only through App.Bill's
+  // cached index, which is why the phone could not build the document.
+  //
+  // Takes the two collections rather than reading any shell's state, so
+  // the caller decides what "the bills" means. No caching here: the
+  // callers that needed it (an open bill form recalculating on every
+  // keystroke) keep their own.
+  billedQtyIndex(bills) {
+    const index = new Map();
+    (bills || []).forEach(bill => {
+      const billNumber = String(bill.billNumber || '').trim();
+      (bill.items || []).forEach(bItem => {
+        const key = [
+          String(bItem.poNumber || '').trim(),
+          String(bItem.name || '').trim().toLowerCase(),
+          String(bItem.size || '').trim().toLowerCase(),
+          String(bItem.narration || '').trim().toLowerCase()
+        ].join('|');
+        let entry = index.get(key);
+        if (!entry) { entry = { total: 0, byBill: new Map() }; index.set(key, entry); }
+        const qty = Number(bItem.baseQty) || 0;
+        entry.total += qty;
+        entry.byBill.set(billNumber, (entry.byBill.get(billNumber) || 0) + qty);
+      });
+    });
+    return index;
+  },
+
+  // `index` is billedQtyIndex()'s output, passed in so a caller holding a
+  // cached one does not rebuild it per line.
+  billedQty(index, poNumber, itemName, itemSize, itemNarration, excludeBillNumber) {
+    const key = [
+      String(poNumber || '').trim(),
+      String(itemName || '').trim().toLowerCase(),
+      String(itemSize || '').trim().toLowerCase(),
+      String(itemNarration || '').trim().toLowerCase()
+    ].join('|');
+    const entry = index && index.get(key);
+    if (!entry) return 0;
+    if (excludeBillNumber) {
+      return entry.total - (entry.byBill.get(String(excludeBillNumber).trim()) || 0);
+    }
+    return entry.total;
+  },
+
+  pendingByItem(pos, bills) {
+    const index = this.billedQtyIndex(bills);
+    const map = new Map();
+    (pos || []).forEach(po => {
+      (po.items || []).forEach(line => {
+        const name = String(line.name || '').trim();
+        if (!name) return;
+        const size = String(line.size || '').trim();
+        const ordered = Number(line.baseQty) || 0;
+        if (ordered <= 0) return;
+
+        const billed = this.billedQty(index, po.poNumber, name, size, line.narration);
+        const pending = ordered - billed;
+        if (pending <= 0.0001) return;
+
+        const key = `${name.toLowerCase()}|${size.toLowerCase()}`;
+        const entry = map.get(key) || { qty: 0, poNumbers: new Set() };
+        entry.qty += pending;
+        entry.poNumbers.add(String(po.poNumber));
+        map.set(key, entry);
+      });
+    });
+    return map;
   }
 };

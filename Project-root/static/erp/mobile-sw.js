@@ -40,7 +40,11 @@
 // with the opening balance and period line desktop has always carried --
 // without them a statement handed over at the gate disagreed with the one
 // printed in the office about the same account.
-const CACHE_NAME = 'erp-mobile-shell-v55';
+// v56: the phone prints the Item Ledger & Comparison. The data was
+// always reachable here -- the document joins SIX collections and
+// nothing on this shell did that joining, which is the real reason it
+// was missing. Print ledger sits beside Adjust stock on an expanded item.
+const CACHE_NAME = 'erp-mobile-shell-v56';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

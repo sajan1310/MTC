@@ -148,6 +148,26 @@ const BACKLOG = {
 const BACKLOG_BASELINE = 0;
 
 describe('MApp / desktop feature parity', () => {
+  test('every method MApp actually calls is one the server registers', () => {
+    // The ratchet above asks "is each registered method reachable from
+    // MApp". This asks the other direction: is each method MApp CALLS a
+    // real one. Nothing checked that, and the gap is not theoretical --
+    // the Item Ledger shipped calling 'getBillsData', which does not
+    // exist (the method is 'getBillData'). Reachability passed, every
+    // suite passed, and the document would have come out with an empty
+    // billed column on a phone, silently, because Api.call's failure is
+    // caught and turned into an empty list.
+    const called = new Set();
+    const re = /MApp\.Api\.call\(\s*'([A-Za-z][A-Za-z0-9_]*)'/g;
+    let m;
+    while ((m = re.exec(RAW_MOBILE_SRC)) !== null) called.add(m[1]);
+
+    expect(called.size).toBeGreaterThan(20); // the scan found something
+
+    const unknown = [...called].filter(name => !REGISTERED.includes(name));
+    expect(unknown).toEqual([]);
+  });
+
   test('the registry is being read at all', () => {
     // Guards the whole suite against silently passing because a moved
     // services directory made REGISTERED empty.

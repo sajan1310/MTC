@@ -1070,45 +1070,23 @@ App.Bill = {
   // every open PO.
   _billedQtyIndex: null,
   _billedQtyIndexSrc: null,
+  // Index and lookup live in print-templates.js now -- the Item Ledger
+  // prints what is still owed on a PO, and MApp needs the same answer.
+  // The per-bills-array cache stays here, where the open bill form
+  // recalculates on every keystroke.
   _getBilledQtyIndex() {
     if (this._billedQtyIndexSrc === App.State.globalBills && this._billedQtyIndex) {
       return this._billedQtyIndex;
     }
-    const index = new Map();
-    (App.State.globalBills || []).forEach(bill => {
-      const billNumber = String(bill.billNumber || '').trim();
-      (bill.items || []).forEach(bItem => {
-        const key = [
-          String(bItem.poNumber || '').trim(),
-          String(bItem.name || '').trim().toLowerCase(),
-          String(bItem.size || '').trim().toLowerCase(),
-          String(bItem.narration || '').trim().toLowerCase()
-        ].join('|');
-        let entry = index.get(key);
-        if (!entry) { entry = { total: 0, byBill: new Map() }; index.set(key, entry); }
-        const qty = Number(bItem.baseQty) || 0;
-        entry.total += qty;
-        entry.byBill.set(billNumber, (entry.byBill.get(billNumber) || 0) + qty);
-      });
-    });
-    this._billedQtyIndex = index;
+    this._billedQtyIndex = PrintTemplates.billedQtyIndex(App.State.globalBills);
     this._billedQtyIndexSrc = App.State.globalBills;
-    return index;
+    return this._billedQtyIndex;
   },
 
   _getBilledQty(poNumber, itemName, itemSize, itemNarration, excludeBillNumber) {
-    const key = [
-      String(poNumber || '').trim(),
-      String(itemName || '').trim().toLowerCase(),
-      String(itemSize || '').trim().toLowerCase(),
-      String(itemNarration || '').trim().toLowerCase()
-    ].join('|');
-    const entry = this._getBilledQtyIndex().get(key);
-    if (!entry) return 0;
-    if (excludeBillNumber) {
-      return entry.total - (entry.byBill.get(String(excludeBillNumber).trim()) || 0);
-    }
-    return entry.total;
+    return PrintTemplates.billedQty(
+      this._getBilledQtyIndex(), poNumber, itemName, itemSize,
+      itemNarration, excludeBillNumber);
   },
 
   autoFillRate(row) {

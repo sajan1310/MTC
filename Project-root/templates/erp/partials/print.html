@@ -13,6 +13,94 @@
   window.print() show only the active container).
 -->
 
+<!--
+  Bootstrap's utility classes, scoped to the print containers only.
+
+  index.html loads Bootstrap; mobile.html deliberately does not, and never
+  will -- MApp has its own design system and pulling Bootstrap in to style
+  a hidden print container would drag 200KB of cascade across every mobile
+  screen to do it.
+
+  But four of the templates below -- Item Ledger, Vendor Ledger, Client
+  Ledger and the BOM Cost Sheet -- build their rows out of Bootstrap
+  utilities rather than the inline styles the PO, bill and challan use.
+  Printed from the phone those rows arrived unstyled: right-aligned money
+  in the left column, no emphasis on a balance, collapsed history groups
+  staying collapsed. Same numbers, a document nobody would accept.
+
+  So the handful of utilities those rows actually use are defined here,
+  with Bootstrap's own values, and scoped under .print-container so
+  nothing outside a printed page is touched. On desktop these duplicate
+  what Bootstrap already says and change nothing; on the phone they are
+  the only definition there is.
+
+  Adding a utility to a printed row means adding it here too.
+-->
+<style>
+  .print-container .text-muted    { color: #6c757d !important; }
+  .print-container .text-danger   { color: #dc3545 !important; }
+  .print-container .text-success  { color: #198754 !important; }
+  .print-container .text-primary  { color: #0d6efd !important; }
+  .print-container .text-secondary{ color: #6c757d !important; }
+  .print-container .text-dark     { color: #212529 !important; }
+  .print-container .text-end      { text-align: right !important; }
+  .print-container .text-center   { text-align: center !important; }
+  .print-container .text-nowrap   { white-space: nowrap !important; }
+  .print-container .fw-bold       { font-weight: 700 !important; }
+  .print-container .fw-normal     { font-weight: 400 !important; }
+  .print-container .fst-italic    { font-style: italic !important; }
+  .print-container .small         { font-size: 0.875em; }
+  .print-container .align-middle  { vertical-align: middle !important; }
+  .print-container .d-block       { display: block !important; }
+  .print-container .d-none        { display: none !important; }
+  .print-container .w-100         { width: 100% !important; }
+
+  /* A badge marks the KIND of a movement (PO, Bill, Return, Wastage...).
+     Printed in grey scale on most office printers, so the shape has to
+     carry as much of the signal as the colour does. */
+  .print-container .badge {
+    display: inline-block;
+    padding: 0.35em 0.65em;
+    font-size: 0.75em;
+    font-weight: 700;
+    line-height: 1;
+    text-align: center;
+    white-space: nowrap;
+    vertical-align: baseline;
+    border-radius: 0.375rem;
+    color: #fff;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .print-container .bg-primary   { background-color: #0d6efd !important; }
+  .print-container .bg-success   { background-color: #198754 !important; }
+  .print-container .bg-danger    { background-color: #dc3545 !important; }
+  .print-container .bg-warning   { background-color: #ffc107 !important; }
+  .print-container .bg-secondary { background-color: #6c757d !important; }
+  .print-container .bg-info      { background-color: #0dcaf0 !important; }
+  .print-container .bg-dark      { background-color: #212529 !important; }
+  .print-container .bg-light     { background-color: #f8f9fa !important; }
+  .print-container .bg-white     { background-color: #fff !important; }
+  .print-container .badge.bg-warning,
+  .print-container .badge.bg-light,
+  .print-container .badge.bg-info { color: #000 !important; }
+
+  .print-container table.table { width: 100%; border-collapse: collapse; }
+  .print-container table.table > :not(caption) > * > * { padding: 6px 8px; }
+  .print-container .table-bordered > :not(caption) > * > * { border: 1px solid #dee2e6; }
+  .print-container .table-sm > :not(caption) > * > * { padding: 4px 6px; }
+  .print-container .table-light > * > * { background-color: #f8f9fa; }
+  .print-container .table-striped > tbody > tr:nth-of-type(odd) > * {
+    background-color: rgba(0, 0, 0, 0.03);
+  }
+
+  /* A size group the operator left collapsed on screen must still print in
+     full. Desktop forces .show onto the copy; this makes that stick on a
+     shell where Bootstrap's collapse CSS is not loaded to be overridden. */
+  .print-container .collapse:not(.show) { display: none; }
+  .print-container .collapse.show { display: table-row-group; }
+</style>
+
 <div id="print-po-container" class="print-container print-cells-own"
      style="display:none;
             background:#fff;

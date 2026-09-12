@@ -308,7 +308,12 @@
 // print-templates.js, and inDateRange moves into api.js so both shells
 // answer "is this row in the period" the same way. Desktop's output is
 // unchanged -- the builders were moved, not rewritten.
-const CACHE_NAME = 'erp-shell-v65';
+// v66: the Item Ledger's assembler, and the billed/pending helpers it
+// needs, move into print-templates.js. partials/print.html now defines
+// the Bootstrap utilities the ledger templates use, scoped to
+// .print-container -- a no-op here, where Bootstrap already says the
+// same, and the only definition on a shell that does not load it.
+const CACHE_NAME = 'erp-shell-v66';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

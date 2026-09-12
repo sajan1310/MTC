@@ -3160,7 +3160,13 @@ MApp.Stock = {
     if (!panel) return;
     panel.innerHTML = '<div class="mb-skel mb-skel-line" style="width:60%;"></div><div class="mb-skel mb-skel-line" style="width:40%;"></div>';
 
-    const adjustBtn = `<button type="button" class="mb-btn-text" style="padding:8px 0;" onclick="MApp.Stock.openAdjustSheet(${idx})">Adjust stock</button>`;
+    // Two actions on an expanded item: correct the figure, or print the
+    // full Item Ledger & Comparison desktop prints -- stock by size,
+    // vendor rate comparison and every movement behind the number.
+    const adjustBtn = `<div style="display:flex;gap:var(--mb-sp-4);flex-wrap:wrap;">
+      <button type="button" class="mb-btn-text" style="padding:8px 0;" onclick="MApp.Stock.openAdjustSheet(${idx})">Adjust stock</button>
+      <button type="button" class="mb-btn-text" style="padding:8px 0;" onclick="MApp.Stock.printLedger(${idx})">Print ledger</button>
+    </div>`;
 
     try {
       const movements = await this._loadMovements(item.name, item.size);
@@ -3218,6 +3224,82 @@ MApp.Stock = {
   //
   // Cached per item name for the session: expanding, collapsing and
   // re-expanding a card is a normal fidget and should not refetch.
+  // ── Item Ledger & Comparison ─────────────────────────────────────────
+  // Desktop's third print template, and the one the phone could not reach.
+  // Not because the data was missing -- every collection it needs is
+  // already a call away -- but because the document joins six of them and
+  // nothing on this shell did that joining. PrintTemplates.itemLedgerSections
+  // does it for both shells now.
+  //
+  // Loaded on demand rather than at mount: five extra datasets is a real
+  // cost on a phone, and most visits to Stock never print anything.
+  async printLedger(idx) {
+    const item = (this.filtered || [])[idx];
+    if (!item) return;
+    const name = item.name;
+
+    MApp.Toast.show('Building the ledger…');
+    let src;
+    try {
+      const [items, stock, vendors, pos, bills, ledger] = await Promise.all([
+        MApp.Api.call('getItemsData'),
+        MApp.Api.call('getStockData'),
+        MApp.Api.call('getVendorsData'),
+        MApp.Api.call('getPOData'),
+        MApp.Api.call('getBillData'),
+        MApp.Api.call('getItemLedgerData', name)
+      ]);
+      const ok = r => (r && r.success && r.data) || [];
+      src = {
+        items: ok(items),
+        stock: ok(stock),
+        vendors: ok(vendors),
+        pos: ok(pos),
+        bills: ok(bills),
+        itemLedgers: { [String(name).toLowerCase()]: (ledger && ledger.success && ledger.data) || {} }
+      };
+    } catch (err) {
+      MApp.Toast.error('Could not load the item ledger: ' + (err.message || ''));
+      return;
+    }
+
+    const { stockHtml, compHtml, histHtml } =
+      PrintTemplates.itemLedgerSections(name, src, {
+        ...MApp.Print.templateDeps(),
+        // Desktop reads this off its own loaded PO/bill state. The phone
+        // has the same two collections in `src`, so the pending figure is
+        // derived from them rather than from a second source of truth.
+        getPendingByItem: () => PrintTemplates.pendingByItem(src.pos, src.bills)
+      });
+
+    const set = (id, html, fallback) => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = html || fallback;
+    };
+    const nameEl = document.getElementById('print-item-name');
+    if (nameEl) nameEl.textContent = name;
+    const dateEl = document.getElementById('print-item-report-date');
+    if (dateEl) dateEl.textContent = new Date().toLocaleDateString('en-GB');
+
+    set('print-item-stock-body', stockHtml,
+      '<tr><td colspan="4" class="text-center text-muted p-4">No stock record found for this item.</td></tr>');
+    set('print-item-comparison-body', compHtml,
+      '<tr><td colspan="6" class="text-center text-muted p-4">No variant comparisons available.</td></tr>');
+    set('print-item-history-body', histHtml,
+      '<div class="text-center text-muted p-4">No transaction history found for this item.</div>');
+
+    // A size group left collapsed on screen must still print in full --
+    // the same thing desktop does to its copy.
+    const hist = document.getElementById('print-item-history-body');
+    if (hist) hist.querySelectorAll('.collapse').forEach(el => el.classList.add('show'));
+
+    return MApp.Print.chooseAction({
+      containerId: 'print-item-ledger-container',
+      filename: `Item_Ledger_${String(name).replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+      title: `Item Ledger — ${name}`
+    });
+  },
+
   async _loadMovements(name, size) {
     this._ledgerCache = this._ledgerCache || {};
     const key = String(name || '').trim().toLowerCase();

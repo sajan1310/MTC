@@ -1553,27 +1553,9 @@ const App = {
     // body (including the App.Bill._getBilledQty call PO/Bill's own round
     // will make real) never runs.
     getPendingByItem() {
-      const map = new Map();
-      (App.State.globalPOs || []).forEach(po => {
-        (po.items || []).forEach(line => {
-          const name = String(line.name || '').trim();
-          if (!name) return;
-          const size = String(line.size || '').trim();
-          const ordered = Number(line.baseQty) || 0;
-          if (ordered <= 0) return;
-
-          const billed = App.Bill._getBilledQty(po.poNumber, name, size, line.narration);
-          const pending = ordered - billed;
-          if (pending <= 0.0001) return;
-
-          const key = `${name.toLowerCase()}|${size.toLowerCase()}`;
-          const entry = map.get(key) || { qty: 0, poNumbers: new Set() };
-          entry.qty += pending;
-          entry.poNumbers.add(String(po.poNumber));
-          map.set(key, entry);
-        });
-      });
-      return map;
+      // Shared with MApp (print-templates.js): the Item Ledger prints this
+      // and both shells must agree on what is still owed.
+      return PrintTemplates.pendingByItem(App.State.globalPOs, App.State.globalBills);
     },
 
     // Case/whitespace-insensitive equality for name-like fields (vendor,
