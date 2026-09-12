@@ -330,7 +330,12 @@
 // ledger comes back newest-first; the code walked it letting the last
 // match win, on a comment that claimed chronological order. 2,500 where
 // the real figure was 93,698, on every one of the four live accounts.
-const CACHE_NAME = 'erp-shell-v69';
+// v70: the Vendor Ledger and the PO ledger disagreed about what is
+// pending on 148 rows. The vendor table aggregated a whole vendor's
+// orders against their bills and subtracted once; the PO ledger and the
+// server work per PO LINE. Now both work per line, and over-receipt is
+// its own figure instead of a negative that cancelled a real shortfall.
+const CACHE_NAME = 'erp-shell-v70';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

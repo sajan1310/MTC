@@ -81,8 +81,10 @@ describe('quantities are counted in base units', () => {
   test('vendor pending subtracts base from base, not gross from gross', () => {
     const { pendingList } = PrintTemplates.vendorLedger('Acme', {
       pos: [{ poNumber: 'PO-1', vendor: 'Acme', poDate: '01/08/2026', items: [GROSS] }],
+      // poNumber matters: a bill is matched to the PO LINE it was raised
+      // against, so a direct purchase does not quietly fulfil an order.
       bills: [{ billNumber: 'B-1', vendor: 'Acme', billDate: '05/08/2026',
-        items: [{ ...GROSS, qty: 50, baseQty: 7200 }] }],
+        items: [{ ...GROSS, qty: 50, baseQty: 7200, poNumber: 'PO-1' }] }],
       returns: [], issues: []
     }, DEPS);
 

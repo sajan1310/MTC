@@ -336,16 +336,18 @@ App.Vendor = {
     const pBody = document.getElementById('vendorPendingBody');
     if (pBody) {
       let pHtml = '';
+      // Over-receipt is its own figure now, not a negative pending -- a
+      // negative let one over-billed order cancel another still short,
+      // which is how this table came to disagree with the PO ledger on
+      // 148 rows. See PrintTemplates.vendorLedger.
       pendingList.forEach(item => {
-        const isOver = 0 > item.pending;
+        const over = Number(item.over) || 0;
         pHtml += `<tr>
           <td><strong class="text-primary">${escapeHtml(item.name)}</strong></td>
           <td>${escapeHtml(item.size) || '-'}</td>
           <td class="text-center">${item.ordered}</td>
-          <td class="text-center">${item.received}</td>
-          <td class="${isOver ? 'text-success' : 'text-danger'} fw-bold text-center">
-            ${isOver ? '+' : ''}${Math.abs(item.pending)} ${isOver ? '(Over-Delivered)' : ''}
-          </td>
+          <td class="text-center">${item.received}${over ? ` <small class="text-success fw-bold">+${over} over</small>` : ''}</td>
+          <td class="${item.pending > 0 ? 'text-danger' : 'text-success'} fw-bold text-center">${item.pending}</td>
         </tr>`;
       });
       pBody.innerHTML = pHtml || '<tr><td colspan="5" class="text-center text-success fw-bold p-4">No pending orders. All caught up!</td></tr>';

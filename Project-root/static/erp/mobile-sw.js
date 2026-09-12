@@ -66,7 +66,8 @@
 // sends every PO out for a quote. MApp.Prefs is the one place those
 // remembered choices now live.
 // v60: same opening-balance fix -- this shell prints that statement too.
-const CACHE_NAME = 'erp-mobile-shell-v60';
+// v61: same pending fix -- this shell prints the vendor ledger too.
+const CACHE_NAME = 'erp-mobile-shell-v61';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

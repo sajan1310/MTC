@@ -883,3 +883,94 @@ describe('the carried-in balance does not depend on array order', () => {
     expect(PrintTemplates.ledgerOpeningBalance(NEWEST_FIRST, '', asValue)).toBeNull();
   });
 });
+
+describe('the vendor ledger agrees with the PO ledger about what is pending', () => {
+  // They disagreed on 148 rows of live data. The vendor ledger aggregated
+  // first and subtracted second -- all of a vendor's orders for an item
+  // against all of their bills for it, keyed on name and size alone --
+  // while the PO ledger and the server work per PO LINE, keyed
+  // poNumber|name|size|narration.
+  const DEPS = {
+    escapeHtml: s => String(s == null ? '' : s),
+    toNumber: v => Number(v) || 0,
+    formatCurrency: v => String(v),
+    formatNameCase: s => s
+  };
+  const line = (o) => ({ name: 'Bolt', size: '6mm', narration: '', ...o });
+  const agree = src => {
+    const { pendingList } = PrintTemplates.vendorLedger('Acme', src, DEPS);
+    const byLine = PrintTemplates.pendingByItem(src.pos, src.bills);
+    const mine = pendingList.reduce((n, p) => n + p.pending, 0);
+    const theirs = [...byLine.values()].reduce((n, v) => n + v.qty, 0);
+    return { mine, theirs, pendingList };
+  };
+
+  test('one order over-billed no longer cancels another still short', () => {
+    // PO-1 short by 40, PO-2 over by 60. Netting said "-20 over-delivered"
+    // and hid the 40 that is genuinely still owed.
+    const src = {
+      pos: [
+        { poNumber: 'PO-1', vendor: 'Acme', poDate: '01/08/2026',
+          items: [line({ qty: 100, baseQty: 100 })] },
+        { poNumber: 'PO-2', vendor: 'Acme', poDate: '02/08/2026',
+          items: [line({ qty: 100, baseQty: 100 })] }
+      ],
+      bills: [
+        { billNumber: 'B-1', vendor: 'Acme', billDate: '03/08/2026',
+          items: [line({ poNumber: 'PO-1', qty: 60, baseQty: 60 })] },
+        { billNumber: 'B-2', vendor: 'Acme', billDate: '04/08/2026',
+          items: [line({ poNumber: 'PO-2', qty: 160, baseQty: 160 })] }
+      ],
+      returns: [], issues: []
+    };
+    const { mine, theirs, pendingList } = agree(src);
+    expect(mine).toBe(40);
+    expect(mine).toBe(theirs);
+    // And the over-delivery is reported rather than subtracted away.
+    expect(pendingList[0].over).toBe(60);
+  });
+
+  test('two orders differing only by narration stay two lines', () => {
+    const src = {
+      pos: [{ poNumber: 'PO-1', vendor: 'Acme', poDate: '01/08/2026', items: [
+        line({ narration: 'zinc', qty: 100, baseQty: 100 }),
+        line({ narration: 'black', qty: 100, baseQty: 100 })
+      ] }],
+      bills: [{ billNumber: 'B-1', vendor: 'Acme', billDate: '03/08/2026',
+        items: [line({ poNumber: 'PO-1', narration: 'zinc', qty: 100, baseQty: 100 })] }],
+      returns: [], issues: []
+    };
+    const { mine, theirs } = agree(src);
+    expect(mine).toBe(100);   // the black one is still owed in full
+    expect(mine).toBe(theirs);
+  });
+
+  test('a bill raised against no PO does not fulfil an order', () => {
+    const src = {
+      pos: [{ poNumber: 'PO-1', vendor: 'Acme', poDate: '01/08/2026',
+        items: [line({ qty: 100, baseQty: 100 })] }],
+      bills: [{ billNumber: 'B-1', vendor: 'Acme', billDate: '03/08/2026',
+        items: [line({ poNumber: '', qty: 100, baseQty: 100 })] }],
+      returns: [], issues: []
+    };
+    const { mine, theirs } = agree(src);
+    expect(mine).toBe(100);
+    expect(mine).toBe(theirs);
+  });
+
+  test('ordered minus received is exactly the pending figure', () => {
+    // The three columns have to add up, or the table reads as broken.
+    const src = {
+      pos: [{ poNumber: 'PO-1', vendor: 'Acme', poDate: '01/08/2026',
+        items: [line({ qty: 100, baseQty: 100 })] }],
+      bills: [{ billNumber: 'B-1', vendor: 'Acme', billDate: '03/08/2026',
+        items: [line({ poNumber: 'PO-1', qty: 130, baseQty: 130 })] }],
+      returns: [], issues: []
+    };
+    const { pendingList } = PrintTemplates.vendorLedger('Acme', src, DEPS);
+    const p = pendingList[0];
+    expect(p.ordered - p.received).toBe(p.pending);
+    expect(p.pending).toBe(0);
+    expect(p.over).toBe(30);
+  });
+});

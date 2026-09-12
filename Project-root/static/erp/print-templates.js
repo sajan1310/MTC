@@ -1688,38 +1688,47 @@ const PrintTemplates = {
 
     let itemMap = {};
 
-    // Ordered and received in BASE units, which is what the server's own
-    // remaining-qty calculations use (po_service, bill_service and
-    // dashboard_service all subtract base quantities) and what the Item
-    // Ledger reports. As-entered quantities made this table disagree with
-    // that one by the conversion factor -- 280 here against 40,320 there
-    // for the same outstanding spokes, neither stating a unit. It is also
-    // only safe while a PO and its bills share one unit: nothing enforces
-    // that, and the first bill entered in Pcs against a PO in Gross would
-    // have made this subtraction meaningless.
+    // Pending, by the SAME rule the PO ledger and the server use:
+    // per PO LINE, remaining = ordered - what was billed against THAT
+    // line, and a line that is fully billed contributes nothing.
+    //
+    // This table used to aggregate first and subtract second -- all of a
+    // vendor's orders for an item against all of their bills for it,
+    // keyed on name and size alone. Two ways that gave a different answer
+    // from the PO ledger, on 148 rows of live data:
+    //
+    //   - Netting. One PO line over-billed and another short cancelled
+    //     out. Tushar Impex read -14,400 here against 43,200 still
+    //     outstanding there, on the same spokes.
+    //   - Narration. The server's line key is
+    //     poNumber|name|size|narration, so two orders of one item that
+    //     differ only by narration are separate lines to it and were one
+    //     row here. 47 of the 148.
+    //
+    // Over-receipt is not netted away now -- it is counted separately and
+    // shown, because a vendor who sent more than was ordered is something
+    // to act on rather than something to subtract from another order.
+    const billedIndex = this.billedQtyIndex(vendorBills);
     vendorPOs.forEach(po => {
       (po.items || []).forEach(i => {
         const key = `${i.name}|${i.size || ''}`;
-        if (!itemMap[key]) itemMap[key] = { name: i.name, size: i.size, ordered: 0, received: 0 };
-        itemMap[key].ordered += this._baseUnits(i);
-      });
-    });
-
-    vendorBills.forEach(b => {
-      b.items.forEach(i => {
-        const name = typeof i === 'object' ? i.name : String(i).split(' [')[0];
-        const size = typeof i === 'object' ? (i.size || '') : '';
-        const qty = typeof i === 'object' ? this._baseUnits(i) : 0;
-        const key = `${name}|${size}`;
-        if (itemMap[key]) {
-          itemMap[key].received += qty;
+        if (!itemMap[key]) {
+          itemMap[key] = { name: i.name, size: i.size, ordered: 0, received: 0, over: 0 };
         }
+        const ordered = this._baseUnits(i);
+        const billed = this.billedQty(
+          billedIndex, po.poNumber, i.name, i.size, i.narration);
+        itemMap[key].ordered += ordered;
+        // Capped, so ordered - received is exactly the pending figure the
+        // PO ledger reports; the excess is carried in `over`.
+        itemMap[key].received += Math.min(billed, ordered);
+        itemMap[key].over += Math.max(0, billed - ordered);
       });
     });
 
     const pendingList = Object.values(itemMap)
       .map(item => ({ ...item, pending: item.ordered - item.received }))
-      .filter(item => item.pending !== 0);
+      .filter(item => item.pending > 0.0001 || item.over > 0.0001);
 
     return { ledger, pendingList };
   },
@@ -1748,16 +1757,21 @@ const PrintTemplates = {
     });
     const ledgerRows = ledgerHtml || '<tr><td colspan="8" style="padding:10px;text-align:center;color:#999;">No transaction history found.</td></tr>';
 
+    // Over-receipt rides in its own field now. It used to arrive as a
+    // NEGATIVE pending, which meant one over-billed order silently
+    // cancelled another that was still short -- see the note on the
+    // calculation above.
     let pendingHtml = '';
     pendingList.forEach(item => {
-      const isOver = item.pending < 0;
+      const over = Number(item.over) || 0;
       pendingHtml += `<tr>
         <td style="padding:6px;border:1px solid #e5e5e5;font-weight:700;color:#0d6efd;">${esc(item.name)}</td>
         <td style="padding:6px;border:1px solid #e5e5e5;">${esc(item.size || '-')}</td>
         <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;">${item.ordered}</td>
-        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;">${item.received}</td>
-        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;font-weight:700;color:${isOver ? '#198754' : '#dc3545'};">
-          ${isOver ? '+' : ''}${Math.abs(item.pending)}${isOver ? ' (Over-Delivered)' : ''}
+        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;">${item.received}${
+          over ? ` <span style="color:#198754;font-weight:700;">+${over} over</span>` : ''}</td>
+        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;font-weight:700;color:${item.pending > 0 ? '#dc3545' : '#198754'};">
+          ${item.pending}
         </td>
       </tr>`;
     });
