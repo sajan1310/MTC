@@ -562,3 +562,130 @@ def test_item_ledger_balance_is_tracked_per_size_variant(erp_client):
         size = (recon["size"] or "").strip().upper()
         assert by_size[size][0]["balance"] == recon["currentStock"]
         assert recon["balanced"] is True
+
+
+def test_item_ledger_balance_reads_down_when_a_day_holds_several_rows(erp_client):
+    """The reported symptom: "there's a difference in balance after balance
+    adjustment".
+
+    Every test above gives each movement its own date, so the ordering
+    inside a single day was never exercised -- and that is where this broke.
+    The entries were sorted on (date, TYPE), the row's label, so within a
+    day they came out alphabetically: "Manual Adjustment" before "Production
+    Consumption" because M sorts before P, whatever order they happened in.
+    Then the display sort passed reverse=True, and Python keeps equal keys
+    in their original order under a reverse sort -- so the dates came out
+    newest-first while each day's rows stayed oldest-first. A day ran the
+    opposite way to the rest of the list, and the TOP row -- the one anybody
+    reads as "what we have now" -- was not the closing balance.
+
+    Measured against the live database before the fix: on 321 of 748 size
+    variants the first balance shown was not the stock on hand, while the
+    arithmetic was right on all 748. The figures were never wrong; the order
+    they were presented in was.
+
+    So: several movements and an adjustment on ONE day, and the two things a
+    reader is entitled to assume must hold.
+    """
+    name = _unique_name("SameDay")
+    _create_item_with_stock(erp_client, name, initial_stock=100)
+
+    for qty in (20, 30):
+        _rpc(
+            erp_client,
+            "saveBill",
+            [
+                {
+                    "vendor": _unique_name("SDVendor"),
+                    "billNumber": _unique_name("SDINV"),
+                    "billDate": "05/01/2026",
+                    "items": [{"name": name, "qty": qty, "price": 5}],
+                }
+            ],
+            mutation=True,
+        )
+    _rpc(
+        erp_client,
+        "saveWastage",
+        [
+            {
+                "date": "05/01/2026",
+                "items": [{"name": name, "qty": 5, "unit": "Pcs", "reason": "Damaged"}],
+            }
+        ],
+        mutation=True,
+    )
+    _rpc(
+        erp_client,
+        "saveIssueStock",
+        [
+            {
+                "date": "05/01/2026",
+                "issuedTo": "Contractor A",
+                "items": [{"name": name, "qty": 8, "unit": "Pcs"}],
+            }
+        ],
+        mutation=True,
+    )
+
+    data = _ledger(erp_client, name)
+    counted = [e for e in data["entries"] if e["countsTowardStock"]]
+    assert len(counted) == 4, [e["type"] for e in counted]
+
+    recon = data["reconciliation"][0]
+    assert recon["balanced"] is True
+
+    # 1. The first row a person reads is the stock they have.
+    assert counted[0]["balance"] == recon["currentStock"] == 137
+
+    # 2. Reading down the column, every balance is the row below it plus
+    #    that row's own movement. Before the fix this held within a day but
+    #    ran backwards against the rest of the list.
+    for newer, older in zip(counted, counted[1:]):
+        movement = newer["incomingQty"] - newer["outgoingQty"]
+        assert older["balance"] + movement == newer["balance"], (newer, older)
+
+
+def test_item_ledger_a_days_adjustment_sits_beside_that_days_closing_balance(
+    erp_client,
+):
+    """A manual adjustment moves no stock -- it is already absorbed into
+    initial_stock -- so it carries no balance. Where it SITS still matters:
+    ordered by its label it landed in the middle of a day's movements,
+    reading as though the balance jumped over it. It belongs with the rows
+    that move nothing, after that day's real movements.
+    """
+    name = _unique_name("AdjPlace")
+    _create_item_with_stock(erp_client, name, initial_stock=50)
+
+    _rpc(
+        erp_client,
+        "saveIssueStock",
+        [
+            {
+                "date": "06/01/2026",
+                "issuedTo": "Contractor B",
+                "items": [{"name": name, "qty": 10, "unit": "Pcs"}],
+            }
+        ],
+        mutation=True,
+    )
+    _rpc(
+        erp_client,
+        "adjustStockManually",
+        [name, "", 75, "physical recount"],
+        mutation=True,
+    )
+
+    data = _ledger(erp_client, name)
+    types = [e["type"] for e in data["entries"]]
+    assert any("Adjust" in t for t in types), types
+
+    adjustment = next(e for e in data["entries"] if "Adjust" in e["type"])
+    assert adjustment["balance"] is None
+    assert adjustment["countsTowardStock"] is False
+
+    counted = [e for e in data["entries"] if e["countsTowardStock"]]
+    recon = data["reconciliation"][0]
+    assert counted[0]["balance"] == recon["currentStock"]
+    assert recon["balanced"] is True

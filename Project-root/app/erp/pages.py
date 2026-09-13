@@ -50,7 +50,14 @@ def _asset_version(filename: str, fallback: str) -> str:
     try:
         path = os.path.join(current_app.static_folder, "erp", filename)
         with open(path, encoding="utf-8") as fh:
-            match = _SW_CACHE_RE.search(fh.read(4096))
+            # The whole file, not a first-N-bytes window. CACHE_NAME sits
+            # under a bump log that grows by a paragraph per release: it
+            # passed 4 KB in mobile-sw.js and has been past it in sw.js for
+            # a long time, and every byte beyond the window silently
+            # returned the fallback -- so the page shipped `?v=0` and a
+            # deploy paired new HTML with the old cached bundle. That is
+            # the exact failure this version exists to prevent.
+            match = _SW_CACHE_RE.search(fh.read())
         if match:
             return match.group(1)
     except OSError:

@@ -1944,14 +1944,47 @@ def get_item_ledger_data(item_name):
         (row["size"] or "").strip().lower(): float(row["initial_stock"])
         for row in stock_rows_found
     }
-    entries_by_size: dict = {}
+    # One chronological order for the whole ledger, fixed before anything is
+    # accumulated, so the display can be its exact reverse.
+    #
+    # This used to sort on (date, type) twice -- ascending to accumulate,
+    # then `reverse=True` to display. Two things went wrong with that, and
+    # together they are why the balance looked different after a stock
+    # adjustment:
+    #
+    #   - `type` is the row's LABEL, so within a day rows were ordered
+    #     alphabetically: "Manual Adjustment" before "Production
+    #     Consumption" because M < P, whatever the order they happened in.
+    #   - Python's reverse sort keeps equal keys in their ORIGINAL order.
+    #     Dates came out newest-first but each day's rows stayed oldest-
+    #     first, so a day ran the opposite way to the rest of the list and
+    #     the TOP row was not the current balance. Measured: on 321 of 748
+    #     size variants the first balance a reader saw was not the stock
+    #     on hand -- while the arithmetic was right on all 748.
+    #
+    # Within a day, stock movements come before the rows that move nothing
+    # (a PO, a "Ledger only" bill, a manual adjustment), so a day's
+    # annotations sit beside the balance that day ended on rather than
+    # interrupting it. The insertion index keeps each source's own order
+    # beyond that: there is no transaction timestamp on these rows, and an
+    # invented order is worse than the order the records were read in.
+    for index, entry in enumerate(entries):
+        entry["_seq"] = index
+    entries.sort(key=lambda e: (
+        e["dateRaw"] or "",
+        0 if e["countsTowardStock"] else 1,
+        e["_seq"],
+    ))
+    for index, entry in enumerate(entries):
+        entry["_seq"] = index
+
+    entries_by_size = {}
     for entry in entries:
         entries_by_size.setdefault((entry["size"] or "").strip().lower(), []).append(
             entry
         )
 
     for size_lower, group in entries_by_size.items():
-        group.sort(key=lambda e: (e["dateRaw"] or "", e["type"]))
         # A size with movements but no erp.stock row opens at zero rather
         # than being skipped: its rows still need a balance, and starting
         # from nothing is the honest reading of "no opening stock recorded".
@@ -1968,7 +2001,15 @@ def get_item_ledger_data(item_name):
                 # balance", which is the one thing these rows did not do.
                 entry["balance"] = None
 
-    entries.sort(key=lambda e: (e["dateRaw"] or "", e["type"]), reverse=True)
+    # Newest-first for display: the EXACT reverse of the order just
+    # accumulated, not a second sort. So the top row is always the last
+    # one accumulated -- its balance is computedStock, which the
+    # reconciliation block proves equals currentStock -- and reading down
+    # the column, each balance is the row below it plus that row's
+    # movement.
+    entries.sort(key=lambda e: e["_seq"], reverse=True)
+    for entry in entries:
+        entry.pop("_seq", None)
 
     return build_response(
         True, {"itemName": target, "entries": entries, "reconciliation": reconciliation}
