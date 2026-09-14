@@ -234,8 +234,24 @@ describe('the type scale follows the OS text-size setting', () => {
   });
 
   test('every font-size is relative, except the deliberate input floor', () => {
-    const absolute = CSS.split(/\r?\n/)
+    // And except the print block. A printed document is paper: it has to
+    // come off the phone at the size it comes off desktop, whatever the
+    // phone's text setting, so that block reproduces desktop's px sizes on
+    // purpose (mobile_print_css.test.js holds it to them). Everything a
+    // screen shows is still held to the rule.
+    const lines = CSS.split(/\r?\n/);
+    const start = lines.findIndex(l => /^@media print\s*\{/.test(l));
+    let end = -1;
+    for (let i = start, depth = 0; start >= 0 && i < lines.length; i++) {
+      depth += (lines[i].match(/\{/g) || []).length - (lines[i].match(/\}/g) || []).length;
+      if (depth === 0) { end = i; break; }
+    }
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const absolute = lines
       .map((line, i) => ({ line: line.trim(), n: i + 1 }))
+      .filter(({ n }) => n - 1 < start || n - 1 > end)
       .filter(({ line }) => /font-size:\s*[0-9.]+px/.test(line));
 
     expect(absolute.map(a => `${a.n}: ${a.line}`)).toEqual([]);

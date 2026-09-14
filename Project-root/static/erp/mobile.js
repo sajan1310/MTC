@@ -1956,7 +1956,104 @@ MApp.Print = {
     }
   },
 
-  trigger(containerId, documentTitle) {
+  // ── Fitting a wide table to the page ──────────────────────────────────
+  // Desktop's App.Print.FIT_TIERS, copied because print.js is desktop's and
+  // this shell never loads it -- mobile_print_css.test.js reads both and
+  // fails if the thresholds drift apart. The widest row picks a tier, the
+  // tier trades type size for column room, and anything under the first
+  // threshold is left exactly as the template drew it.
+  //
+  // This shell used to send `density: ''` on every download, on the grounds
+  // that the phone only reached narrow documents. That stopped being true
+  // when it gained the item, vendor and client ledgers, the BOM sheet and
+  // the stock pivot: a 16-column table then wrapped every cell to one
+  // character per line.
+  FIT_TIERS: [
+    { maxColumns: 8, className: '' },
+    { maxColumns: 12, className: 'print-fit-compact' },
+    { maxColumns: 16, className: 'print-fit-dense' },
+    { maxColumns: Infinity, className: 'print-fit-xdense' }
+  ],
+
+  // The widest row, counting colSpan -- a header cell spanning three
+  // columns commits the table to three columns of width.
+  columnCount(root) {
+    let widest = 0;
+    (root ? root.querySelectorAll('tr') : []).forEach(row => {
+      let n = 0;
+      for (const cell of row.cells || []) n += cell.colSpan || 1;
+      if (n > widest) widest = n;
+    });
+    return widest;
+  },
+
+  _tierFor(columns) {
+    const tier = this.FIT_TIERS.find(t => columns <= t.maxColumns);
+    return tier ? tier.className : '';
+  },
+
+  // For the PDF request: the server has no DOM to count with, so the class
+  // travels in the payload. Parsed detached -- never inserted, nothing laid
+  // out -- only the table structure is read.
+  fitDensityFor(html) {
+    if (!html) return '';
+    const holder = document.createElement('div');
+    holder.innerHTML = html;
+    return this._tierFor(this.columnCount(holder));
+  },
+
+  // For window.print(): the class goes on the container itself, and is
+  // taken off again once the print dialog closes.
+  fitToPage(container) {
+    if (!container) return '';
+    const names = this.FIT_TIERS.map(t => t.className).filter(Boolean);
+    container.classList.remove(...names);
+    const cls = this._tierFor(this.columnCount(container));
+    if (cls) container.classList.add(cls);
+    return cls;
+  },
+
+  // ── Page orientation ─────────────────────────────────────────────────
+  // Desktop's App.Print.setPageOrientation. mobile_styles.css says portrait
+  // for everything; a landscape job appends a later @page rule and cleanup
+  // takes it away, so orientation belongs to one print job rather than to
+  // the shell. The Print path here used to ignore `landscape` altogether:
+  // the stock pivot came off the phone's printer portrait, squeezed, while
+  // the same pivot downloaded as a landscape PDF.
+  ORIENTATION_STYLE_ID: 'mapp-print-orientation',
+
+  // Desktop's App.Print.AUTO_LANDSCAPE_COLUMNS: past this many columns even
+  // the densest tier is cramped on portrait A4, and turning the page buys
+  // more width than any font change can. `landscape: 'auto'` asks for it.
+  AUTO_LANDSCAPE_COLUMNS: 12,
+
+  setPageOrientation(landscape) {
+    this.clearPageOrientation();
+    if (!landscape) return;
+    const style = document.createElement('style');
+    style.id = this.ORIENTATION_STYLE_ID;
+    style.textContent = `@page { size: a4 landscape; margin: ${this.PAGE_MARGIN_MM}mm; }`;
+    document.head.appendChild(style);
+  },
+
+  clearPageOrientation() {
+    const existing = document.getElementById(this.ORIENTATION_STYLE_ID);
+    if (existing) existing.remove();
+  },
+
+  // Desktop's App.Print.titleToFilename. The title is the suggested "Save
+  // as PDF" name, so it loses only what Windows and macOS refuse in one.
+  titleToFilename(title) {
+    return String(title == null ? '' : title)
+      .replace(/[/\\:*?"<>|]/g, '-')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 120) || 'Document';
+  },
+
+  // options.landscape -- true, or 'auto' to rotate only past
+  // AUTO_LANDSCAPE_COLUMNS, exactly as desktop's trigger() reads it.
+  trigger(containerId, documentTitle, options = {}) {
     this.injectLogo();
     // '.print-container' is the same hook desktop print.js and both
     // stylesheets use. It replaces an '[id^="print-"]' prefix match, which
@@ -1970,21 +2067,30 @@ MApp.Print = {
     });
 
     const container = document.getElementById(containerId);
+    let fitClass = '';
     if (container) {
       container.classList.add('active-print');
       container.style.display = 'block';
+      fitClass = this.fitToPage(container);
     }
 
+    const landscape = options.landscape === 'auto'
+      ? this.columnCount(container) > this.AUTO_LANDSCAPE_COLUMNS
+      : !!options.landscape;
+
     const originalTitle = document.title;
-    document.title = documentTitle || originalTitle;
+    document.title = this.titleToFilename(documentTitle || originalTitle);
+    this.setPageOrientation(landscape);
 
     let cleaned = false;
     const cleanup = () => {
       if (cleaned) return;
       cleaned = true;
       document.title = originalTitle;
+      this.clearPageOrientation();
       if (container) {
         container.classList.remove('active-print');
+        if (fitClass) container.classList.remove(fitClass);
         container.style.display = 'none';
       }
       window.removeEventListener('afterprint', cleanup);
@@ -2066,6 +2172,57 @@ MApp.Print = {
     return await res.blob();
   },
 
+  // ── What a PDF is rendered from ──────────────────────────────────────
+  // POST /erp/render-pdf renders the markup it is sent inside a page shell
+  // of its own -- page size, margins, pagination, nothing else. Sent the
+  // container's INNER markup, as this used to, a document lost everything
+  // the print dialog prints it with: the frame (the container's own
+  // padding and its top and bottom brand rules) and every style that is
+  // not inline, so the Item Ledger's tables, badges and group bars came
+  // out as bare text. On a phone the PDF is the copy that leaves the
+  // device -- Share is how a challan reaches WhatsApp -- so it now carries
+  // what Print uses: the container itself, and the rules this page prints
+  // it under, read back from the live stylesheets rather than kept as a
+  // second copy.
+  //
+  // Desktop's own Download sends the inner markup and is unchanged: its
+  // templates and its print path are read-only from here.
+
+  // WeasyPrint draws no box-shadow, which is how Bootstrap stripes a
+  // table, so the stripe goes in as the colour it composites to on paper
+  // (white, under the shim's 3% and Bootstrap's 5% black).
+  PDF_ADDENDUM: '.print-container .table-striped > tbody > tr:nth-of-type(odd) > * { background-color: #ebebeb; }',
+
+  // mobile_styles.css's @media print block, then the utilities in
+  // partials/print.html (the only <style> in this page's body) -- document
+  // order, which is the order that settles their ties on paper.
+  printCss() {
+    if (this._printCss) return this._printCss;
+    const parts = [];
+    const rulesOf = sheet => {
+      try { return Array.from((sheet && sheet.cssRules) || []); } catch (e) { return []; }
+    };
+    Array.from(document.styleSheets)
+      .filter(sheet => !!sheet.href && /\/mobile_styles\.css(\?|$)/.test(sheet.href))
+      .forEach(sheet => rulesOf(sheet).forEach(rule => {
+        if (rule.media && rule.media.mediaText.trim().toLowerCase() === 'print') parts.push(rule.cssText);
+      }));
+    document.querySelectorAll('body > style').forEach(el => {
+      rulesOf(el.sheet).forEach(rule => parts.push(rule.cssText));
+    });
+    this._printCss = parts.join('\n');
+    return this._printCss;
+  },
+
+  // The container as Print shows it: revealed, and sized to the page.
+  pdfDocumentHtml(el) {
+    const clone = el.cloneNode(true);
+    clone.classList.add('active-print');
+    clone.style.display = 'block';
+    this.fitToPage(clone);
+    return `<style>${this.printCss()}\n${this.PDF_ADDENDUM}</style>${clone.outerHTML}`;
+  },
+
   // Renders whatever is currently inside a print container. The container
   // is populated by the same _populatePrintData the Print button uses, so
   // the downloaded file and the printed page are one document.
@@ -2074,13 +2231,15 @@ MApp.Print = {
     if (!el) return null;
     this.injectLogo();
     return this._postForBlob({
-      html: el.innerHTML,
-      landscape: !!landscape,
-      // Desktop measures a fit density off the table's column count. The
-      // documents reachable from here are the narrow ones -- challan, PO,
-      // bill, statement -- so they take the server default rather than
-      // porting the whole fit-tier machinery for a case it never hits.
-      density: '',
+      html: this.pdfDocumentHtml(el),
+      // Only an explicit true. 'auto' is a Print-dialog decision: desktop
+      // rotates the printed pivot past 12 columns and downloads it portrait,
+      // with the density tier doing the fitting.
+      landscape: landscape === true,
+      // Same tier desktop's downloadOne sends. This was hard-coded '' on
+      // the grounds that the phone only reached narrow documents; it now
+      // reaches the ledgers and pivots too.
+      density: this.fitDensityFor(el.innerHTML),
       filename
     });
   },
@@ -2189,7 +2348,7 @@ MApp.Print = {
     // Items Master for the consignee's GSTIN and each line's HSN, and an
     // un-awaited populate would print the container before they land.
     if (typeof populate === 'function') await populate();
-    if (picked.value === 'print') { this.trigger(containerId, filename); return; }
+    if (picked.value === 'print') { this.trigger(containerId, filename, { landscape }); return; }
     if (picked.value === 'download') { await this.download(containerId, filename, { landscape }); return; }
     await this.share(containerId, filename, { landscape });
   },
@@ -2201,9 +2360,10 @@ MApp.Print = {
   // this is desktop's document, filled from the phone, rather than a
   // mobile-shaped imitation of it.
   //
-  // Landscape: the pivot grows a column per size, so a warehouse with a
-  // dozen of them needs the long edge of the page more than it needs
-  // smaller type.
+  // Landscape 'auto', as desktop's printStockPivot asks: the pivot grows a
+  // column per size, so past a dozen of them the long edge of the page
+  // helps more than smaller type -- and below that, portrait is right.
+  // This was a flat `true`, which the Print path ignored anyway.
   pivot(items, poolItems, { reportType, subtitle, emptyMessage, filename }) {
     const { headerHtml, bodyHtml } = PrintTemplates.stockPivotMarkup(
       items, poolItems, emptyMessage,
@@ -2222,7 +2382,7 @@ MApp.Print = {
       containerId: 'print-low-stock-container',
       filename: filename || 'Report',
       title: reportType || 'Report',
-      landscape: true,
+      landscape: 'auto',
       populate: () => {
         set('print-low-stock-header-row', headerHtml);
         set('print-low-stock-body', bodyHtml);
@@ -2241,7 +2401,12 @@ MApp.Print = {
   // Wastage Report as the SAME documents -- it used to print a list of the
   // whole log instead, which is a different document answering a different
   // question and no use to anyone signing for goods.
-  bulk(records, buildPageHtml, { filename, title, landscape } = {}) {
+  //
+  // `cellsOwn`: the pages draw their own table cells, so the print rules'
+  // baseline cell styling must leave them alone -- the same print-cells-own
+  // switch the PO and stock pivot templates carry in their markup. Set or
+  // cleared on every job, so one job's choice never outlives it.
+  bulk(records, buildPageHtml, { filename, title, landscape, cellsOwn } = {}) {
     const list = records || [];
     if (!list.length) {
       MApp.Toast.error('Nothing to print.');
@@ -2253,6 +2418,8 @@ MApp.Print = {
       title: title || 'Document',
       landscape,
       populate: () => {
+        const container = document.getElementById('print-bulk-container');
+        if (container) container.classList.toggle('print-cells-own', !!cellsOwn);
         const body = document.getElementById('print-bulk-body');
         if (!body) return;
         body.innerHTML = list.map((record, idx) => {
@@ -7267,10 +7434,6 @@ MApp.Wastage = {
     MApp.Sheet.close('sheet-wastage-log');
   },
 
-  // Desktop wraps these entries in a standalone document and opens a print
-  // window. A popup on a phone is a coin toss, so the same entries go into
-  // the shared bulk container instead -- same note, a delivery mechanism
-  // that works on the device it is running on.
   // The toolbar button now asks which document: the log (a listing, for
   // reconciling against the shelf) or the notes (one signed page per
   // record). Desktop has both as separate buttons; a phone toolbar has
@@ -7290,19 +7453,48 @@ MApp.Wastage = {
   },
 
 
-  printNote(index) {
-    const rec = (this.filtered || [])[index];
-    if (!rec) return;
-    MApp.Print.bulk([rec], r => PrintTemplates.wastageNote(r, MApp.Print.noteDeps()), {
-      filename: `Wastage_${rec.wastageId || index + 1}`,
-      title: 'Wastage Report'
+  // Desktop's Wastage Report (return.js#buildWastagePrintPageHtml): ONE
+  // page -- a heading, when it was printed and how many records, then each
+  // entry in turn. The phone printed a page per entry with no heading,
+  // which is not the document desktop hands over.
+  //
+  // Desktop writes that page into a popup window of its own. A popup on a
+  // phone is a coin toss, so it goes into the bulk container instead, as a
+  // single item, inside .mb-standalone-doc: the popup never had desktop's
+  // app styling, so the print rules stand back inside it
+  // (mobile_styles.css), and cellsOwn keeps the baseline cell rule off its
+  // tables. The type, colour and inset below are the popup's own body
+  // rule, plus the 4mm by which the browser's default page margin (about
+  // 10mm) exceeds this shell's 6mm, so the text sits where desktop's does.
+  reportHtml(records) {
+    const esc = MApp.Util.escapeHtml;
+    const entries = records.map(w => PrintTemplates.wastageNote(w, MApp.Print.templateDeps())).join('');
+    return `<div class="mb-standalone-doc" style="font-family:Arial, sans-serif;font-size:14px;line-height:normal;color:#212529;padding:calc(24px + 4mm);">
+  <h2 style="font-family:inherit;font-size:1.5em;font-weight:bold;line-height:normal;color:inherit;margin:0 0 4px 0;text-transform:none;letter-spacing:normal;">Wastage Report</h2>
+  <div class="header-meta" style="color:#666;font-size:12px;margin-bottom:20px;">Printed: ${esc(new Date().toLocaleDateString('en-IN'))} &nbsp;|&nbsp; Records: ${records.length}</div>
+  ${entries}
+</div>`;
+  },
+
+  _printReport(records, filename) {
+    if (!records.length) {
+      MApp.Toast.error('Nothing to print.');
+      return;
+    }
+    // Every entry on one page, so the records travel to bulk() as one item.
+    MApp.Print.bulk([records], all => this.reportHtml(all), {
+      filename, title: 'Wastage Report', cellsOwn: true
     });
   },
 
+  printNote(index) {
+    const rec = (this.filtered || [])[index];
+    if (!rec) return;
+    this._printReport([rec], `Wastage_${rec.wastageId || index + 1}`);
+  },
+
   printAllNotes() {
-    MApp.Print.bulk(this.filtered || [],
-      r => PrintTemplates.wastageNote(r, MApp.Print.noteDeps()),
-      { filename: 'Wastage_Report', title: 'Wastage Report' });
+    this._printReport(this.filtered || [], 'Wastage_Report');
   },
 
   onSearch(term) {
@@ -8079,43 +8271,169 @@ MApp.Directory = {
 
   // ── Add/Edit (Phase 1) ──────────────────────────────────────────────
   // ── The vendor and client statements ─────────────────────────────────
-  // Desktop opens a detail modal and prints from it. There is no such
-  // screen here, so these print the self-contained page straight from the
-  // list -- the same document, reached in one tap instead of two.
+  // Desktop prints these from its detail modals, into two templates of its
+  // own (#print-vendor-ledger-container, #print-client-ledger-container),
+  // by copying the modal's tables across. This used to print the BULK page
+  // instead, which is a different document: a blue client ledger under
+  // other headings where desktop's is orange, and a vendor ledger whose
+  // five column titles sat over eight columns of figures, with no Balance.
+  // Now it fills desktop's own templates with the rows desktop's modals
+  // draw, so the two shells print one document. There is no modal here to
+  // copy from, so the rows are drawn directly -- the same markup, which
+  // mobile_print_documents.test.js checks against desktop's own code.
   //
-  // The collections are fetched on demand: a vendor ledger merges POs,
-  // bills, returns and issues, and loading four datasets on every visit
-  // to a directory nobody is printing from is a poor trade on a phone.
+  // The collections are fetched on demand, and only the ones the document
+  // needs: loading them on every visit to a directory nobody is printing
+  // from is a poor trade on a phone.
   async printLedger(record) {
+    const isClient = this.type === 'client';
     MApp.Toast.show('Building the ledger…');
-    try {
-      const [pos, bills, returns, issues, dispatches, orders] = await Promise.all([
-        MApp.Api.call('getPOData').catch(() => null),
-        MApp.Api.call('getBillData').catch(() => null),
-        MApp.Api.call('getReturnData').catch(() => null),
-        MApp.Api.call('getIssueData').catch(() => null),
+    const ok = r => (r && r.success && r.data) || [];
+    let src;
+    if (isClient) {
+      const [dispatches, orders] = await Promise.all([
         MApp.Api.call('getDispatchData').catch(() => null),
         MApp.Api.call('getClientOrdersData').catch(() => null)
       ]);
-      const ok = r => (r && r.success && r.data) || [];
-      const src = {
-        pos: ok(pos), bills: ok(bills), returns: ok(returns),
-        issues: ok(issues), dispatches: ok(dispatches), orders: ok(orders)
-      };
-      const deps = MApp.Print.noteDeps();
-      const isClient = this.type === 'client';
-
-      MApp.Print.bulk([record],
-        r => (isClient
-          ? PrintTemplates.clientLedgerSheet(r, src, deps)
-          : PrintTemplates.vendorLedgerSheet(r, src, deps)),
-        {
-          filename: `${isClient ? 'Client' : 'Vendor'}_Ledger_${String(record.name || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`,
-          title: isClient ? 'Client Ledger' : 'Vendor Ledger'
-        });
-    } catch (err) {
-      MApp.Toast.error('Could not build the ledger: ' + (err.message || ''));
+      src = { dispatches: ok(dispatches), orders: ok(orders) };
+    } else {
+      const [pos, bills, returns, issues] = await Promise.all([
+        MApp.Api.call('getPOData').catch(() => null),
+        MApp.Api.call('getBillData').catch(() => null),
+        MApp.Api.call('getReturnData').catch(() => null),
+        MApp.Api.call('getIssueData').catch(() => null)
+      ]);
+      src = { pos: ok(pos), bills: ok(bills), returns: ok(returns), issues: ok(issues) };
     }
+
+    return MApp.Print.chooseAction({
+      containerId: isClient ? 'print-client-ledger-container' : 'print-vendor-ledger-container',
+      filename: `${isClient ? 'Client' : 'Vendor'}_Ledger_${String(record.name || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+      title: isClient ? 'Client Ledger' : 'Vendor Ledger',
+      populate: () => (isClient
+        ? this._populateClientLedger(record, src)
+        : this._populateVendorLedger(record, src))
+    });
+  },
+
+  _printText(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.innerText = value;
+  },
+
+  _printHtml(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = value;
+  },
+
+  // Desktop's vendors.js#printLedger, field for field: the name as stored
+  // (desktop prints the vendor's own spelling, not title case), and '-' or
+  // 'No remarks' for whatever is blank.
+  _populateVendorLedger(record, src) {
+    const { ledger, pendingList } =
+      PrintTemplates.vendorLedger(record.name, src, MApp.Print.templateDeps());
+    this._printText('print-vendor-name', record.name);
+    this._printText('print-vendor-gstin', record.gstin || '-');
+    this._printText('print-vendor-contact', record.contact || '-');
+    this._printText('print-vendor-address', record.address || '-');
+    this._printText('print-vendor-remarks', record.remarks || 'No remarks');
+    this._printHtml('print-vendor-ledger-body', this._vendorLedgerRows(ledger));
+    this._printHtml('print-vendor-pending-body', this._vendorPendingRows(pendingList));
+  },
+
+  // The Ledger Transaction History rows desktop's vendor modal draws
+  // (vendors.js#populateLedgerAndPending), which its Print copies into the
+  // template's nine columns.
+  _vendorLedgerRows(ledger) {
+    const esc = MApp.Util.escapeHtml;
+    // Zero is a real balance (everything received has gone back), so it
+    // prints "0"; a PO moves nothing and prints "-". Negative is shown, not
+    // clamped -- more went back than ever came in, which is worth seeing.
+    const balanceCell = entry => {
+      if (entry.balance === null || entry.balance === undefined) {
+        return '<span class="text-muted">-</span>';
+      }
+      const n = Math.round(MApp.Util.toNumber(entry.balance) * 10000) / 10000;
+      return n < 0 ? `<span class="text-danger">${n}</span>` : String(n);
+    };
+
+    let lHtml = '';
+    ledger.forEach(entry => {
+      lHtml += `<tr>
+          <td>${esc(entry.dateStr)}</td>
+          <td><span class="badge ${entry.badgeClass}">${esc(entry.type)}</span></td>
+          <td><strong class="text-dark">${esc(entry.ref)}</strong></td>
+          <td><small class="text-muted">${esc(entry.items)}</small></td>
+          <td class="text-center text-primary fw-bold">${entry.orderQty || '-'}</td>
+          <td class="text-center text-success fw-bold">${entry.incomingQty || '-'}</td>
+          <td class="text-center text-danger fw-bold">${entry.outgoingQty || '-'}</td>
+          <td class="text-center fw-bold">${balanceCell(entry)}</td>
+          <td class="fw-bold text-end">${MApp.Util.formatCurrency(entry.value)}</td>
+        </tr>`;
+    });
+    return lHtml || '<tr><td colspan="9" class="text-center text-muted p-4">No transaction history found.</td></tr>';
+  },
+
+  // Over-receipt is its own figure, not a negative pending -- see
+  // PrintTemplates.vendorLedger.
+  _vendorPendingRows(pendingList) {
+    const esc = MApp.Util.escapeHtml;
+    let pHtml = '';
+    pendingList.forEach(item => {
+      const over = Number(item.over) || 0;
+      pHtml += `<tr>
+          <td><strong class="text-primary">${esc(item.name)}</strong></td>
+          <td>${esc(item.size) || '-'}</td>
+          <td class="text-center">${item.ordered}</td>
+          <td class="text-center">${item.received}${over ? ` <small class="text-success fw-bold">+${over} over</small>` : ''}</td>
+          <td class="${item.pending > 0 ? 'text-danger' : 'text-success'} fw-bold text-center">${item.pending}</td>
+        </tr>`;
+    });
+    return pHtml || '<tr><td colspan="5" class="text-center text-success fw-bold p-4">No pending orders. All caught up!</td></tr>';
+  },
+
+  // Desktop's client.js#printLedger: the name in title case (desktop does
+  // that for clients, not vendors), and the three tables its ledger modal
+  // draws -- which PrintTemplates.clientLedgerSections builds for both.
+  _populateClientLedger(record, src) {
+    const s = PrintTemplates.clientLedgerSections(record.name, src, {
+      ...MApp.Print.templateDeps(),
+      formatQty: v => MApp.Util.formatQty(v),
+      piDisplayStatus: o => this._piDisplayStatus(o, src.dispatches)
+    });
+    this._printText('print-client-name', MApp.Util.formatNameCase(record.name));
+    this._printText('print-client-gstin', record.gstin || '-');
+    this._printText('print-client-contact', record.contact || '-');
+    this._printText('print-client-address', record.address || '-');
+    this._printText('print-client-remarks', record.remarks || 'No remarks');
+    this._printHtml('print-client-orders-body', s.ordersHtml);
+    this._printHtml('print-client-pending-body', s.pendingHtml);
+    this._printHtml('print-client-dispatch-body', s.dispatchHtml);
+  },
+
+  // Desktop's client.js#calculatePIDisplayStatus -- the badge each order
+  // carries on the ledger. `dispatches` is every dispatch, not just this
+  // client's: an order's progress is counted against its own number.
+  _piDisplayStatus(order, dispatches) {
+    if (order.status === 'Cancelled') return { label: 'Cancelled', badgeClass: 'bg-danger' };
+    if (order.status === 'Estimate') return { label: 'Estimate', badgeClass: 'bg-secondary' };
+
+    const lines = order.lines || [];
+    const totalOrdered = lines.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
+    const totalDispatched = (dispatches || [])
+      .filter(d => d.orderNumber === order.orderNumber)
+      .reduce((sum, d) => sum + (Number(d.qty) || 0), 0);
+
+    if (totalOrdered > 0 && totalDispatched >= totalOrdered - 0.0001) {
+      return { label: 'Dispatched', badgeClass: 'bg-success' };
+    }
+    if (totalDispatched > 0) {
+      return { label: 'Partially Dispatched', badgeClass: 'bg-info' };
+    }
+    if (lines.some(l => l.productionPushed)) {
+      return { label: 'In Production', badgeClass: 'bg-primary' };
+    }
+    return { label: 'Order Confirmed', badgeClass: 'bg-warning text-dark' };
   },
 
   // The MApp.Form spec for whichever directory type is showing. `type`

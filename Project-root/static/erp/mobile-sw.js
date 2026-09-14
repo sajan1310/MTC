@@ -72,7 +72,13 @@
 // v63: the Stock Groups checklist searches each word through MApp.Search
 // instead of matching the whole query as one string. mobile.js is
 // precached at ?v=<n>, so without this the phone keeps the old search.
-const CACHE_NAME = 'erp-mobile-shell-v63';
+// v64: documents print as desktop's do. mobile_styles.css carries
+// desktop's document rules for print (and no longer squeezes a document
+// into one page's height); mobile.js prints the vendor and client ledgers
+// into desktop's own templates and the Wastage Report as desktop's single
+// page, turns the page for a landscape job, and sends the renderer the
+// document together with its print rules.
+const CACHE_NAME = 'erp-mobile-shell-v64';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

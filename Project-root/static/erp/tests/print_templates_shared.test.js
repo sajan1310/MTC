@@ -814,9 +814,15 @@ describe('the ledger documents', () => {
     });
 
     test('mobile prints all four', () => {
+      // The two ledgers fill desktop's OWN templates now, from the same
+      // assemblers desktop's modals use, rather than the bulk-print pages
+      // -- mobile_print_documents.test.js holds them to desktop's output.
       const m = read5('mobile.js');
-      expect(m).toContain('PrintTemplates.vendorLedgerSheet(');
-      expect(m).toContain('PrintTemplates.clientLedgerSheet(');
+      expect(m).toContain('PrintTemplates.vendorLedger(');
+      expect(m).toContain("containerId: isClient ? 'print-client-ledger-container' : 'print-vendor-ledger-container'");
+      expect(m).toContain('PrintTemplates.clientLedgerSections(');
+      expect(m).not.toContain('PrintTemplates.vendorLedgerSheet(');
+      expect(m).not.toContain('PrintTemplates.clientLedgerSheet(');
       expect(m).toContain('PrintTemplates.bomCostSheet(');
       expect(m).toContain('PrintTemplates.itemLedgerSections(');
     });

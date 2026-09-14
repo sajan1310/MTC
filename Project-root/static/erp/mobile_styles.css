@@ -2010,32 +2010,396 @@ body.mb-selecting {
   gap: var(--mb-sp-3);
 }
 
-/* ── Print (challan) ──────────────────────────────────────
-   print.html's containers (the same 11 templates the desktop shell
-   uses, reused as-is here per Mobile_Index.html's own design) are
-   display:none by default and each print template owns its own inline
-   styling — this block only handles visibility switching, mirroring
-   desktop styles.css's @media print pattern, scoped to the mobile
-   shell's own chrome instead of the desktop app-container.
+/* ── Print ────────────────────────────────────────────────────────────────
+   print.html's containers are the templates the desktop shell prints,
+   filled by the same builders (print-templates.js). What decides how a
+   document LOOKS on paper, though, is the stylesheet it prints under, and
+   desktop's documents print under a good deal more than their own inline
+   styles:
 
-   Selects .print-container, the same class desktop styles.css uses, so a
-   new print template is picked up by both shells from one class in the
-   markup. This used to be the 11-id list written out twice more here. The
-   @page rule must stay in step with desktop styles.css and
+     - Bootstrap, which index.html loads and this shell does not: the
+       .table machinery the Item Ledger's history is built from (cell ink,
+       zebra stripes, header alignment) and a few layout utilities.
+     - styles.css's bare element rules -- th, thead, table, small, strong,
+       h1-h6, body -- which apply inside a print container exactly as they
+       do on screen, because an element selector does not know it is
+       printing. They are why a desktop ledger's column headers are
+       uppercase Outfit with a 2px rule beneath them.
+     - styles.css's print rules.
+
+   Desktop is the reference and is read-only, so its look is reproduced
+   here rather than changed there. Every rule below is desktop's (or
+   Bootstrap 5.3.0's) own selector with desktop's light-theme values, in
+   desktop's own order -- Bootstrap, then styles.css, then its print block
+   -- because that order is what settles the ties between them.
+   mobile_print_css.test.js reads styles.css and fails if they drift.
+
+   It all sits inside @media print, where nothing but the document is
+   visible, so a bare element selector here cannot reach a mobile screen.
+   The @page rule must stay in step with desktop styles.css and
    App.Print.PAGE_MARGIN_MM. */
 @page { size: a4 portrait; margin: 6mm; }
 
 @media print {
-  body { background: #fff !important; margin: 0 !important; padding: 0 !important; }
-  #mapp-root, .mb-toast-stack, .mb-sheet-backdrop { display: none !important; }
 
-  .print-container {
-    display: none !important;
+  /* ── The page ─────────────────────────────────────────────────────────── */
+
+  /* One continuous flow on white, whatever the phone's theme.
+     This shell pins html and body to 100% of the viewport and, from 640px
+     up -- which an A4 page is -- makes body a flex row to frame the app as
+     a phone. A print container is a direct child of body, so it became a
+     flex item stretched to exactly one page: the document's box ended at
+     the foot of page 1, its closing rule printed there mid-table, and every
+     later page carried the rest of the table outside it, on the app's own
+     background. In dark mode that background was dark.
+
+     color-scheme is !important because the dark theme sets it on
+     :root[data-theme] and in a prefers-color-scheme block, and Chrome paints
+     the page MARGINS in the scheme's canvas colour: without it every page
+     came off a dark phone framed in a 6mm black border. */
+  html,
+  body {
+    height: auto !important;
+    min-height: 0 !important;
+    background: #fff !important;
+    overflow: visible !important;
+    color-scheme: light !important;
   }
+
+  /* rem is 16px on desktop. Here it follows the phone's text-size setting,
+     which is right for the app and wrong for a document that has to come
+     out the same size from both shells. */
+  html { font-size: 16px !important; }
+
+  body {
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    /* Desktop's body (styles.css, then index.html): what anything in a
+       document that does not set its own type inherits. */
+    font-family: Inter, sans-serif;
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.5;
+    color: #1e293b;
+    text-align: start;
+  }
+
+  /* Everything that is not the document, gone -- by exclusion, not by list.
+
+     This used to hide #mapp-root, the toast stack and the sheet backdrop by
+     name, and missed the thing that mattered most: the sheets themselves.
+     Every sheet lives OUTSIDE #mapp-root and is position:fixed, and a
+     print engine repeats a fixed element on every page -- so whatever sheet
+     you printed from (the contractor statement, a return, the stock item
+     you had just asked for a ledger on) printed straight over the document,
+     covering the vendor, the PO number and every item name, on every page.
+
+     A list is how that was missed, so this is not one. The print containers
+     are the only direct children of <body> that should ever reach paper
+     (partials/print.html is included at the top level), so anything else
+     at that level -- a sheet, the picker, a drawer, a banner not built yet
+     -- is hidden without anyone having to remember to add it here. */
+  body > *:not(.print-container) { display: none !important; }
+
+  /* ── Bootstrap 5.3.0 -- the parts desktop's documents are built from ─── */
+
+  *,
+  ::before,
+  ::after { box-sizing: border-box; }
+
+  b, strong { font-weight: bolder; }
+  img, svg { vertical-align: middle; }
+
+  thead, tbody, tfoot, tr, td, th {
+    border-color: inherit;
+    border-style: solid;
+    border-width: 0;
+  }
+
+  .table {
+    --bs-table-color-type: initial;
+    --bs-table-bg-type: initial;
+    --bs-table-color-state: initial;
+    --bs-table-bg-state: initial;
+    --bs-table-color: #212529;
+    --bs-table-bg: #fff;
+    --bs-table-border-color: #dee2e6;
+    --bs-table-accent-bg: transparent;
+    --bs-table-striped-color: #212529;
+    --bs-table-striped-bg: rgb(0 0 0 / 5%);
+    --bs-table-active-color: #212529;
+    --bs-table-active-bg: rgb(0 0 0 / 10%);
+    --bs-table-hover-color: #212529;
+    --bs-table-hover-bg: rgb(0 0 0 / 7.5%);
+
+    width: 100%;
+    margin-bottom: 1rem;
+    vertical-align: top;
+    border-color: var(--bs-table-border-color);
+  }
+
+  /* Why the Item Ledger's "ledger only" rows print in full ink on desktop:
+     this sets every cell's colour outright, over the row's .text-muted. */
+  .table > :not(caption) > * > * {
+    padding: .5rem .5rem;
+    color: var(--bs-table-color-state, var(--bs-table-color-type, var(--bs-table-color)));
+    background-color: var(--bs-table-bg);
+    border-bottom-width: 1px;
+    box-shadow: inset 0 0 0 9999px var(--bs-table-bg-state, var(--bs-table-bg-type, var(--bs-table-accent-bg)));
+  }
+
+  .table > tbody { vertical-align: inherit; }
+  .table > thead { vertical-align: bottom; }
+
+  .table-striped > tbody > tr:nth-of-type(odd) > * {
+    --bs-table-color-type: var(--bs-table-striped-color);
+    --bs-table-bg-type: var(--bs-table-striped-bg);
+  }
+
+  .table-light {
+    --bs-table-color: #000;
+    --bs-table-bg: #f8f9fa;
+    --bs-table-border-color: #dfe0e1;
+    --bs-table-striped-bg: #ecedee;
+    --bs-table-striped-color: #000;
+    --bs-table-active-bg: #dfe0e1;
+    --bs-table-active-color: #000;
+    --bs-table-hover-bg: #e5e6e7;
+    --bs-table-hover-color: #000;
+
+    color: var(--bs-table-color);
+    border-color: var(--bs-table-border-color);
+  }
+
+  .table-responsive { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .collapse:not(.show) { display: none; }
+  .badge:empty { display: none; }
+  .d-flex { display: flex !important; }
+  .shadow-sm { box-shadow: 0 .125rem .25rem rgb(0 0 0 / 7.5%) !important; }
+  .justify-content-between { justify-content: space-between !important; }
+  .align-items-center { align-items: center !important; }
+  .mb-0 { margin-bottom: 0 !important; }
+  .mb-3 { margin-bottom: 1rem !important; }
+  .ms-2 { margin-left: .5rem !important; }
+  .p-4 { padding: 1.5rem !important; }
+  .px-3 { padding-right: 1rem !important; padding-left: 1rem !important; }
+  .py-2 { padding-top: .5rem !important; padding-bottom: .5rem !important; }
+  /* The Item Ledger's pending-order figure. The rest of the colour
+     utilities are in partials/print.html, which both shells load. */
+  .text-warning { color: #ffc107 !important; }
+
+  /* Bootstrap Icons draws this as a font glyph. The same path as an image:
+     a font this shell only needed at print time would not have loaded by
+     the time the print dialog laid the page out. */
+  .bi-chevron-down::before {
+    content: "";
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    vertical-align: -.125em;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%231a1a1a'%3E%3Cpath fill-rule='evenodd' d='M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708'/%3E%3C/svg%3E") center / 1em 1em no-repeat;
+  }
+
+  /* ── styles.css's element rules, which reach desktop's documents ───────
+     Bootstrap's reboot has a rule for most of these elements too. Desktop
+     loads it first, so where both set a property styles.css's value is the
+     one its pages print with; each element's rule here is the two taken in
+     that order and written once. */
+
+  h1, h2, h3, h4, h5, h6 {
+    margin-top: 0;
+    margin-bottom: 12px;
+    font-family: Outfit, sans-serif;
+    font-weight: 600;
+    line-height: 1.3;
+    color: #0f172a;
+    /* Not desktop's: this shell's own h1-h4 are uppercase display type,
+       and nothing on desktop sets either. */
+    text-transform: none;
+    letter-spacing: normal;
+  }
+
+  h1 { font-size: 28px; }
+  h2 { font-size: 24px; }
+  h3 { font-size: 20px; }
+  h4 { font-size: 18px; }
+  h5 { font-size: 16px; }
+  h6 { font-size: 14px; }
+  p { margin-top: 0; margin-bottom: 12px; color: #64748b; }
+  small { font-size: 12px; color: #64748b; }
+  strong { font-weight: 600; color: #1e293b; }
+
+  table {
+    caption-side: bottom;
+    width: 100%;
+    border-collapse: collapse;
+    color: #1e293b;
+  }
+
+  thead {
+    background-color: transparent;
+    border-bottom: 2px solid #e2e8f0;
+  }
+
+  th {
+    padding: 14px 12px;
+    text-align: left;
+    font-weight: 600;
+    font-family: Outfit, sans-serif;
+    color: #64748b;
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: .5px;
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 12px;
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: middle;
+  }
+
+  /* ── styles.css's print-template isolation and page fitting ──────────── */
+
+  .print-container th {
+    white-space: normal;
+    color: inherit;
+  }
+
+  .print-container table {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .print-container th,
+  .print-container td { overflow-wrap: anywhere; }
+
+  /* Density tiers. MApp.Print counts the widest row before printing and
+     adds one of these, so a 16-column pivot gets smaller type rather than
+     one character per line. Same thresholds as desktop's App.Print
+     .FIT_TIERS and the same sizes as its styles.css.
+
+     And the same PLACE, which matters more than it looks: desktop's
+     baseline cell rule below comes later with equal weight, so on an
+     ordinary document it wins and only the header cells and the two
+     documents that style their own cells (PO, stock pivot) actually get
+     smaller. These used to sit after it here, which made every phone
+     ledger print a size smaller and tighter than the desktop one. */
+  .print-container.print-fit-compact th,
+  .print-container.print-fit-compact td {
+    font-size: 10px !important;
+    padding: 4px 5px !important;
+  }
+
+  .print-container.print-fit-dense th,
+  .print-container.print-fit-dense td {
+    font-size: 9px !important;
+    padding: 3px 4px !important;
+    line-height: 1.25 !important;
+  }
+
+  .print-container.print-fit-xdense th,
+  .print-container.print-fit-xdense td {
+    font-size: 8px !important;
+    padding: 2px 3px !important;
+    line-height: 1.2 !important;
+    letter-spacing: -.1px !important;
+  }
+
+  /* ── styles.css's print block ────────────────────────────────────────── */
+
+  /* Inside a document, what desktop's chrome-hiding rules also catch. */
+  .print-container .d-none,
+  .print-container [style*="display: none"],
+  .print-container [style*="visibility: hidden"] {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  .print-container { display: none !important; }
 
   .print-container.active-print {
     display: block !important;
+    visibility: visible !important;
     width: 100% !important;
     margin: 0 !important;
   }
+
+  /* Header bands, accent bars and backgrounds at their real colours rather
+     than the browser's ink-saving default. */
+  .print-container * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Baseline cells for templates that do not style their own. The PO and
+     stock pivot carry print-cells-own and keep their inline look; applying
+     this to them would repaint their 1px #e5e5e5 borders #999. */
+  .print-container:not(.print-cells-own) td {
+    border: 1px solid #999 !important;
+    padding: 6px 8px !important;
+    font-size: 11px !important;
+    overflow-wrap: break-word !important;
+  }
+
+  /* A long ledger: the header on every page, totals at the foot, and no
+     row sliced across a page break. */
+  .print-container thead { display: table-header-group; }
+  .print-container tfoot { display: table-footer-group; }
+  .print-container tr { break-inside: avoid; }
+
+  /* A document's closing blocks stay whole. */
+  .print-container .print-sheet-closing-accent,
+  .print-container #print-grand-total-container,
+  .print-container #print-footer-meta,
+  .print-container #print-signature {
+    break-inside: avoid;
+  }
+
+  /* One record per page in a bulk job -- the issue and return notes and
+     the BOM sheet print through the bulk container here. */
+  .print-container .bulk-print-page { break-after: page; }
+  .print-container .bulk-print-page:last-child { break-after: auto; }
+
+  a {
+    text-decoration: none;
+    color: inherit;
+  }
+
+  ::-webkit-scrollbar { display: none; }
+
+  /* ── A page desktop prints outside its app ─────────────────────────────
+     Desktop prints Wastage from a popup window of its own: no Bootstrap,
+     no styles.css, only the few rules buildWastagePrintPageHtml writes.
+     The phone renders the same page into the bulk container instead (a
+     popup on a phone is a coin toss), so everything above -- desktop's APP
+     styling -- has to stand back inside it, or it prints as a different
+     page. Its cells are its own, which MApp.Print.bulk says with
+     print-cells-own on the container. */
+  .print-container .mb-standalone-doc * { box-sizing: content-box; }
+
+  /* The popup asks for no exact colour, so its date pill and header shading
+     print only when the print dialog's "Background graphics" is ticked. */
+  .print-container .mb-standalone-doc,
+  .print-container .mb-standalone-doc * {
+    -webkit-print-color-adjust: economy !important;
+    print-color-adjust: economy !important;
+  }
+  .print-container .mb-standalone-doc table { box-sizing: border-box; color: inherit; }
+  .print-container .mb-standalone-doc small { font-size: smaller; color: inherit; }
+  .print-container .mb-standalone-doc strong { font-weight: bolder; color: inherit; }
+  .print-container .mb-standalone-doc thead { border-bottom: 0; }
+
+  .print-container .mb-standalone-doc th {
+    font-family: inherit;
+    font-size: inherit;
+    font-weight: bold;
+    letter-spacing: normal;
+    text-transform: none;
+  }
+
+  .print-container .mb-standalone-doc th,
+  .print-container .mb-standalone-doc td { overflow-wrap: normal; }
+  .print-container .mb-standalone-doc .text-end { text-align: inherit !important; }
 }

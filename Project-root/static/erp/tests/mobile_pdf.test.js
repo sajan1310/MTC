@@ -340,8 +340,9 @@ describe('every printable document offers all three', () => {
       .filter(line => /MApp\.Print\.trigger\(/.test(line) && !line.startsWith('//'));
 
     expect(direct).toEqual([]);
-    // ...and the chooser is where printing actually happens.
-    expect(MOBILE_JS).toContain('this.trigger(containerId, filename)');
+    // ...and the chooser is where printing actually happens -- with the
+    // job's orientation, which the Print path used to drop.
+    expect(MOBILE_JS).toContain('this.trigger(containerId, filename, { landscape })');
   });
 
   test('all four documents go through the chooser', () => {
