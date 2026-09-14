@@ -343,7 +343,12 @@
 // counts against the PO's ONLY line for that item + size. bill.js and
 // print-templates.js mirror the server, identical on all 392 PO lines.
 // (v71 is taken by the Stock Groups search fix being made alongside this.)
-const CACHE_NAME = 'erp-shell-v72';
+// v73: that Stock Groups fix -- it landed after v72, so v71 was never
+// used. The Manage Items picker and the Low Stock preview matched the
+// whole query as one string, so "jungle king 16" found nothing: name and
+// size are separate fields. Each word now has to appear somewhere, in any
+// order, like every other search in the app.
+const CACHE_NAME = 'erp-shell-v73';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

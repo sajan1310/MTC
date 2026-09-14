@@ -69,7 +69,10 @@
 // v61: same pending fix -- this shell prints the vendor ledger too.
 // v62: same PO-line fallback -- print-templates.js is precached here and
 // the phone's vendor ledger resolves bills to orders through it.
-const CACHE_NAME = 'erp-mobile-shell-v62';
+// v63: the Stock Groups checklist searches each word through MApp.Search
+// instead of matching the whole query as one string. mobile.js is
+// precached at ?v=<n>, so without this the phone keeps the old search.
+const CACHE_NAME = 'erp-mobile-shell-v63';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

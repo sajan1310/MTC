@@ -10724,6 +10724,17 @@ MApp.StockGroups = {
   itemsSearch: '',
   itemsFilter: 'all',
   stockRows: [],
+  stockEntries: [],
+
+  // Name and size are separate fields, and the operator types both at
+  // once ("jungle king 16"), so the checklist goes through MApp.Search
+  // like every other list rather than matching the query as one string.
+  ITEMS_SEARCH: {
+    fields: [
+      { key: 'name', weight: 10, label: 'Item' },
+      { key: 'size', weight: 5, label: 'Size' }
+    ]
+  },
 
   async openItems(group) {
     this.itemsGroup = group;
@@ -10752,6 +10763,7 @@ MApp.StockGroups = {
         return;
       }
       this.stockRows = res.data || [];
+      this.stockEntries = MApp.Search.index(this.stockRows, this.ITEMS_SEARCH);
       this.renderItems();
     } catch (err) {
       MApp.Util.renderError(body, err && err.message, () => this.openItems(group));
@@ -10781,12 +10793,7 @@ MApp.StockGroups = {
   // reached past the filter would be the one destructive control here,
   // because the save replaces the group's whole membership.
   visibleRows() {
-    const term = String(this.itemsSearch || '').trim().toLowerCase();
-    return (this.stockRows || []).filter(r => {
-      if (term) {
-        const hay = `${r.name || ''} ${r.size || ''}`.toLowerCase();
-        if (!hay.includes(term)) return false;
-      }
+    return MApp.Search.run(this.stockEntries, this.itemsSearch).filter(r => {
       const on = this.selectedKeys.has(MApp.Stock._key(r.name, r.size));
       if (this.itemsFilter === 'selected' && !on) return false;
       if (this.itemsFilter === 'unselected' && on) return false;

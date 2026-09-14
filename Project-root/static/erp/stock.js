@@ -2803,7 +2803,7 @@ App.Stock = {
   // App.StockGroup group's saved membership -- picking a group here then
   // Select All is what "print group-wise" actually means in this UI.
   _visibleLowStockPreviewItems() {
-    const term = (App.State.lowStockPreviewSearch || '').toLowerCase();
+    const term = App.State.lowStockPreviewSearch || '';
     const mode = App.State.lowStockPreviewFilter || 'all';
     const selected = App.State.selectedLowStockPreview || [];
 
@@ -2815,7 +2815,7 @@ App.Stock = {
     }
 
     return (App.State.globalStock || []).filter(item => {
-      if (term && !item.name.toLowerCase().includes(term) && !(item.size || '').toLowerCase().includes(term)) return false;
+      if (term && !App.Utils.matchesKeywords(`${item.name} ${item.size || ''}`, term)) return false;
       if (mode === 'low' && !item.isLowStock) return false;
       if (groupKeys && !groupKeys.has(this.stockKey(item))) return false;
       const isSelected = App.Selection.isSelected(selected, this.stockKey(item));
@@ -3316,12 +3316,12 @@ App.StockGroup = {
   },
 
   _visibleItemsDialogItems() {
-    const term = (this._itemsDialogSearch || '').toLowerCase();
+    const term = this._itemsDialogSearch || '';
     const mode = this._itemsDialogFilter || 'all';
     const selected = this._itemsDialogSelected;
 
     return (App.State.globalStock || []).filter(item => {
-      if (term && !item.name.toLowerCase().includes(term) && !(item.size || '').toLowerCase().includes(term)) return false;
+      if (term && !App.Utils.matchesKeywords(`${item.name} ${item.size || ''}`, term)) return false;
       const isSelected = App.Selection.isSelected(selected, App.Stock.stockKey(item));
       if (mode === 'selected' && !isSelected) return false;
       if (mode === 'unselected' && isSelected) return false;

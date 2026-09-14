@@ -262,6 +262,15 @@ describe('the membership checklist', () => {
     expect(on).toEqual(['selected']);
   });
 
+  test('search matches each word anywhere in name or size, in any order', async () => {
+    // The whole query used to be one substring, so "24 sticker" -- a size
+    // and a name, typed the way people think of the part -- matched nothing.
+    await openChecklist(GROUPS[1]);
+    MApp.StockGroups.itemsSearch = '24 sticker';
+
+    expect(MApp.StockGroups.visibleRows().map(r => `${r.name}|${r.size}`)).toEqual(['Sticker A|24 inch']);
+  });
+
   test('Select shown acts only on what search and filter leave visible', async () => {
     // The save replaces the whole membership, so a select-all that
     // reached past the filter would silently add rows nobody looked at.
