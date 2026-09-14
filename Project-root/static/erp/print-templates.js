@@ -1367,25 +1367,68 @@ const PrintTemplates = {
   // the caller decides what "the bills" means. No caching here: the
   // callers that needed it (an open bill form recalculating on every
   // keystroke) keep their own.
-  billedQtyIndex(bills) {
+  // `pos` switches on the server's fallback (bill_service
+  // _BILLED_BY_PO_SQL): a bill line whose exact PO line does not exist is
+  // counted against that PO's ONLY line for the same item + size.
+  // Narration is free text that drifts between raising a PO and entering
+  // its bill, and as a hard key it left 170 bill lines on the live data
+  // attached to no order. Where a PO has two lines for one item + size
+  // that differ only by narration, the narration is doing real work and
+  // nothing falls back -- PO 1186 orders two different cartons that way.
+  //
+  // Omitting `pos` keeps the strict behaviour, so a caller that has no PO
+  // list cannot quietly get a different answer than one that does.
+  billedQtyIndex(bills, pos) {
+    const part = v => String(v == null ? '' : v).trim().toLowerCase();
     const index = new Map();
     (bills || []).forEach(bill => {
       const billNumber = String(bill.billNumber || '').trim();
       (bill.items || []).forEach(bItem => {
-        const key = [
+        const parts = [
           String(bItem.poNumber || '').trim(),
-          String(bItem.name || '').trim().toLowerCase(),
-          String(bItem.size || '').trim().toLowerCase(),
-          String(bItem.narration || '').trim().toLowerCase()
-        ].join('|');
+          part(bItem.name), part(bItem.size), part(bItem.narration)
+        ];
+        const key = parts.join('|');
         let entry = index.get(key);
-        if (!entry) { entry = { total: 0, byBill: new Map() }; index.set(key, entry); }
+        if (!entry) {
+          entry = { total: 0, byBill: new Map(), parts };
+          index.set(key, entry);
+        }
         const qty = this._baseUnits(bItem);
         entry.total += qty;
         entry.byBill.set(billNumber, (entry.byBill.get(billNumber) || 0) + qty);
       });
     });
-    return index;
+    if (!pos) return index;
+
+    // Every PO line's key, and the narrations each PO uses per item + size.
+    const lineKeys = new Set();
+    const narrationsOf = new Map();
+    (pos || []).forEach(po => (po.items || []).forEach(line => {
+      const poNo = String(po.poNumber || '').trim();
+      const triple = [poNo, part(line.name), part(line.size)].join('|');
+      lineKeys.add(`${triple}|${part(line.narration)}`);
+      if (!narrationsOf.has(triple)) narrationsOf.set(triple, new Set());
+      narrationsOf.get(triple).add(part(line.narration));
+    }));
+
+    const resolved = new Map();
+    for (const [key, entry] of index) {
+      let target = key;
+      if (!lineKeys.has(key)) {
+        const triple = entry.parts.slice(0, 3).join('|');
+        const narrs = narrationsOf.get(triple);
+        if (narrs && narrs.size === 1) target = `${triple}|${[...narrs][0]}`;
+      }
+      const into = resolved.get(target);
+      if (!into) {
+        resolved.set(target, { total: entry.total, byBill: new Map(entry.byBill), parts: entry.parts });
+      } else {
+        into.total += entry.total;
+        entry.byBill.forEach((q, bill) => into.byBill.set(bill, (into.byBill.get(bill) || 0) + q));
+      }
+    }
+    return resolved;
   },
 
   // `index` is billedQtyIndex()'s output, passed in so a caller holding a
@@ -1415,7 +1458,7 @@ const PrintTemplates = {
   },
 
   pendingByItem(pos, bills) {
-    const index = this.billedQtyIndex(bills);
+    const index = this.billedQtyIndex(bills, pos);
     const map = new Map();
     (pos || []).forEach(po => {
       (po.items || []).forEach(line => {
@@ -1708,7 +1751,7 @@ const PrintTemplates = {
     // Over-receipt is not netted away now -- it is counted separately and
     // shown, because a vendor who sent more than was ordered is something
     // to act on rather than something to subtract from another order.
-    const billedIndex = this.billedQtyIndex(vendorBills);
+    const billedIndex = this.billedQtyIndex(vendorBills, src.pos);
     vendorPOs.forEach(po => {
       (po.items || []).forEach(i => {
         const key = `${i.name}|${i.size || ''}`;

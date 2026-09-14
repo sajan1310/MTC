@@ -770,3 +770,121 @@ def test_bill_search_haystack_covers_labor_fields(erp_client):
     match = next(b for b in listed if b["billNumber"] == bill_number)
     assert match["items"][0]["processName"] == process_payload["processName"]
     assert match["items"][0]["color"] == "Kraft"
+
+
+# --- A bill fulfils its order even when the narration drifted --------------
+#
+# Bill lines are matched to PO lines on PO + item + size + narration, and
+# narration is free text: the PO says "", the bill says "SAREE GUARD"; the
+# PO says "44x7x20.5", the carton that arrived is "43.5x7x20.5". As a hard
+# key it left 170 bill lines on the live data attached to no order at all,
+# so goods that had arrived read as still owed and 37 POs sat in the wrong
+# status. Where the exact line does not exist, a bill now falls back to the
+# PO's ONLY line for that item + size -- and only when there is exactly one.
+
+
+def _po(client, vendor, lines):
+    resp = _rpc(client, "savePO", [{"vendor": vendor, "items": lines}], mutation=True)
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+    return body["data"]["poNumber"]
+
+
+def _bill(client, vendor, po_number, lines):
+    resp = _rpc(
+        client,
+        "saveBill",
+        [
+            {
+                "vendor": vendor,
+                "billNumber": _unique_name("DriftBill"),
+                "billDate": "05/01/2026",
+                "items": [{**line, "po": po_number} for line in lines],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+    return body
+
+
+def _po_by_number(client, po_number):
+    data = _rpc(client, "getPOData").get_json()["data"]
+    return next(p for p in data if str(p["poNumber"]) == str(po_number))
+
+
+def test_a_bill_whose_narration_drifted_still_fulfils_its_order(erp_client):
+    vendor, item = _unique_name("DriftVendor"), _unique_name("DriftItem")
+    po_number = _po(erp_client, vendor, [
+        {"name": item, "size": "", "narration": "Basket With Ring",
+         "qty": 10, "unit": "Pcs", "price": 1},
+    ])
+    _bill(erp_client, vendor, po_number, [
+        {"name": item, "size": "", "narration": "", "qty": 10, "price": 1},
+    ])
+
+    po = _po_by_number(erp_client, po_number)
+    assert po["status"] == "Completed", po
+    assert po["items"][0]["pendingQty"] == 0
+
+
+def test_two_lines_that_differ_only_by_narration_stay_strict(erp_client):
+    """The safeguard. On the live data narration was the only thing
+    separating two lines of one PO in exactly one case -- two different
+    cartons -- and guessing between them would bill the wrong one. A bill
+    that names neither goes to neither.
+    """
+    vendor, item = _unique_name("StrictVendor"), _unique_name("Carton")
+    po_number = _po(erp_client, vendor, [
+        {"name": item, "size": "20 inch", "narration": "3.00 Size Carton",
+         "qty": 300, "unit": "Pcs", "price": 1},
+        {"name": item, "size": "20 inch", "narration": "Regular Size (45x7x25)",
+         "qty": 500, "unit": "Pcs", "price": 1},
+    ])
+    _bill(erp_client, vendor, po_number, [
+        {"name": item, "size": "20 inch", "narration": "Some Other Carton",
+         "qty": 300, "price": 1},
+    ])
+
+    po = _po_by_number(erp_client, po_number)
+    assert po["status"] == "PO Issued", po
+    assert [i["pendingQty"] for i in po["items"]] == [300, 500]
+
+
+def test_an_exact_narration_match_is_still_preferred(erp_client):
+    vendor, item = _unique_name("ExactVendor"), _unique_name("Carton")
+    po_number = _po(erp_client, vendor, [
+        {"name": item, "size": "20 inch", "narration": "Small",
+         "qty": 100, "unit": "Pcs", "price": 1},
+        {"name": item, "size": "20 inch", "narration": "Large",
+         "qty": 100, "unit": "Pcs", "price": 1},
+    ])
+    _bill(erp_client, vendor, po_number, [
+        {"name": item, "size": "20 inch", "narration": "Large", "qty": 100, "price": 1},
+    ])
+
+    by_narration = {
+        i["narration"]: i["pendingQty"]
+        for i in _po_by_number(erp_client, po_number)["items"]
+    }
+    assert by_narration == {"Small": 100, "Large": 0}
+
+
+def test_over_billing_is_caught_on_a_line_reached_by_the_fallback(erp_client):
+    """The advisory check starts from a BILL line, and used to look it up
+    under the bill's own narration -- so it would silently skip exactly the
+    lines the fallback now counts. On the live data that hid 30 over-billed
+    PO lines, among them 700 cartons billed against a 500 order.
+    """
+    vendor, item = _unique_name("OverDriftVendor"), _unique_name("OverDriftItem")
+    po_number = _po(erp_client, vendor, [
+        {"name": item, "size": "", "narration": "44x7x20.5",
+         "qty": 5, "unit": "Pcs", "price": 1},
+    ])
+    body = _bill(erp_client, vendor, po_number, [
+        {"name": item, "size": "", "narration": "43.5x7x20.5", "qty": 7, "price": 1},
+    ])
+
+    assert "Warning" in body["message"], body["message"]
+    assert "2.00 over" in body["message"]

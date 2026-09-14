@@ -335,7 +335,15 @@
 // orders against their bills and subtracted once; the PO ledger and the
 // server work per PO LINE. Now both work per line, and over-receipt is
 // its own figure instead of a negative that cancelled a real shortfall.
-const CACHE_NAME = 'erp-shell-v70';
+// v72: a bill fulfils its order even when the narration drifted. Bill
+// lines were matched to PO lines on PO + item + size + NARRATION, and
+// narration is free text -- the PO says "", the bill says "SAREE GUARD"
+// -- so 170 bill lines on the live data were attached to no order and 37
+// POs sat in the wrong status. Where the exact line is missing, a bill now
+// counts against the PO's ONLY line for that item + size. bill.js and
+// print-templates.js mirror the server, identical on all 392 PO lines.
+// (v71 is taken by the Stock Groups search fix being made alongside this.)
+const CACHE_NAME = 'erp-shell-v72';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

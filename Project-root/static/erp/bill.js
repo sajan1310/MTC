@@ -1075,11 +1075,18 @@ App.Bill = {
   // The per-bills-array cache stays here, where the open bill form
   // recalculates on every keystroke.
   _getBilledQtyIndex() {
-    if (this._billedQtyIndexSrc === App.State.globalBills && this._billedQtyIndex) {
+    // Keyed on BOTH arrays: the index now resolves a drifted narration to
+    // the PO's only line for that item (see PrintTemplates.billedQtyIndex),
+    // so a reloaded PO list changes the answer as surely as new bills do.
+    if (this._billedQtyIndexSrc === App.State.globalBills
+        && this._billedQtyIndexPos === App.State.globalPOs
+        && this._billedQtyIndex) {
       return this._billedQtyIndex;
     }
-    this._billedQtyIndex = PrintTemplates.billedQtyIndex(App.State.globalBills);
+    this._billedQtyIndex = PrintTemplates.billedQtyIndex(
+      App.State.globalBills, App.State.globalPOs);
     this._billedQtyIndexSrc = App.State.globalBills;
+    this._billedQtyIndexPos = App.State.globalPOs;
     return this._billedQtyIndex;
   },
 

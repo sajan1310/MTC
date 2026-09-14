@@ -83,31 +83,110 @@ def _build_po_line_key(po_number, name, size, narration) -> str:
 # occurs, and if one ever did it would form its own key rather than corrupt a
 # total -- the same trade-off dashboard_service's own SQL constants document.
 _BILLED_BY_PO_SQL = """
-    SELECT lower(btrim(l.po_number)) || '|' ||
-           lower(btrim(COALESCE(l.item_name, ''))) || '|' ||
-           lower(btrim(COALESCE(l.size, ''))) || '|' ||
-           lower(btrim(COALESCE(l.narration, '')))  AS po_line_key,
-           SUM(l.base_qty)                          AS billed
-    FROM erp.bill_lines l
-    JOIN erp.bill_headers h ON h.id = l.header_id
-    WHERE h.deleted_at IS NULL
-      -- A blank or DIRECT PO number is not fulfilling any PO.
-      AND btrim(COALESCE(l.po_number, '')) <> ''
-      AND upper(btrim(l.po_number)) <> 'DIRECT'
+    WITH billed AS (
+        SELECT lower(btrim(l.po_number))                AS po,
+               lower(btrim(COALESCE(l.item_name, '')))  AS name,
+               lower(btrim(COALESCE(l.size, '')))       AS size,
+               lower(btrim(COALESCE(l.narration, '')))  AS nar,
+               SUM(l.base_qty)                          AS billed
+        FROM erp.bill_lines l
+        JOIN erp.bill_headers h ON h.id = l.header_id
+        WHERE h.deleted_at IS NULL
+          -- A blank or DIRECT PO number is not fulfilling any PO.
+          AND btrim(COALESCE(l.po_number, '')) <> ''
+          AND upper(btrim(l.po_number)) <> 'DIRECT'
+        GROUP BY 1, 2, 3, 4
+    ),
+    po_line AS (
+        SELECT DISTINCT
+               lower(btrim(h.po_number))                 AS po,
+               lower(btrim(COALESCE(pl.item_name, '')))  AS name,
+               lower(btrim(COALESCE(pl.size, '')))       AS size,
+               lower(btrim(COALESCE(pl.narration, '')))  AS nar
+        FROM erp.po_lines pl
+        JOIN erp.po_headers h ON h.id = pl.header_id
+        WHERE h.deleted_at IS NULL
+    ),
+    -- A PO that orders an item+size on exactly ONE line. Only these are
+    -- safe to fall back to: where a PO has two lines for one item+size
+    -- that differ only by narration, the narration is doing real work
+    -- (PO 1186 orders two different cartons that way) and a bill has to
+    -- name the right one.
+    only_line AS (
+        SELECT po, name, size, min(nar) AS nar
+        FROM po_line
+        GROUP BY po, name, size
+        HAVING count(*) = 1
+    )
+    SELECT b.po || '|' || b.name || '|' || b.size || '|' ||
+           CASE
+               WHEN EXISTS (SELECT 1 FROM po_line p
+                            WHERE p.po = b.po AND p.name = b.name
+                              AND p.size = b.size AND p.nar = b.nar)
+                   THEN b.nar
+               ELSE COALESCE((SELECT o.nar FROM only_line o
+                              WHERE o.po = b.po AND o.name = b.name
+                                AND o.size = b.size),
+                             b.nar)
+           END                                          AS po_line_key,
+           SUM(b.billed)                                AS billed
+    FROM billed b
     GROUP BY 1
 """
 
 
 def _aggregate_billed_base_qty_by_po(cur) -> dict:
-    """Sums already-billed base quantity per (PO_NUMBER, item name, size,
-    narration) across the entire Bill Ledger. Lines with a blank or
+    """Sums already-billed base quantity per PO LINE across the entire Bill
+    Ledger, keyed by that line's _build_po_line_key. Lines with a blank or
     'DIRECT' PO number aren't fulfilling any PO, so they're excluded.
+
+    A bill line is matched to a PO line on PO number + item + size +
+    narration. Where that exact line does not exist, it falls back to the
+    PO's only line for that item + size -- and only when there is exactly
+    one. Narration is free text that drifts between raising a PO and
+    entering its bill (the PO says "", the bill says "SAREE GUARD"), and
+    required as a hard key it left 170 bill lines on the live data
+    connected to no order: the goods arrived, and ~140,000 base units read
+    as still owed. Across 389 PO lines grouped by PO + item + size,
+    narration was the only thing separating two lines in exactly ONE case,
+    and the only-one-line rule leaves that case strict.
+
+    Because the result is keyed to PO lines rather than to whatever the
+    bill said, every caller that looks up by a PO line's own key -- PO
+    status, bill suggestions, the dashboard's Open POs -- gets the fallback
+    without changing how it looks anything up.
 
     Aggregated by the database -- see _BILLED_BY_PO_SQL for why, and for the
     exact correspondence with _build_po_line_key.
     """
     cur.execute(_BILLED_BY_PO_SQL)
     return {row["po_line_key"]: float(row["billed"] or 0) for row in cur.fetchall()}
+
+
+def _resolve_po_item(po, po_num, bill_item):
+    """The PO line a bill line is billed against -- the same rule
+    _BILLED_BY_PO_SQL applies, in Python for the one caller that starts
+    from a bill line rather than a PO line.
+
+    Exact match on item + size + narration first. Failing that, the PO's
+    only line for that item + size, and only if it has exactly one: two
+    lines that differ only by narration are two different things ordered,
+    and guessing between them would bill the wrong one.
+    """
+    def part(v) -> str:
+        return str(v if v is not None else "").strip().lower()
+
+    name, size = part(bill_item.get("name")), part(bill_item.get("size"))
+    narration = part(bill_item.get("narration"))
+    same_item = [
+        pi for pi in po["items"]
+        if part(pi["name"]) == name and part(pi["size"]) == size
+    ]
+    exact = [pi for pi in same_item if part(pi["narration"]) == narration]
+    if exact:
+        return exact[0]
+    narrations = {part(pi["narration"]) for pi in same_item}
+    return same_item[0] if len(narrations) == 1 else None
 
 
 def _find_vendor_id(cur, name: str):
@@ -166,32 +245,28 @@ def _compute_bill_overage_warnings(cur, items: list) -> list[str]:
             if not po_num or po_num.upper() == "DIRECT":
                 continue
 
-            key = _build_po_line_key(
-                po_num, it.get("name"), it.get("size") or "", it.get("narration") or ""
-            )
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-
             po = pos_by_number.get(po_num)
             if po is None:
                 continue
 
-            po_item = next(
-                (
-                    pi
-                    for pi in po["items"]
-                    if _build_po_line_key(
-                        po_num, pi["name"], pi["size"], pi["narration"]
-                    )
-                    == key
-                ),
-                None,
-            )
+            po_item = _resolve_po_item(po, po_num, it)
             if po_item is None:
                 continue
+            # Look up by the PO LINE's key, not the bill's: the aggregate is
+            # keyed to PO lines, and a bill whose narration drifted from its
+            # order is counted against that order's only line for the item.
+            # Checking under the bill's own key would skip exactly the lines
+            # the fallback now counts.
+            line_key = _build_po_line_key(
+                po_num, po_item["name"], po_item["size"], po_item["narration"]
+            )
+            # Once per PO line: two bill lines that resolve to the same order
+            # line are one over-billing, not two.
+            if line_key in seen_keys:
+                continue
+            seen_keys.add(line_key)
 
-            billed_base_qty = billed_map.get(key, 0)
+            billed_base_qty = billed_map.get(line_key, 0)
             ordered_base_qty = po_item.get("baseQty") or 0
             if billed_base_qty > ordered_base_qty + 0.0001:
                 over_by = billed_base_qty - ordered_base_qty

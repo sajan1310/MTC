@@ -974,3 +974,78 @@ describe('the vendor ledger agrees with the PO ledger about what is pending', ()
     expect(p.over).toBe(30);
   });
 });
+
+describe('a bill fulfils its order even when the narration drifted', () => {
+  // Mirrors bill_service._BILLED_BY_PO_SQL. The PO says "", the bill says
+  // "SAREE GUARD"; the PO says 44x7x20.5, the carton that came is
+  // 43.5x7x20.5. As a hard key, narration left 170 bill lines on the live
+  // data attached to no order. Where the exact line is missing, a bill now
+  // counts against the PO's ONLY line for that item + size -- and only
+  // when there is exactly one. Verified identical to the server on all 392
+  // live PO lines.
+  const po = (poNumber, lines) => ({ poNumber, vendor: 'Acme', poDate: '01/08/2026', items: lines });
+  const bill = (lines) => ({ billNumber: 'B-1', vendor: 'Acme', billDate: '03/08/2026', items: lines });
+  const L = (o) => ({ name: 'Carton', size: '20 inch', ...o });
+
+  test('a drifted narration still reaches the only line for that item', () => {
+    const pos = [po('P1', [L({ narration: '44x7x20.5', qty: 500, baseQty: 500 })])];
+    const bills = [bill([L({ poNumber: 'P1', narration: '43.5x7x20.5', qty: 500, baseQty: 500 })])];
+    const idx = PrintTemplates.billedQtyIndex(bills, pos);
+    expect(PrintTemplates.billedQty(idx, 'P1', 'Carton', '20 inch', '44x7x20.5')).toBe(500);
+  });
+
+  test('two lines that differ only by narration stay strict', () => {
+    const pos = [po('P1', [
+      L({ narration: '3.00 Size Carton', qty: 300, baseQty: 300 }),
+      L({ narration: 'Regular Size (45x7x25)', qty: 500, baseQty: 500 })
+    ])];
+    const bills = [bill([L({ poNumber: 'P1', narration: 'Something Else', qty: 300, baseQty: 300 })])];
+    const idx = PrintTemplates.billedQtyIndex(bills, pos);
+    expect(PrintTemplates.billedQty(idx, 'P1', 'Carton', '20 inch', '3.00 Size Carton')).toBe(0);
+    expect(PrintTemplates.billedQty(idx, 'P1', 'Carton', '20 inch', 'Regular Size (45x7x25)')).toBe(0);
+  });
+
+  test('an exact narration still wins over the fallback', () => {
+    const pos = [po('P1', [
+      L({ narration: 'Small', qty: 100, baseQty: 100 }),
+      L({ narration: 'Large', qty: 100, baseQty: 100 })
+    ])];
+    const bills = [bill([L({ poNumber: 'P1', narration: 'Large', qty: 100, baseQty: 100 })])];
+    const idx = PrintTemplates.billedQtyIndex(bills, pos);
+    expect(PrintTemplates.billedQty(idx, 'P1', 'Carton', '20 inch', 'Large')).toBe(100);
+    expect(PrintTemplates.billedQty(idx, 'P1', 'Carton', '20 inch', 'Small')).toBe(0);
+  });
+
+  test('without a PO list the index stays strict', () => {
+    // So a caller with no POs to hand cannot quietly get a different
+    // answer from one that has them.
+    const bills = [bill([L({ poNumber: 'P1', narration: '43.5x7x20.5', qty: 500, baseQty: 500 })])];
+    const idx = PrintTemplates.billedQtyIndex(bills);
+    expect(PrintTemplates.billedQty(idx, 'P1', 'Carton', '20 inch', '44x7x20.5')).toBe(0);
+  });
+
+  test('several drifted bills against one line add up, per bill as well', () => {
+    const pos = [po('P1', [L({ narration: '44x7x20.5', qty: 500, baseQty: 500 })])];
+    const bills = [
+      { billNumber: 'B-1', vendor: 'Acme', billDate: '03/08/2026',
+        items: [L({ poNumber: 'P1', narration: '43.5x7x20.5', qty: 450, baseQty: 450 })] },
+      { billNumber: 'B-2', vendor: 'Acme', billDate: '04/08/2026',
+        items: [L({ poNumber: 'P1', narration: '', qty: 250, baseQty: 250 })] }
+    ];
+    const idx = PrintTemplates.billedQtyIndex(bills, pos);
+    expect(PrintTemplates.billedQty(idx, 'P1', 'Carton', '20 inch', '44x7x20.5')).toBe(700);
+    // Excluding one bill -- what an open bill form does to its own lines.
+    expect(PrintTemplates.billedQty(idx, 'P1', 'Carton', '20 inch', '44x7x20.5', 'B-2')).toBe(450);
+  });
+
+  test('the vendor ledger and pendingByItem both see it', () => {
+    const pos = [po('P1', [L({ narration: '44x7x20.5', qty: 500, baseQty: 500 })])];
+    const bills = [bill([L({ poNumber: 'P1', narration: '43.5x7x20.5', qty: 200, baseQty: 200 })])];
+    const DEPS = { escapeHtml: s => String(s), toNumber: v => Number(v) || 0,
+      formatCurrency: v => String(v), formatNameCase: s => s };
+    const { pendingList } = PrintTemplates.vendorLedger('Acme',
+      { pos, bills, returns: [], issues: [] }, DEPS);
+    expect(pendingList[0].pending).toBe(300);
+    expect(PrintTemplates.pendingByItem(pos, bills).get('carton|20 inch').qty).toBe(300);
+  });
+});
