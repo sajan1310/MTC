@@ -95,6 +95,44 @@ def rename_composite_key(
     )
 
 
+def drop_composite_key_collisions(
+    cur,
+    table: str,
+    scope_col: str,
+    name_col: str,
+    size_col: str,
+    old_name: str,
+    old_size: str,
+    new_name: str,
+    new_size: str,
+) -> None:
+    """DELETE each (old_name, old_size) row whose `scope_col` already holds a
+    (new_name, new_size) row. Run immediately before rename_composite_key on
+    a table unique over (scope_col, lower(name_col), lower(size_col)), where
+    relabelling that row would duplicate its neighbour and abort the whole
+    transaction -- an item merge where both items share a stock group.
+
+    Only for rows that carry nothing beyond their key (membership): the row
+    that survives already says everything the dropped one did. Requires an
+    `id` column; `n.id <> o.id` stops a case-only rename ("Widget" ->
+    "WIDGET") matching a row against itself and deleting it.
+    """
+    if not _table_exists(cur, table):
+        return
+    cur.execute(
+        f"""
+        DELETE FROM {table} o
+        WHERE lower(o.{name_col}) = lower(%s) AND lower(o.{size_col}) = lower(%s)
+          AND EXISTS (
+              SELECT 1 FROM {table} n
+              WHERE n.{scope_col} = o.{scope_col} AND n.id <> o.id
+                AND lower(n.{name_col}) = lower(%s) AND lower(n.{size_col}) = lower(%s)
+          )
+        """,
+        (old_name, old_size, new_name, new_size),
+    )
+
+
 def rename_in_either_column(
     cur, table: str, column_a: str, column_b: str, old: str, new: str
 ) -> None:

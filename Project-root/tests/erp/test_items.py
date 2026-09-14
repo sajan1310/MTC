@@ -477,6 +477,95 @@ def test_merge_selected_items_combines_stock_vendors_and_deletes_loser(erp_clien
     assert stock_match["initialStock"] == 14
 
 
+def _group_with(client, items):
+    resp = _rpc(
+        client, "saveStockGroup", [{"name": _unique_name("Group")}], mutation=True
+    )
+    group_id = resp.get_json()["data"]["id"]
+    _rpc(
+        client,
+        "setStockGroupItems",
+        [{"groupId": group_id, "items": items}],
+        mutation=True,
+    )
+    return group_id
+
+
+def _group_members(client, group_id):
+    groups = _rpc(client, "getStockGroupsData").get_json()["data"]
+    group = next(g for g in groups if g["id"] == group_id)
+    return sorted((i["name"].lower(), i["size"].lower()) for i in group["items"])
+
+
+def test_merge_selected_items_when_both_share_a_stock_group(erp_client):
+    """Production 2026-09-14, reference c32622e7: merging two items that were
+    both in one Stock Group relabelled the loser's membership row onto the
+    keeper's, hit ux_erp_stock_group_items_group_name_size_ci, and rolled
+    the whole merge back behind "Something went wrong on our end".
+    """
+    keep = _unique_name("KeepGrouped")
+    remove = _unique_name("RemoveGrouped")
+    for name in (keep, remove):
+        _rpc(
+            erp_client,
+            "saveItem",
+            [{"itemName": name, "itemSize": "16 inch"}],
+            mutation=True,
+        )
+    group_id = _group_with(
+        erp_client,
+        [{"name": keep, "size": "16 inch"}, {"name": remove, "size": "16 inch"}],
+    )
+
+    resp = _rpc(
+        erp_client,
+        "mergeSelectedItems",
+        [[{"name": keep, "size": "16 inch"}, {"name": remove, "size": "16 inch"}]],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body
+
+    assert _group_members(erp_client, group_id) == [(keep.lower(), "16 inch")]
+
+
+def test_merge_selected_items_moves_a_membership_only_the_loser_had(erp_client):
+    keep = _unique_name("KeepUngrouped")
+    remove = _unique_name("RemoveGrouped")
+    for name in (keep, remove):
+        _rpc(erp_client, "saveItem", [{"itemName": name}], mutation=True)
+    group_id = _group_with(erp_client, [{"name": remove, "size": ""}])
+
+    resp = _rpc(
+        erp_client,
+        "mergeSelectedItems",
+        [[{"name": keep, "size": ""}, {"name": remove, "size": ""}]],
+        mutation=True,
+    )
+    assert resp.get_json()["success"] is True
+
+    assert _group_members(erp_client, group_id) == [(keep.lower(), "")]
+
+
+def test_save_item_case_only_rename_keeps_stock_group_membership(erp_client):
+    """The collision cleanup must not treat a row as colliding with itself:
+    "widget" -> "WIDGET" matches its own membership row case-insensitively.
+    """
+    original = _unique_name("widget")
+    _rpc(erp_client, "saveItem", [{"itemName": original}], mutation=True)
+    group_id = _group_with(erp_client, [{"name": original, "size": ""}])
+
+    resp = _rpc(
+        erp_client,
+        "saveItem",
+        [{"itemName": original.upper(), "originalName": original, "originalSize": ""}],
+        mutation=True,
+    )
+    assert resp.get_json()["success"] is True
+
+    assert _group_members(erp_client, group_id) == [(original.lower(), "")]
+
+
 def test_merge_selected_items_converts_vendor_rate_across_purchase_units(erp_client):
     """A vendor rate is quoted per the item's own Purchase Unit -- merging an
     item purchased by the Dozen into one purchased by the Pcs must convert

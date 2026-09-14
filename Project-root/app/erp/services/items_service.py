@@ -248,13 +248,43 @@ def _propagate_item_identity_change(
         "RETURN_LINES",
         "WASTAGE_LINES",
         "ISSUE_LINES",
-        "STOCK_GROUP_ITEMS",
     ):
         table = config_maps.TABLE_NAMES.get(sheet_key)
         if table:
             rename_utils.rename_composite_key(
                 cur, table, "item_name", "size", old_name, old_size, new_name, new_size
             )
+
+    # Stock Group membership is a set, one row per item/size per group, and
+    # the only rename target here with a unique index on the key. Merging two
+    # items that sit in the same group -- the usual case, since near-
+    # duplicates get grouped together -- would relabel the loser's row onto
+    # the keeper's, collide on ux_erp_stock_group_items_group_name_size_ci,
+    # and roll back the whole merge. Drop the loser's row wherever the keeper
+    # is already a member first; the group still lists the item, once.
+    group_items_table = config_maps.TABLE_NAMES.get("STOCK_GROUP_ITEMS")
+    if group_items_table:
+        rename_utils.drop_composite_key_collisions(
+            cur,
+            group_items_table,
+            "group_id",
+            "item_name",
+            "size",
+            old_name,
+            old_size,
+            new_name,
+            new_size,
+        )
+        rename_utils.rename_composite_key(
+            cur,
+            group_items_table,
+            "item_name",
+            "size",
+            old_name,
+            old_size,
+            new_name,
+            new_size,
+        )
 
     # Process Components: only ITEM-sourced rows -- a POOL row's item_name is
     # a different identity space (an upstream process's Output Item Name),
