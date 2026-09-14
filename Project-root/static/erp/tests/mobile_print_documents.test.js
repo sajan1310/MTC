@@ -428,13 +428,15 @@ describe('what a PDF is rendered from', () => {
     expect(sent.classList.contains('print-fit-dense')).toBe(true);
   });
 
-  test('the stylesheet\'s print block is read from the live sheet, and nothing else of it', () => {
+  test('the stylesheet\'s document rules are read from the live sheet, and nothing else of it', () => {
     const real = Object.getOwnPropertyDescriptor(Document.prototype, 'styleSheets');
     const app = {
       href: 'http://erp/static/erp/mobile_styles.css?v=erp-mobile-shell-v99',
       ownerNode: { tagName: 'LINK', parentElement: document.head },
       cssRules: [
-        { cssText: '.mb-card { color: red; }' },
+        { selectorText: '.mb-card', cssText: '.mb-card { color: red; }' },
+        // Desktop's rules that apply on screen too: confined, not in print.
+        { selectorText: ':where(.print-container) th', cssText: ':where(.print-container) th { letter-spacing: 0.5px; }' },
         { media: { mediaText: 'print' }, cssText: '@media print { th { text-transform: uppercase; } }' },
         { media: { mediaText: '(min-width: 640px)' }, cssText: '@media (min-width: 640px) { body { display: flex; } }' }
       ]
@@ -443,7 +445,10 @@ describe('what a PDF is rendered from', () => {
     Object.defineProperty(document, 'styleSheets', { configurable: true, get: () => [other, app] });
     try {
       const css = MApp.Print.printCss();
+      expect(css).toContain('letter-spacing: 0.5px');
       expect(css).toContain('text-transform: uppercase');
+      // In the order the sheet has them.
+      expect(css.indexOf('letter-spacing')).toBeLessThan(css.indexOf('text-transform'));
       expect(css).not.toContain('.mb-card');
       expect(css).not.toContain('display: flex');
       expect(css).not.toContain('@font-face');

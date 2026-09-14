@@ -78,7 +78,14 @@
 // into desktop's own templates and the Wastage Report as desktop's single
 // page, turns the page for a landscape job, and sends the renderer the
 // document together with its print rules.
-const CACHE_NAME = 'erp-mobile-shell-v64';
+// v65: the Production Sheet is desktop's. mobile.js groups a lot's
+// components with desktop's own code (one row per item, a quantity under
+// each colour, sub-groups apart), titles and names the sheet as desktop
+// does, prints its remarks, and offers desktop's Print options; the
+// document rules desktop applies on screen are now live on screen here
+// too, inside print containers, so the sheet measures itself as desktop's
+// does.
+const CACHE_NAME = 'erp-mobile-shell-v65';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

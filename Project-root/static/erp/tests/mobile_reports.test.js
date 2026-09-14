@@ -297,13 +297,16 @@ describe('which modules can print', () => {
     expect(opts.rows).toHaveLength(1);
   });
 
-  test("the production sheet is desktop's document, not a generic table", () => {
+  test("the production sheet is desktop's document, not a generic table", async () => {
     // It goes to the floor with the lot. One printed from a phone must not
     // be a different document from one printed from a desk -- and it was,
-    // twice over: mobile first rendered a plain table, then the simpler
-    // builder desktop had already abandoned.
+    // three times over: a plain table, then the simpler builder desktop had
+    // already abandoned, then desktop's builder fed a table of the phone's
+    // own making. mobile_production_sheet_print.test.js holds it to
+    // desktop's production.js; this is the wiring.
     let opts = null;
     MApp.Print.chooseAction = jest.fn(o => { opts = o; });
+    MApp.Api.callCached = jest.fn(async () => ({ success: true, data: [] }));
     MApp.ProductionSheet.lot = {
       lotNumber: 'LOT-1', processName: 'Painting', dateRaw: '2026-09-01',
       productId: 'PRD-1', productName: 'Kalpi 26', qty: 40,
@@ -314,7 +317,10 @@ describe('which modules can print', () => {
     ];
     MApp.ProductionSheet.remarks = 'handle with care';
 
-    MApp.ProductionSheet.printSheet();
+    await MApp.ProductionSheet.printSheet();
+    // Built when an action is chosen, so it is measured to the page it
+    // will actually print on.
+    await opts.populate();
 
     // Desktop's container, filled by desktop's renderer.
     expect(opts.containerId).toBe('print-production-sheet-container');
@@ -329,10 +335,12 @@ describe('which modules can print', () => {
     expect(matrix).toContain('Red');
   });
 
-  test("it prints the sheet's edited rows, not the lot's stored ones", () => {
+  test("it prints the sheet's edited rows, not the lot's stored ones", async () => {
     // This screen exists to correct that list; printing the uncorrected
     // one would hand the floor the numbers just finished being changed.
-    MApp.Print.chooseAction = jest.fn();
+    let opts = null;
+    MApp.Print.chooseAction = jest.fn(o => { opts = o; });
+    MApp.Api.callCached = jest.fn(async () => ({ success: true, data: [] }));
     MApp.ProductionSheet.lot = {
       lotNumber: 'LOT-1', qty: 1,
       componentsConsumed: [{ itemName: 'STALE ITEM', qty: 99 }],
@@ -340,7 +348,8 @@ describe('which modules can print', () => {
     MApp.ProductionSheet.rows = [{ itemName: 'Corrected', size: '', narration: '', color: '', requiredQty: 5 }];
     MApp.ProductionSheet.remarks = '';
 
-    MApp.ProductionSheet.printSheet();
+    await MApp.ProductionSheet.printSheet();
+    await opts.populate();
 
     const html = document.getElementById('print-production-sheet-container').innerHTML;
     expect(html).toContain('Corrected');

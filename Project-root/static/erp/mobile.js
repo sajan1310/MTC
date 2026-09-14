@@ -2051,6 +2051,39 @@ MApp.Print = {
       .slice(0, 120) || 'Document';
   },
 
+  // Desktop's App.Print._docDate: a Date, an ISO string or the dd/mm/yyyy
+  // the lists display, as yymmdd (sorts) or ddmmyy (reads like the screen).
+  // Anything unparseable is today rather than a wrong date.
+  _docDate(value, format = 'yymmdd') {
+    let d;
+    if (value instanceof Date) {
+      d = value;
+    } else if (typeof value === 'string' && /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(value)) {
+      const [dd, mm, yyyy] = value.split('/');
+      d = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+    } else if (value) {
+      d = new Date(value);
+    } else {
+      d = new Date();
+    }
+    if (isNaN(d.getTime())) d = new Date();
+
+    const pad = n => String(n).padStart(2, '0');
+    const yy = String(d.getFullYear()).slice(-2);
+    const mm = pad(d.getMonth() + 1);
+    const dd = pad(d.getDate());
+    return format === 'ddmmyy' ? `${dd}${mm}${yy}` : `${yy}${mm}${dd}`;
+  },
+
+  // Desktop's App.Print.docNameFromLabel: a document named after the thing
+  // it is about, in the operator's own words, plus its date --
+  // "20 inch Rider D-Gaddi Steel Rim S-Kid Type_210826".
+  docNameFromLabel(label, date, fallback = 'Document') {
+    const name = this.titleToFilename(label);
+    const stamp = this._docDate(date, 'ddmmyy');
+    return `${name === 'Document' ? fallback : name}_${stamp}`;
+  },
+
   // options.landscape -- true, or 'auto' to rotate only past
   // AUTO_LANDSCAPE_COLUMNS, exactly as desktop's trigger() reads it.
   trigger(containerId, documentTitle, options = {}) {
@@ -2193,8 +2226,9 @@ MApp.Print = {
   // (white, under the shim's 3% and Bootstrap's 5% black).
   PDF_ADDENDUM: '.print-container .table-striped > tbody > tr:nth-of-type(odd) > * { background-color: #ebebeb; }',
 
-  // mobile_styles.css's @media print block, then the utilities in
-  // partials/print.html (the only <style> in this page's body) -- document
+  // mobile_styles.css's document rules -- those confined to print
+  // containers, and its @media print block -- then the utilities in
+  // partials/print.html (the only <style> in this page's body): document
   // order, which is the order that settles their ties on paper.
   printCss() {
     if (this._printCss) return this._printCss;
@@ -2205,7 +2239,9 @@ MApp.Print = {
     Array.from(document.styleSheets)
       .filter(sheet => !!sheet.href && /\/mobile_styles\.css(\?|$)/.test(sheet.href))
       .forEach(sheet => rulesOf(sheet).forEach(rule => {
-        if (rule.media && rule.media.mediaText.trim().toLowerCase() === 'print') parts.push(rule.cssText);
+        const print = rule.media && rule.media.mediaText.trim().toLowerCase() === 'print';
+        const documentRule = typeof rule.selectorText === 'string' && rule.selectorText.includes('.print-container');
+        if (print || documentRule) parts.push(rule.cssText);
       }));
     document.querySelectorAll('body > style').forEach(el => {
       rulesOf(el.sheet).forEach(rule => parts.push(rule.cssText));
@@ -2342,12 +2378,17 @@ MApp.Print = {
     }
   },
 
-  async _runAction(picked, { containerId, filename, landscape, populate }) {
+  // `landscape` may be a function, read at the moment of acting: a
+  // document whose orientation is one of its own toggles (the Production
+  // Sheet) has to print the way the toggle stands when Print is tapped,
+  // not the way it stood when the list opened.
+  async _runAction(picked, { containerId, filename, landscape: orientation, populate }) {
 
     // Awaited: the challan's populate has to fetch Client Master and
     // Items Master for the consignee's GSTIN and each line's HSN, and an
     // un-awaited populate would print the container before they land.
     if (typeof populate === 'function') await populate();
+    const landscape = typeof orientation === 'function' ? orientation() : orientation;
     if (picked.value === 'print') { this.trigger(containerId, filename, { landscape }); return; }
     if (picked.value === 'download') { await this.download(containerId, filename, { landscape }); return; }
     await this.share(containerId, filename, { landscape });
@@ -11919,6 +11960,533 @@ this.clients = clientsRes && clientsRes.success ? (clientsRes.data || []) : [];
 // floor with the lot, and a sheet you can fill in on a phone but only
 // print from a desk is half a feature.
 // ================================================================
+// ================================================================
+// PRODUCTION SHEET GROUPING -- desktop's, verbatim.
+//
+// How a lot's components become the printed Production Sheet: Common
+// items listed once; the per-colour items folded into one row per ITEM
+// with a quantity under each colour (and a "(Pink)"-style tag where a
+// colour uses a different literal item); packing and variant buckets that
+// are not colours kept apart as sub-groups. Deciding which entries are
+// one row is most of it -- four passes, each explained where it lives, in
+// production.js.
+//
+// This is that code. Desktop's print path is the reference and is
+// read-only from here, so the methods are copied rather than shared, with
+// their names kept so each can be found beside its original, and only
+// their reads of desktop's App.State rewired to the lookups one grouping
+// is made with. mobile_production_sheet_print.test.js runs desktop's
+// production.js against the same lots and fails if the two disagree.
+// ================================================================
+MApp.SheetGrouping = {
+  // One grouping, bound to Items Master (a component's narration and base
+  // unit) and Color Master (which groups are colours, and which words in
+  // an item's name are its colour).
+  using({ items, colors } = {}) {
+    return Object.assign(Object.create(this), {
+      items: items || [],
+      colors: colors || [],
+      _colorVocabCache: null,
+      _colorVocabCacheSrc: null
+    });
+  },
+
+  items: [],
+  colors: [],
+
+  // core.js's App.Utils.isCommonColorGroup and sameText.
+  isCommonColorGroup(colorGroup) {
+    return String(colorGroup == null ? '' : colorGroup).trim().toUpperCase() === 'COMMON';
+  },
+
+  sameText(a, b) {
+    return String(a == null ? '' : a).trim().toLowerCase() === String(b == null ? '' : b).trim().toLowerCase();
+  },
+
+  // api.js's toNumber, which production.js calls as a global. Kept here
+  // rather than read off the global so the grouping does not depend on
+  // what else a page has loaded -- and it is Number(), not MApp.Util's
+  // parseFloat, so a quantity reads exactly as desktop reads it.
+  toNumber(value, fallback = 0) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  },
+
+  // production.js#_resolveSheetColorKey
+  _resolveSheetColorKey(comp) {
+    const colorGroup = String(comp.colorGroup || '').trim();
+    if (colorGroup && !this.isCommonColorGroup(colorGroup)) return colorGroup;
+    return String(comp.color || '').trim();
+  },
+
+  // production.js#_isColorGroupName
+  _isColorGroupName(name) {
+    let rest = String(name || '').trim().toLowerCase();
+    if (!rest) return false;
+    if (this.isCommonColorGroup(rest)) return false;
+
+    const master = (this.colors || [])
+      .map(c => String(c.name || '').trim().toLowerCase())
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length);
+    if (master.length === 0) return true;
+
+    let matchedAny = false;
+    while (rest) {
+      const withoutDelim = rest.replace(/^[-/\s]+/, '');
+      if (withoutDelim !== rest) { rest = withoutDelim; continue; }
+      const hit = master.find(m => rest.startsWith(m));
+      if (!hit) return false;
+      rest = rest.slice(hit.length);
+      matchedAny = true;
+    }
+    return matchedAny;
+  },
+
+  // production.js#_lookupSheetItem
+  _lookupSheetItem(itemName, size) {
+    const name = String(itemName || '').trim();
+    if (!name) return null;
+    return (this.items || []).find(i =>
+      this.sameText(i.name, name) && this.sameText(i.size || '', size || ''));
+  },
+
+  // production.js#_resolveDisplayUnit
+  _resolveDisplayUnit(itemName, size) {
+    const match = this._lookupSheetItem(itemName, size);
+    if (match === null) return '';
+    return (match && match.baseUnit) || 'Pcs';
+  },
+
+  // production.js#_sheetRowUnit
+  _sheetRowUnit(row) {
+    if (row && row.unit) return row.unit;
+    return this._resolveDisplayUnit(row?.itemName, row?.size);
+  },
+
+  // production.js#_resolveDisplayNarration
+  _resolveDisplayNarration(itemName, size, fallback) {
+    const stored = String(fallback || '').trim();
+    const match = this._lookupSheetItem(itemName, size);
+    if (!match) return stored;
+    return String(match.narration || '').trim();
+  },
+
+  // production.js#_getCommonItemsWithColorOverride
+  _getCommonItemsWithColorOverride(components) {
+    const overrideKeys = new Set((components || [])
+      .filter(c => c.colorGroup && !this.isCommonColorGroup(c.colorGroup) && c.sourceType !== 'POOL')
+      .map(c => this._itemSlotKey(this._stripColorSubstring(c.itemName || '', c.colorGroup), c.size))
+    );
+    return (components || []).filter(c =>
+      (!c.colorGroup || this.isCommonColorGroup(c.colorGroup)) &&
+      c.sourceType !== 'POOL' &&
+      overrideKeys.has(this._itemSlotKey(c.itemName, c.size))
+    );
+  },
+
+  // production.js#_stripColorSubstring
+  _stripColorSubstring(itemName, color) {
+    if (!color || !itemName) return itemName;
+    const lowerName = itemName.toLowerCase();
+    const candidates = this._isColorGroupName(color)
+      ? [color, ...color.split(/[\s\-_]+/)].filter(Boolean)
+      : [color];
+
+    for (const candidate of candidates) {
+      const idx = lowerName.indexOf(candidate.toLowerCase());
+      if (idx === -1) continue;
+      const stripped = (itemName.slice(0, idx) + itemName.slice(idx + candidate.length))
+        .replace(/[\s\-_]+/g, ' ')
+        .trim();
+      return stripped || itemName;
+    }
+    return itemName;
+  },
+
+  // production.js#_itemSlotKey
+  _itemSlotKey(name, size) {
+    return `${(name || '').trim().toLowerCase()}|${(size || '').trim().toLowerCase()}`;
+  },
+
+  // production.js#_colorMasterVocabulary
+  _colorMasterVocabulary() {
+    const colors = this.colors || [];
+    if (this._colorVocabCacheSrc === colors && this._colorVocabCache) return this._colorVocabCache;
+
+    const words = new Set();
+    const phrases = [];
+    colors.forEach(c => {
+      const name = String((c && c.name) || '').trim();
+      if (!name) return;
+      const tokens = name.split(/[^a-z0-9]+/i).map(t => t.toLowerCase()).filter(Boolean);
+      if (tokens.length === 0) return;
+      if (tokens.length === 1) words.add(tokens[0]);
+      else phrases.push(tokens);
+    });
+    phrases.sort((a, b) => b.length - a.length);
+
+    this._colorVocabCacheSrc = colors;
+    this._colorVocabCache = { words, phrases };
+    return this._colorVocabCache;
+  },
+
+  // production.js#_stripAllColorTokens
+  _stripAllColorTokens(itemName) {
+    const raw = String(itemName || '').trim();
+    if (!raw) return raw;
+    const { words, phrases } = this._colorMasterVocabulary();
+    if (words.size === 0 && phrases.length === 0) return raw;
+
+    const parts = raw.split(/([^a-z0-9]+)/i).filter(p => p !== '');
+    const tokens = [];
+    for (let i = 0; i < parts.length; i += 2) tokens.push({ text: parts[i], sep: parts[i + 1] || '', drop: false });
+
+    const lower = tokens.map(t => t.text.toLowerCase());
+    phrases.forEach(phrase => {
+      for (let i = 0; i + phrase.length <= tokens.length; i++) {
+        if (tokens.slice(i, i + phrase.length).some(t => t.drop)) continue;
+        if (phrase.every((p, k) => lower[i + k] === p)) {
+          for (let k = 0; k < phrase.length; k++) tokens[i + k].drop = true;
+        }
+      }
+    });
+    tokens.forEach((t, i) => { if (words.has(lower[i])) t.drop = true; });
+
+    const kept = tokens.filter(t => !t.drop);
+    if (kept.length === 0) return raw;
+
+    let out = '';
+    kept.forEach((t, i) => {
+      if (i === 0) { out = t.text; return; }
+      const sep = kept[i - 1].sep;
+      out += /^[-_]$/.test(sep) ? `-${t.text}` : ` ${t.text}`;
+    });
+    out = out.trim();
+    return out || raw;
+  },
+
+  // production.js#_colorStrippedKey
+  _colorStrippedKey(residue, size) {
+    return this._itemSlotKey(String(residue || '').replace(/[\s\-_]+/g, ' ').trim(), size);
+  },
+
+  // production.js#_reconstructPerColorRows
+  _reconstructPerColorRows(entries) {
+    if (!entries || entries.length === 0) return [];
+
+    const indexOf = new Map(entries.map((e, i) => [e, i]));
+    const firstIndexOf = cells => Math.min(...cells.map(c => indexOf.get(c)));
+    const rowFrom = cells => ({
+      firstIndex: firstIndexOf(cells),
+      size: cells[0].size,
+      narration: cells[0].narration,
+      unit: cells.find(c => c.unit)?.unit || '',
+      cells
+    });
+
+    const byItemKey = new Map();
+    entries.forEach(e => {
+      const key = this._itemSlotKey(e.itemName, e.size);
+      if (!byItemKey.has(key)) byItemKey.set(key, []);
+      byItemKey.get(key).push(e);
+    });
+
+    const sharedRowCells = [];
+    const remaining = [];
+    byItemKey.forEach(group => {
+      const colorsInGroup = new Set(group.map(e => e.colorKey));
+      if (colorsInGroup.size > 1) {
+        sharedRowCells.push(group);
+      } else {
+        remaining.push(...group);
+      }
+    });
+    const sharedRows = this._pairTwoColorSharedRowGroups(sharedRowCells).map(rowFrom);
+    const remainingOrdered = remaining.slice().sort((a, b) => indexOf.get(a) - indexOf.get(b));
+
+    const byColor = new Map();
+    remainingOrdered.forEach(e => {
+      if (!byColor.has(e.colorKey)) byColor.set(e.colorKey, []);
+      byColor.get(e.colorKey).push(e);
+    });
+    const colorKeys = Array.from(byColor.keys());
+    const counts = colorKeys.map(c => byColor.get(c).length);
+    const evenCoverage = colorKeys.length > 1 && counts.every(n => n === counts[0]);
+
+    const rowsByName = () => this._reconstructPerColorRowsByName(remainingOrdered)
+      .map(row => ({ ...row, firstIndex: firstIndexOf(row.cells) }));
+
+    let positionalRows;
+    if (evenCoverage) {
+      const zipped = Array.from({ length: counts[0] }, (_, i) => rowFrom(colorKeys.map(c => byColor.get(c)[i])));
+      positionalRows = this._positionalRowsAgreeWithNames(zipped) ? zipped : rowsByName();
+    } else {
+      positionalRows = rowsByName();
+    }
+
+    const allRows = this._mergeRowsByColorStrippedName([...sharedRows, ...positionalRows]);
+    return allRows.sort((a, b) => a.firstIndex - b.firstIndex);
+  },
+
+  // production.js#_positionalRowsAgreeWithNames
+  _positionalRowsAgreeWithNames(rows) {
+    return (rows || []).every(row => {
+      const residues = new Set((row.cells || [])
+        .map(c => this._stripAllColorTokens(c.itemName || '').trim().toLowerCase())
+        .filter(Boolean));
+      return residues.size <= 1;
+    });
+  },
+
+  // production.js#_mergeRowsByColorStrippedName
+  _mergeRowsByColorStrippedName(rows) {
+    if (!rows || rows.length < 2) return rows || [];
+
+    const order = [];
+    const groups = new Map();
+    rows.forEach(row => {
+      const residue = this._stripAllColorTokens(row.cells[0]?.itemName || '');
+      const key = this._colorStrippedKey(residue, row.size);
+      if (!groups.has(key)) { groups.set(key, { residue, rows: [] }); order.push(key); }
+      groups.get(key).rows.push(row);
+    });
+
+    const merged = [];
+    order.forEach(key => {
+      const group = groups.get(key);
+      if (group.rows.length === 1) { merged.push(group.rows[0]); return; }
+
+      const seen = new Set();
+      const disjoint = group.rows.every(row =>
+        row.cells.every(cell => {
+          const c = String(cell.colorKey || '').trim().toLowerCase();
+          if (seen.has(c)) return false;
+          seen.add(c);
+          return true;
+        }));
+      if (!disjoint) { merged.push(...group.rows); return; }
+
+      const cells = group.rows.flatMap(row => row.cells);
+      merged.push({
+        firstIndex: Math.min(...group.rows.map(r => r.firstIndex)),
+        size: group.rows[0].size,
+        narration: group.rows.find(r => r.narration)?.narration || '',
+        unit: group.rows.find(r => r.unit)?.unit || '',
+        label: group.residue,
+        cells
+      });
+    });
+    return merged;
+  },
+
+  // production.js#_pairTwoColorSharedRowGroups
+  _pairTwoColorSharedRowGroups(sharedRowCellGroups) {
+    const byColorPair = new Map();
+    const untouched = [];
+    (sharedRowCellGroups || []).forEach(cells => {
+      const colorsInRow = Array.from(new Set(cells.map(c => c.colorKey)));
+      if (colorsInRow.length !== 2) { untouched.push(cells); return; }
+      const key = colorsInRow.slice().sort().join('\u0000');
+      if (!byColorPair.has(key)) byColorPair.set(key, { colors: colorsInRow, rows: [] });
+      byColorPair.get(key).rows.push(cells);
+    });
+
+    const pairGroups = Array.from(byColorPair.values());
+    if (pairGroups.length < 2) return [...untouched, ...pairGroups.flatMap(g => g.rows)];
+
+    const seenColors = new Set();
+    let disjoint = true;
+    pairGroups.forEach(g => g.colors.forEach(c => {
+      if (seenColors.has(c)) disjoint = false;
+      seenColors.add(c);
+    }));
+    const counts = pairGroups.map(g => g.rows.length);
+    const evenCounts = counts.every(n => n === counts[0]);
+    if (!disjoint || !evenCounts) return [...untouched, ...pairGroups.flatMap(g => g.rows)];
+
+    const merged = Array.from({ length: counts[0] }, (_, i) => pairGroups.flatMap(g => g.rows[i]));
+    return [...untouched, ...merged];
+  },
+
+  // production.js#_reconstructPerColorRowsByName
+  _reconstructPerColorRowsByName(entries) {
+    const groupsByItemKey = new Map();
+    entries.forEach(e => {
+      const key = this._itemSlotKey(e.itemName, e.size);
+      if (!groupsByItemKey.has(key)) groupsByItemKey.set(key, new Set());
+      groupsByItemKey.get(key).add(e.colorKey);
+    });
+    const sharedKeys = new Set();
+    groupsByItemKey.forEach((set, key) => { if (set.size > 1) sharedKeys.add(key); });
+
+    const rows = [];
+    const rowIndex = new Map();
+    entries.forEach(e => {
+      const displayName = sharedKeys.has(this._itemSlotKey(e.itemName, e.size))
+        ? (e.itemName || '').trim()
+        : this._stripColorSubstring(e.itemName || '', e.colorKey);
+      const rowKey = [displayName, e.size || ''].join('|').toLowerCase();
+      let row = rowIndex.get(rowKey);
+      if (!row) {
+        row = { size: e.size, narration: e.narration, unit: e.unit, cells: [] };
+        rowIndex.set(rowKey, row);
+        rows.push(row);
+      }
+      if (!row.unit) row.unit = e.unit;
+      row.cells.push(e);
+    });
+    return rows;
+  },
+
+  // production.js#_rowDisplayName
+  _rowDisplayName(row) {
+    if (row.label) return row.label;
+    const primary = row.cells[0];
+    const distinctNames = Array.from(new Set(row.cells.map(c => (c.itemName || '').trim().toLowerCase())));
+    if (distinctNames.length === 1) return (primary.itemName || '').trim();
+    if (distinctNames.length < row.cells.length) {
+      return this._longestCommonTokenPrefix(row.cells.map(c => c.itemName)) || (primary.itemName || '').trim();
+    }
+    return this._stripRowOwnColorSubstring(primary.itemName || '', row.cells.map(c => c.colorKey));
+  },
+
+  // production.js#_stripRowOwnColorSubstring
+  _stripRowOwnColorSubstring(itemName, colorKeys) {
+    for (const color of colorKeys) {
+      const stripped = this._stripColorSubstring(itemName, color);
+      if (stripped !== itemName) return stripped;
+    }
+    return itemName;
+  },
+
+  // production.js#_longestCommonTokenPrefix
+  _longestCommonTokenPrefix(names) {
+    const tokenLists = (names || []).map(n => String(n || '').split(/([^a-z0-9]+)/i).filter(p => p !== ''));
+    if (tokenLists.length === 0) return '';
+    const shortest = Math.min(...tokenLists.map(t => t.length));
+    let prefix = [];
+    for (let i = 0; i < shortest; i++) {
+      const token = tokenLists[0][i];
+      if (!tokenLists.every(list => list[i].toLowerCase() === token.toLowerCase())) break;
+      prefix.push(token);
+    }
+    return prefix.join('').replace(/[\s\-_]+$/, '').trim();
+  },
+
+  // production.js#_cellItemTag
+  _cellItemTag(rowLabel, cellItemName) {
+    const labelTokens = new Set(
+      String(rowLabel || '').split(/[^a-z0-9]+/i).map(t => t.trim().toLowerCase()).filter(Boolean)
+    );
+
+    const parts = String(cellItemName || '').split(/([^a-z0-9]+)/i).filter(p => p !== '');
+    const segments = [];
+    let segment = '';
+    for (let i = 0; i < parts.length; i += 2) {
+      const token = parts[i];
+      if (!token || labelTokens.has(token.toLowerCase())) {
+        if (segment) { segments.push(segment); segment = ''; }
+        continue;
+      }
+      if (!segment) {
+        segment = token;
+      } else {
+        const sep = parts[i - 1] || '';
+        segment += /^[-_]$/.test(sep) ? `-${token}` : ` ${token}`;
+      }
+    }
+    if (segment) segments.push(segment);
+    return segments.join(' ');
+  },
+
+  // production.js#groupComponentsForSheet
+  groupComponentsForSheet(components, knownColors) {
+    const common = [];
+    const colors = new Set(knownColors || []);
+
+    const commonOverrideComps = this._getCommonItemsWithColorOverride(components || []);
+    const pendingCommonOverrides = [];
+    const perColorEntries = [];
+
+    (components || []).forEach(comp => {
+      const colorKey = this._resolveSheetColorKey(comp);
+      const qty = comp.requiredQty !== undefined ? this.toNumber(comp.requiredQty) : this.toNumber(comp.qty);
+      const narration = this._resolveDisplayNarration(comp.itemName, comp.size, comp.narration);
+      const unit = this._resolveDisplayUnit(comp.itemName, comp.size);
+
+      if (!colorKey) {
+        if (commonOverrideComps.includes(comp)) {
+          const overriddenColors = new Set(
+            (components || [])
+              .filter(o => o !== comp && this._resolveSheetColorKey(o) &&
+                this._itemSlotKey(this._stripColorSubstring(o.itemName || '', this._resolveSheetColorKey(o)), o.size) === this._itemSlotKey(comp.itemName, comp.size))
+              .map(o => this._resolveSheetColorKey(o))
+          );
+          pendingCommonOverrides.push({ comp, qty, narration, unit, overriddenColors });
+          return;
+        }
+        common.push({ itemName: comp.itemName || '', size: comp.size || '', narration, unit, qty });
+        return;
+      }
+
+      colors.add(colorKey);
+      perColorEntries.push({ colorKey, itemName: comp.itemName || '', size: comp.size || '', narration, unit, qty, poolColor: (comp.poolColor || '').trim() });
+    });
+
+    const matrixSlots = this._reconstructPerColorRows(perColorEntries).map(row => {
+      const itemName = this._rowDisplayName(row);
+      const slot = { itemName, size: row.size, narration: row.narration, unit: row.unit, colors: {}, cellItems: {}, cellPoolColors: {} };
+      row.cells.forEach(cell => {
+        slot.colors[cell.colorKey] = (slot.colors[cell.colorKey] || 0) + cell.qty;
+        slot.cellItems[cell.colorKey] = cell.itemName;
+        if (cell.poolColor) slot.cellPoolColors[cell.colorKey] = cell.poolColor;
+      });
+      return slot;
+    });
+
+    const matrixIndex = new Map();
+    matrixSlots.forEach(s => matrixIndex.set([s.itemName, s.size].join('|').toLowerCase(), s));
+
+    const allColors = Array.from(colors);
+    pendingCommonOverrides.forEach(({ comp, qty, narration, unit, overriddenColors }) => {
+      const fallbackColors = allColors.filter(c => !overriddenColors.has(c));
+      if (fallbackColors.length === 0) return;
+      const perColorQty = qty / fallbackColors.length;
+      const displayName = comp.itemName || '';
+      const slotKey = [displayName, comp.size || ''].join('|').toLowerCase();
+      let slot = matrixIndex.get(slotKey);
+      if (!slot) {
+        slot = { itemName: displayName, size: comp.size || '', narration, unit, colors: {}, cellItems: {}, cellPoolColors: {} };
+        matrixIndex.set(slotKey, slot);
+        matrixSlots.push(slot);
+      }
+      if (!slot.unit) slot.unit = unit;
+      fallbackColors.forEach(c => {
+        slot.colors[c] = (slot.colors[c] || 0) + perColorQty;
+        if (!slot.cellItems[c]) slot.cellItems[c] = displayName;
+      });
+    });
+
+    return { common, matrixSlots, colors: allColors.sort((a, b) => a.localeCompare(b)) };
+  },
+
+  // production.js#_groupMatrixSlotsForSheet
+  _groupMatrixSlotsForSheet(matrixSlots) {
+    const groups = new Map();
+    const manualSlots = [];
+    (matrixSlots || []).forEach(slot => {
+      const slotColors = Object.keys(slot.colors || {});
+      if (slotColors.length === 0) { manualSlots.push(slot); return; }
+      const sortedColors = slotColors.slice().sort((a, b) => a.localeCompare(b));
+      const signature = sortedColors.join('|').toLowerCase();
+      if (!groups.has(signature)) groups.set(signature, { colors: sortedColors, slots: [] });
+      groups.get(signature).slots.push(slot);
+    });
+    return { autoGroups: Array.from(groups.values()), manualSlots };
+  },
+};
+
 MApp.ProductionSheet = {
   lot: null,
   rows: [],
@@ -11928,6 +12496,11 @@ MApp.ProductionSheet = {
   // production lots are tied to a Process recipe, not a Product recipe,
   // so there is nothing else to fall back to. Same rule as desktop's
   // _populateProductionSheetData.
+  //
+  // Each row keeps the component it came from (`src`): the printed sheet
+  // is grouped by desktop's code, which reads more of a component than
+  // this screen shows -- its colour group, whether it came from the
+  // Warehouse Pool, the pool bucket it was drawn from.
   _rowsFor(lot) {
     const custom = lot.customComponents || [];
     const source = custom.length > 0 ? custom : (lot.componentsConsumed || []);
@@ -11936,7 +12509,8 @@ MApp.ProductionSheet = {
       size: c.size || '',
       narration: c.narration || '',
       color: this._colorKey(c),
-      requiredQty: c.requiredQty !== undefined ? MApp.Util.toNumber(c.requiredQty) : MApp.Util.toNumber(c.qty)
+      requiredQty: c.requiredQty !== undefined ? MApp.Util.toNumber(c.requiredQty) : MApp.Util.toNumber(c.qty),
+      src: c
     }));
   },
 
@@ -11955,6 +12529,9 @@ MApp.ProductionSheet = {
     this.lot = lot;
     this.rows = this._rowsFor(lot);
     this.remarks = lot.sheetRemarks || '';
+    // Every column printed again for a newly opened sheet, as desktop's
+    // Print options re-tick them all for each lot.
+    this._excluded = new Set();
 
     const titleEl = document.getElementById('production-sheet-title');
     if (titleEl) titleEl.textContent = `Sheet — ${lot.lotNumber}`;
@@ -11969,83 +12546,196 @@ MApp.ProductionSheet = {
     MApp.Sheet.open('sheet-production-sheet');
   },
 
-  // One row per component, grouped by colour down the page the same way
-  // the screen groups them -- the printed sheet and the screen it came
-  // from have to be the same document.
-  // The SAME document desktop prints, from the shared builder -- a sheet
-  // printed from a phone must not be a different document from one printed
-  // from a desk, and it used to be: this rendered a plain generic table
-  // while desktop rendered the designed Material Requirement Sheet.
+  // ── Printing: desktop's Production Sheet ─────────────────────────────
+  // Desktop prints this sheet from its Production Sheet dialog. It groups
+  // the lot's components (groupComponentsForSheet: Common items once, the
+  // per-colour items as one row per item with a quantity under each
+  // colour, packing buckets in a Sub-Group table of their own), lays them
+  // out in the dialog, and reads the dialog back into
+  // PrintTemplates.productionSheet.
   //
-  // The sheet's own edited rows are what goes on it, not the lot's stored
-  // componentsConsumed: this screen exists to correct that list, and
-  // printing the uncorrected one would hand the floor the numbers the
-  // operator had just finished changing.
-  // The SAME document desktop prints, from the shared renderer.
+  // The phone handed that builder a table of its own making instead: a row
+  // for every colour line, sub-groups treated as colours, no units, no
+  // narration, the process NAME where desktop titles the sheet by process
+  // TYPE, blank Product fields on every lot that is not a finished product
+  // -- and no remarks at all (see _fillRemarks). Same builder, a different
+  // sheet.
   //
-  // It used to use a second, simpler builder that desktop had already
-  // abandoned -- production.js recorded why: "one lot printed with a
-  // different table layout depending on whether it was reached through
-  // Print Sheet or Print Selected." Printing it from a phone was a third
-  // way of getting that same wrong answer.
+  // sheetData() is desktop's sheet as data: the object desktop's
+  // _buildProductionSheetForExport hands the builder, from the same
+  // grouping (MApp.SheetGrouping) over the same lookups desktop's
+  // Production tab always has loaded. mobile_production_sheet_print.test.js
+  // runs desktop's production.js on the same lots and requires the two to
+  // be equal.
   //
-  // #print-production-sheet-container lives in the shared
-  // partials/print.html that mobile.html already includes, so this fills
-  // desktop's own element. What desktop reads out of its sheet dialog, this
-  // supplies from the rows on screen -- there is no dialog on a phone.
-  //
-  // The rows are the EDITED ones: this screen exists to correct that list,
+  // The rows are this screen's EDITED ones: it exists to correct the list,
   // and printing the uncorrected copy would hand the floor the numbers the
   // operator had just finished changing.
-  printSheet() {
-    const lot = this.lot || {};
-    const rows = this.rows || [];
 
-    // This screen groups components by colour down the page rather than
-    // across it, so a row belongs either to Common (no colour) or to the
-    // matrix under its own colour.
-    const common = rows.filter(r => !r.color).map(r => ({
-      name: r.narration ? `${r.itemName}(${r.narration})` : r.itemName,
-      qty: r.requiredQty,
-      unit: r.unit || ''
+  // Desktop's Page option. Remembered: whoever prints wide colour sets
+  // landscape prints them landscape every time.
+  PREF_LANDSCAPE: 'productionSheet.print.landscape',
+
+  // The components as this screen now has them -- quantities as edited,
+  // removed rows gone, added rows in.
+  _components() {
+    return (this.rows || []).map(r => (r.src
+      ? { ...r.src, requiredQty: r.requiredQty }
+      : { itemName: r.itemName, size: r.size, narration: r.narration, color: r.color, requiredQty: r.requiredQty }));
+  },
+
+  // Items Master, Color Master and the processes -- which desktop's
+  // Production tab loads before a lot is ever on screen
+  // (production.js#loadData). Through the offline cache, so a sheet still
+  // prints from the last good copy with no signal.
+  async _lookups() {
+    const list = r => (r && r.success && Array.isArray(r.data) ? r.data : []);
+    const [items, colors, processes] = await Promise.all([
+      MApp.Api.callCached('getItemsData').catch(() => null),
+      MApp.Api.callCached('getColors').catch(() => null),
+      MApp.Api.callCached('getProcessData').catch(() => null)
+    ]);
+    return { items: list(items), colors: list(colors), processes: list(processes) };
+  },
+
+  // Desktop's sheet, as the object its export hands PrintTemplates.
+  sheetData(lot, components, { items, colors, processes, remarks = '', landscape = false, excluded = [] } = {}) {
+    const g = MApp.SheetGrouping.using({ items, colors });
+    const fmt = v => MApp.Util.formatQty(v);
+
+    // production.js#_populateProductionSheetData
+    const knownColors = (lot.colorBreakdown || []).map(c => c.color).filter(Boolean);
+    const { common, matrixSlots, colors: groups } = g.groupComponentsForSheet(components, knownColors);
+    const colorGroups = groups.filter(c => g._isColorGroupName(c));
+    const subGroups = groups.filter(c => !g._isColorGroupName(c));
+
+    // What _buildProductionSheetForExport reads back off the dialog: each
+    // value trimmed, names and narrations escaped, the narration riding
+    // inside the name, quantities as the dialog formats them, and the
+    // "(Pink)"-style tag renderMatrixSheetRow puts under a colour's
+    // quantity where that colour uses a different literal item.
+    const text = v => MApp.Util.escapeHtml(String(v == null ? '' : v).trim());
+    const named = (name, narration) => (text(narration) ? `${text(name)}(${text(narration)})` : text(name));
+    const unitOf = row => String(g._sheetRowUnit(row) || '').trim();
+
+    const commonRows = common.map(row => ({
+      name: named(row.itemName, row.narration),
+      qty: row.qty !== undefined ? fmt(row.qty) : '',
+      unit: unitOf(row)
     }));
 
-    const coloured = rows.filter(r => r.color);
-    const groups = [...new Set(coloured.map(r => r.color))];
-    const matrix = coloured.map(r => ({
-      name: r.narration ? `${r.itemName}(${r.narration})` : r.itemName,
-      unit: r.unit || '',
-      qtyByGroup: { [r.color]: r.requiredQty },
-      tagByGroup: {}
-    }));
+    const matrixRow = (slot, columns) => {
+      const qtyByGroup = {};
+      const tagByGroup = {};
+      columns.forEach(c => {
+        const val = slot.colors ? slot.colors[c] : undefined;
+        qtyByGroup[c] = val === undefined ? '' : fmt(val);
+        const cellItemName = slot.cellItems ? slot.cellItems[c] : '';
+        const cellPoolColor = slot.cellPoolColors ? (slot.cellPoolColors[c] || '') : '';
+        const tag = cellPoolColor || (cellItemName ? g._cellItemTag(slot.itemName, cellItemName) : '');
+        if (tag) tagByGroup[c] = `(${tag})`;
+      });
+      return { name: named(slot.itemName, slot.narration), unit: unitOf(slot), qtyByGroup, tagByGroup };
+    };
 
-    PrintTemplates.productionSheet({
-      title: `${lot.processName || lot.processId || ''} Requirement Sheet`.trim(),
-      date: MApp.Util.formatDateDisplay(lot.dateRaw) || lot.date || '',
-      productId: lot.productId || '',
-      productName: lot.productName || '',
-      qty: MApp.Util.formatQty(lot.qty),
+    // production.js#renderProductionSheetTable: one table per colour
+    // signature, in first-appearance order, then the catch-all table.
+    const { autoGroups, manualSlots } = g._groupMatrixSlotsForSheet(matrixSlots);
+    const matrix = [
+      ...autoGroups.flatMap(group => group.slots.map(slot => matrixRow(slot, group.colors))),
+      ...(colorGroups.length > 0 ? manualSlots.map(slot => matrixRow(slot, colorGroups)) : [])
+    ];
+
+    // production.js#_requirementSheetTitle
+    const process = (processes || []).find(pr => pr.processId === lot.processId);
+    const processType = String((process && process.processType) || '').trim();
+
+    return {
+      title: processType ? `${processType} Requirement Sheet` : 'Production Material Requirement Sheet',
+      date: String(lot.date == null ? '' : lot.date),
+      productId: String(lot.productId || lot.lotNumber || ''),
+      productName: String(lot.productName || lot.outputItemName || lot.processId || ''),
+      qty: fmt(lot.qty),
       lotColor: lot.color || '',
-      remarks: this.remarks || '',
-      landscape: false,
-      excluded: [],
-      colors: groups,
-      subGroups: [],
-      common,
+      remarks,
+      landscape: !!landscape,
+      excluded: [...excluded],
+      colors: colorGroups,
+      subGroups,
+      common: commonRows,
       matrix
-    }, {
-      formatQty: v => MApp.Util.formatQty(v),
-      sameColor: (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase(),
-      palette: MApp.Print.PRINT_PALETTE,
-      pageHeightPx: MApp.Print.PAGE_HEIGHT_PX,
-      pageWidthPx: MApp.Print.PAGE_WIDTH_PX
-    });
+    };
+  },
+
+  // The shared builder takes a sheet's remarks from DESKTOP's dialog
+  // (#productionSheetRemarks), which this page does not have -- so no sheet
+  // printed from a phone ever carried them. Filled in here instead, after
+  // the builder, which is where and when it fills them on desktop.
+  _fillRemarks(remarks) {
+    const value = String(remarks || '').trim();
+    const section = document.getElementById('print-prod-remarks-section');
+    if (section) section.style.display = value ? '' : 'none';
+    const el = document.getElementById('print-prod-remarks-text');
+    if (el) el.innerText = value;
+  },
+
+  // Desktop's _productionSheetDocName: the Output Item Name the operator
+  // typed, plus the lot's date. With none recorded desktop falls to the
+  // lot's model, which reads 'General' when nothing matches.
+  docName(lot) {
+    return MApp.Print.docNameFromLabel(lot.outputItemName || 'General', lot.date, 'Production Sheet');
+  },
+
+  async printSheet() {
+    const lot = this.lot || {};
+    this._readQtys();
+    MApp.Toast.show('Preparing the sheet…');
+    const lookups = await this._lookups();
+    const components = this._components();
+    const remarksEl = document.getElementById('production-sheet-remarks');
+    const remarks = remarksEl ? remarksEl.value : (this.remarks || '');
+
+    // Desktop's Print options: the Page choice, and one tick per column --
+    // colours first, then sub-groups -- all ticked when a sheet opens.
+    const excluded = this._excluded || (this._excluded = new Set());
+    const landscape = () => MApp.Prefs.get(this.PREF_LANDSCAPE, false);
+    const { colors, subGroups } = this.sheetData(lot, components, lookups);
+    const columnToggles = [...colors, ...subGroups].map(c => ({
+      on: () => !excluded.has(c),
+      flip: () => (excluded.has(c) ? excluded.delete(c) : excluded.add(c)),
+      onLabel: `${c}: printed`,
+      offLabel: `${c}: left off`
+    }));
 
     return MApp.Print.chooseAction({
       containerId: 'print-production-sheet-container',
-      filename: `Production_Sheet_${lot.lotNumber || 'lot'}`,
+      filename: this.docName(lot),
       title: `Production Sheet ${lot.lotNumber || ''}`.trim(),
-      landscape: false
+      landscape,
+      toggles: [
+        {
+          on: landscape,
+          flip: () => MApp.Prefs.toggle(this.PREF_LANDSCAPE, false),
+          onLabel: 'Page: landscape',
+          offLabel: 'Page: portrait'
+        },
+        ...columnToggles
+      ],
+      // Built when an action is chosen, so the sheet is measured to the
+      // page it will actually print on.
+      populate: () => {
+        const data = this.sheetData(lot, components, {
+          ...lookups, remarks, landscape: landscape(), excluded: [...excluded]
+        });
+        PrintTemplates.productionSheet(data, {
+          formatQty: v => MApp.Util.formatQty(v),
+          sameColor: (a, b) => MApp.SheetGrouping.sameText(a, b),
+          palette: MApp.Print.PRINT_PALETTE,
+          pageHeightPx: MApp.Print.PAGE_HEIGHT_PX,
+          pageWidthPx: MApp.Print.PAGE_WIDTH_PX
+        });
+        this._fillRemarks(data.remarks);
+      }
     });
   },
 
@@ -12179,7 +12869,8 @@ MApp.ProductionSheet = {
       size: c.size || '',
       narration: c.narration || '',
       color: this._colorKey(c),
-      requiredQty: MApp.Util.toNumber(c.qty)
+      requiredQty: MApp.Util.toNumber(c.qty),
+      src: c
     }));
     this.render();
   },

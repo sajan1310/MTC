@@ -11,10 +11,12 @@
  * Ledger's tables unstyled -- and cut to one page, because the shell's own
  * flex layout pinned the document's box to the height of the screen.
  *
- * mobile_styles.css now reproduces desktop's rules inside @media print.
- * This reads desktop's styles.css and Bootstrap -- read-only; desktop is
- * the reference -- and fails if the two drift apart, including in ORDER,
- * which is what settles the ties between them.
+ * mobile_styles.css now reproduces desktop's rules: its print block in
+ * @media print, and the rules desktop applies on screen as well (a sheet
+ * is measured on screen before it prints) confined to print containers
+ * with :where(). This reads desktop's styles.css and Bootstrap --
+ * read-only; desktop is the reference -- and fails if the two drift apart,
+ * including in ORDER, which is what settles the ties between them.
  */
 
 'use strict';
@@ -124,21 +126,44 @@ const D_VARS = tokens(D, ':root');
 const B_VARS = tokens(B, ':root,[data-bs-theme=light]');
 const PRINT = '@media print';
 
-const inPrint = sel => M.filter(r => r.at === PRINT && r.selector === normSelector(sel));
+// The phone keeps desktop's rules in two places: its print block, and --
+// for the rules desktop applies on screen as well -- the top level, each
+// confined to print containers with :where(.print-container), which adds
+// no weight. To compare a phone rule with desktop's, take the confinement
+// off and compare the selectors each lists.
+const CONFINED = /^:where\(\.print-container\)\s*/;
+const ALL_OF_IT = /^:where\(\.print-container,\s*\.print-container \*\)(::?[\w-]+)?$/;
+function unscoped(selector) {
+  const out = [];
+  split(normSelector(selector), ',').forEach(part => {
+    const p = part.trim();
+    const all = ALL_OF_IT.exec(p);
+    if (all) { out.push(all[1] || '*'); return; }
+    const rest = p.replace(CONFINED, '');
+    const is = /^:is\((.*)\)$/.exec(rest);
+    (is ? split(is[1], ',') : [rest]).forEach(x => out.push(normSelector(x)));
+  });
+  return out.sort().join(',');
+}
 
-// The phone reproduces `rule` if some print rule of its with the same
-// selector carries every one of the declarations, with the same value
-// and the same !important.
-function reproduced(rule, vars) {
-  const candidates = inPrint(rule.selector);
-  return candidates.find(m => [...rule.decls].every(([prop, d]) => {
+// The phone's rules for a selector: in its print block (PRINT), or at the
+// top level and confined to print containers ('').
+const phone = (sel, where) => M.filter(r => r.at === where &&
+  (where === PRINT || r.selector.includes('.print-container')) &&
+  unscoped(r.selector) === unscoped(sel));
+
+// The phone reproduces `rule` if some rule of its with the same selector
+// carries every one of the declarations, with the same value and the same
+// !important.
+function reproduced(rule, vars, where) {
+  return phone(rule.selector, where).find(m => [...rule.decls].every(([prop, d]) => {
     const got = m.decls.get(prop);
     return got && got.important === d.important && got.value === resolve(d.value, vars);
   }));
 }
 
-function missing(rule, vars) {
-  const best = inPrint(rule.selector)[0];
+function missing(rule, vars, where) {
+  const best = phone(rule.selector, where)[0];
   return [...rule.decls]
     .filter(([prop, d]) => {
       const got = best && best.decls.get(prop);
@@ -146,6 +171,9 @@ function missing(rule, vars) {
     })
     .map(([prop, d]) => `${prop}: ${resolve(d.value, vars)}${d.important ? ' !important' : ''}`);
 }
+
+const check = (rule, vars, where) =>
+  ({ selector: rule.selector, missing: reproduced(rule, vars, where) ? [] : missing(rule, vars, where) });
 
 describe('desktop\'s rules, reproduced', () => {
   // styles.css's bare element rules -- the ones that reach a print
@@ -160,13 +188,14 @@ describe('desktop\'s rules, reproduced', () => {
     '.print-container.print-fit-dense th,.print-container.print-fit-dense td',
     '.print-container.print-fit-xdense th,.print-container.print-fit-xdense td'];
 
+  // Desktop applies these on screen as well as on paper -- and a document
+  // is laid out on screen before it prints (the Production Sheet measures
+  // itself to choose a density) -- so the phone has them at the top level
+  // too, not only in its print block.
   test.each(ELEMENTS.concat(FITTING))('%s', selector => {
     const found = D.filter(r => r.at === '' && r.selector === normSelector(selector));
     expect(found.length).toBeGreaterThan(0);
-    found.forEach(rule => {
-      expect({ selector, missing: reproduced(rule, D_VARS) ? [] : missing(rule, D_VARS) })
-        .toEqual({ selector, missing: [] });
-    });
+    found.forEach(rule => expect(check(rule, D_VARS, '')).toEqual({ selector: rule.selector, missing: [] }));
   });
 
   test('every rule in desktop\'s print block that reaches a document', () => {
@@ -176,14 +205,11 @@ describe('desktop\'s rules, reproduced', () => {
     const skip = new Set(['body', normSelector('#app-container, .modal, .modal-backdrop, .toast-container, .toast, .nav-tabs, .pagination, .btn-action, nav, header, footer, .d-none, [style*="display: none"], [style*="visibility: hidden"]')]);
     const printRules = D.filter(r => r.at === PRINT && !skip.has(r.selector));
     expect(printRules.length).toBeGreaterThan(10);
-    printRules.forEach(rule => {
-      expect({ selector: rule.selector, missing: reproduced(rule, D_VARS) ? [] : missing(rule, D_VARS) })
-        .toEqual({ selector: rule.selector, missing: [] });
-    });
+    printRules.forEach(rule => expect(check(rule, D_VARS, PRINT)).toEqual({ selector: rule.selector, missing: [] }));
   });
 
   test('inside a document, what desktop\'s chrome-hiding rule also catches', () => {
-    const rule = inPrint('.print-container .d-none,.print-container [style*="display: none"],.print-container [style*="visibility: hidden"]')[0];
+    const rule = phone('.print-container .d-none,.print-container [style*="display: none"],.print-container [style*="visibility: hidden"]', PRINT)[0];
     expect(rule).toBeDefined();
     expect(rule.decls.get('display')).toEqual({ value: 'none', important: true });
   });
@@ -195,11 +221,12 @@ describe('desktop\'s rules, reproduced', () => {
 });
 
 describe('in desktop\'s order', () => {
-  const at = (list, sel, where) => {
-    const r = list.find(x => x.selector === normSelector(sel) && (where === undefined || x.at === where));
+  const at = (sel, where) => {
+    const r = phone(sel, where)[0];
     expect(r).toBeDefined();
     return r.index;
   };
+  const atDesktop = (sel, where) => D.find(x => x.selector === normSelector(sel) && x.at === where).index;
   const BASELINE = '.print-container:not(.print-cells-own) td';
   const COMPACT = '.print-container.print-fit-compact th,.print-container.print-fit-compact td';
 
@@ -208,17 +235,32 @@ describe('in desktop\'s order', () => {
     // is the baseline, so an ordinary ledger keeps 11px cells and only its
     // header cells shrink. The phone had it the other way round and
     // printed every ledger a size smaller than desktop's.
-    expect(at(D, COMPACT, '')).toBeLessThan(at(D, BASELINE, PRINT));
-    expect(at(M, COMPACT, PRINT)).toBeLessThan(at(M, BASELINE, PRINT));
+    expect(atDesktop(COMPACT, '')).toBeLessThan(atDesktop(BASELINE, PRINT));
+    expect(at(COMPACT, '')).toBeLessThan(at(BASELINE, PRINT));
   });
 
   test('Bootstrap first, then desktop\'s element rules, then its print isolation', () => {
     // .table > :not(caption) > * > * and .print-container th tie on weight;
     // desktop loads Bootstrap first, so the isolation rule's colour wins.
-    expect(at(M, '.table > :not(caption) > * > *', PRINT)).toBeLessThan(at(M, '.print-container th', PRINT));
+    expect(at('.table > :not(caption) > * > *', '')).toBeLessThan(at('.print-container th', ''));
     // The reboot zeroes every table border; desktop's thead rule, later,
     // puts the 2px rule back under the header row.
-    expect(at(M, 'thead,tbody,tfoot,tr,td,th', PRINT)).toBeLessThan(at(M, 'thead', PRINT));
+    expect(at('thead,tbody,tfoot,tr,td,th', '')).toBeLessThan(at('thead', ''));
+  });
+
+  test('confining a rule adds nothing to its weight', () => {
+    // Which is the only reason confining them is safe: a confined `th`
+    // still weighs what desktop's bare `th` weighs, so every tie between
+    // the rules above is settled as it is on desktop. :where() weighs
+    // nothing; :is() weighs what its heaviest argument weighs, and every
+    // list it wraps here is of bare elements.
+    M.filter(r => r.at === '' && r.selector.includes('.print-container'))
+      .forEach(r => split(r.selector, ',').forEach(part => {
+        const p = part.trim();
+        expect(p).toMatch(/^(:where\(\.print-container[^)]*\)|\.print-container)/);
+        const is = /:is\(([^)]*)\)/.exec(p);
+        if (is) split(is[1], ',').forEach(x => expect(x.trim()).toMatch(/^[a-z][a-z0-9]*$/));
+      }));
   });
 });
 
@@ -249,7 +291,8 @@ describe('Bootstrap, the parts the documents are built from', () => {
     ['.small,small', 'small'],
     ['.h6,h6', 'h6'],
     ['tbody,td,tfoot,th,thead,tr', 'thead,tbody,tfoot,tr,td,th'],
-    ['.h1,.h2,.h3,.h4,.h5,.h6,h1,h2,h3,h4,h5,h6', 'h1,h2,h3,h4,h5,h6']
+    ['.h1,.h2,.h3,.h4,.h5,.h6,h1,h2,h3,h4,h5,h6', 'h1,h2,h3,h4,h5,h6'],
+    ['*,::after,::before', '*,::before,::after']
   ];
 
   test.each(PAIRS)('%s', (bootstrapSel, phoneSel) => {
@@ -268,17 +311,17 @@ describe('Bootstrap, the parts the documents are built from', () => {
         }
       }));
     const rule = { selector: normSelector(phoneSel), decls };
-    expect({ selector: phoneSel, missing: reproduced(rule, {}) ? [] : missing(rule, {}) })
-      .toEqual({ selector: phoneSel, missing: [] });
+    expect(check(rule, {}, '')).toEqual({ selector: rule.selector, missing: [] });
   });
 
   test('.text-warning is Bootstrap\'s warning yellow', () => {
-    const rule = inPrint('.text-warning')[0];
+    const rule = phone('.text-warning', '')[0];
     expect(rule.decls.get('color')).toEqual({ value: '#ffc107', important: true });
   });
 });
 
 describe('the page', () => {
+  const inPrint = sel => phone(sel, PRINT);
   const pageRule = inPrint('html,body')[0];
   const body = inPrint('body').find(r => r.decls.has('display'));
 
@@ -314,11 +357,15 @@ describe('the page', () => {
     expect(rule.decls.get('display')).toEqual({ value: 'none', important: true });
   });
 
-  test('none of it is outside @media print, where it could reach a screen', () => {
-    const bare = ['th', 'td', 'thead', 'table', 'small', 'strong', 'p', 'h6', '.table', 'h1,h2,h3,h4,h5,h6',
-      'thead,tbody,tfoot,tr,td,th', '.table > :not(caption) > * > *', '.print-container th'];
-    const outside = M.filter(r => r.at === '' && bare.includes(r.selector));
-    expect(outside.map(r => r.selector)).toEqual([]);
+  test('outside the print block, nothing in the print section can reach a screen', () => {
+    // Everything after @page that is not in the print block must be
+    // confined to print containers, or a bare `th` here would restyle
+    // every table the app draws.
+    const pageAt = M.findIndex(r => r.selector === '@page');
+    const loose = M.filter(r => r.index > pageAt && r.at === '')
+      .filter(r => !split(r.selector, ',').every(part =>
+        /^(:where\(\.print-container|\.print-container)/.test(part.trim())));
+    expect(loose.map(r => r.selector)).toEqual([]);
   });
 });
 
@@ -326,8 +373,8 @@ describe('a page desktop prints outside its app', () => {
   test('the wastage popup\'s page keeps its own type and cells', () => {
     ['.print-container .mb-standalone-doc small', '.print-container .mb-standalone-doc strong',
       '.print-container .mb-standalone-doc th', '.print-container .mb-standalone-doc thead']
-      .forEach(sel => expect(inPrint(sel).length).toBe(1));
-    const economy = inPrint('.print-container .mb-standalone-doc,.print-container .mb-standalone-doc *')[0];
+      .forEach(sel => expect(phone(sel, '').length).toBe(1));
+    const economy = phone('.print-container .mb-standalone-doc,.print-container .mb-standalone-doc *', '')[0];
     expect(economy.decls.get('print-color-adjust')).toEqual({ value: 'economy', important: true });
   });
 });

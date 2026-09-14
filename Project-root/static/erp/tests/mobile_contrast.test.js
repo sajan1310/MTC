@@ -234,27 +234,40 @@ describe('the type scale follows the OS text-size setting', () => {
   });
 
   test('every font-size is relative, except the deliberate input floor', () => {
-    // And except the print block. A printed document is paper: it has to
-    // come off the phone at the size it comes off desktop, whatever the
-    // phone's text setting, so that block reproduces desktop's px sizes on
-    // purpose (mobile_print_css.test.js holds it to them). Everything a
-    // screen shows is still held to the rule.
-    const lines = CSS.split(/\r?\n/);
-    const start = lines.findIndex(l => /^@media print\s*\{/.test(l));
-    let end = -1;
-    for (let i = start, depth = 0; start >= 0 && i < lines.length; i++) {
-      depth += (lines[i].match(/\{/g) || []).length - (lines[i].match(/\}/g) || []).length;
-      if (depth === 0) { end = i; break; }
+    // And except documents. A printed document is paper: it has to come off
+    // the phone at the size it comes off desktop, whatever the phone's text
+    // setting, so the rules confined to print containers -- and the print
+    // block -- reproduce desktop's px sizes on purpose
+    // (mobile_print_css.test.js holds them to desktop's). Everything the
+    // app itself shows is still held to the rule.
+    const text = CSS.replace(/\/\*[\s\S]*?\*\//g, c => c.replace(/[^\n]/g, ' '));
+    const absolute = [];
+    const atRules = [];
+    let head = '';
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (ch === '{') {
+        const selector = head.trim();
+        head = '';
+        if (selector.startsWith('@') && !/^@(page|font-face)\b/.test(selector)) { atRules.push(selector); continue; }
+        const end = text.indexOf('}', i);
+        const inDocument = selector.includes('.print-container') || atRules.some(a => /^@media print\b/.test(a));
+        const found = /font-size:\s*[0-9.]+px/.exec(text.slice(i + 1, end));
+        if (found && !inDocument) {
+          absolute.push(`${text.slice(0, i).split('\n').length}: ${selector} { ${found[0]} }`);
+        }
+        i = end;
+      } else if (ch === '}') {
+        atRules.pop();
+        head = '';
+      } else if (ch === ';') {
+        head = '';
+      } else {
+        head += ch;
+      }
     }
-    expect(start).toBeGreaterThan(-1);
-    expect(end).toBeGreaterThan(start);
 
-    const absolute = lines
-      .map((line, i) => ({ line: line.trim(), n: i + 1 }))
-      .filter(({ n }) => n - 1 < start || n - 1 > end)
-      .filter(({ line }) => /font-size:\s*[0-9.]+px/.test(line));
-
-    expect(absolute.map(a => `${a.n}: ${a.line}`)).toEqual([]);
+    expect(absolute).toEqual([]);
   });
 
   test('inputs keep a 16px floor so iOS does not zoom on focus', () => {
