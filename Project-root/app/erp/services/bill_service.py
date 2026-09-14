@@ -163,6 +163,71 @@ def _aggregate_billed_base_qty_by_po(cur) -> dict:
     return {row["po_line_key"]: float(row["billed"] or 0) for row in cur.fetchall()}
 
 
+def _assert_po_links_are_live(cur, vendor, items, default_po_number) -> None:
+    """Every bill line names a live PO from this bill's own vendor, or is
+    Direct. Refuses the save otherwise, before anything is written.
+
+    Nothing checked this, and on the live data 116 bill lines already name a
+    PO that is not there: 88 point at a PO number that never existed and 28
+    at one that was deleted. A bill line linked to a dead PO fulfils
+    nothing -- the goods arrive and every PO, pending and ledger figure
+    carries on as though they hadn't -- and it does so silently, because
+    the link LOOKS fine on the bill.
+
+    Direct is left alone: it is a deliberate choice on the bill form (a
+    purchase made without a PO), and nearly half of all bill lines use it.
+
+    This also refuses a line linked to ANOTHER vendor's PO. There are none
+    today, which is exactly why it can be a hard rule: a bill from one
+    supplier closing out an order placed with another is never what
+    happened.
+
+    It will stop an old bill that still names a deleted PO from being
+    re-saved until that line is marked Direct or linked to an open PO.
+    That is intended -- it is the moment the line gets put right, and the
+    message says how.
+    """
+    wanted = {}
+    for item in items or []:
+        po = str(item.get("po") or item.get("poNumber") or "").strip() or default_po_number
+        if po and po.upper() != "DIRECT":
+            wanted.setdefault(po.lower(), po)
+    if not wanted:
+        return
+
+    cur.execute(
+        """
+        SELECT lower(po_number) AS key, po_number, vendor, deleted_at IS NOT NULL AS deleted
+        FROM erp.po_headers
+        WHERE lower(po_number) = ANY(%s)
+        """,
+        (list(wanted),),
+    )
+    rows = cur.fetchall()
+    live = {r["key"]: r for r in rows if not r["deleted"]}
+    deleted = {r["key"] for r in rows if r["deleted"]}
+
+    this_vendor = str(vendor or "").strip().lower()
+    for key, shown in wanted.items():
+        if key in live:
+            po_vendor = str(live[key]["vendor"] or "").strip()
+            if po_vendor.lower() != this_vendor:
+                raise ValueError(
+                    f"PO #{shown} was placed with {po_vendor}, not {vendor}. "
+                    "Link this line to one of this vendor's POs, or mark it Direct."
+                )
+            continue
+        if key in deleted:
+            raise ValueError(
+                f"PO #{shown} has been deleted. Mark the lines against it Direct, "
+                "or link them to an open PO."
+            )
+        raise ValueError(
+            f"There is no PO #{shown}. Mark the lines against it Direct, "
+            "or link them to an open PO."
+        )
+
+
 def _resolve_po_item(po, po_num, bill_item):
     """The PO line a bill line is billed against -- the same rule
     _BILLED_BY_PO_SQL applies, in Python for the one caller that starts
@@ -480,6 +545,8 @@ def save_bill(conn, cur, form_data):
     default_po_number = (
         str(po_numbers_array[0]).strip() if po_numbers_array else ""
     ) or "DIRECT"
+
+    _assert_po_links_are_live(cur, vendor, items, default_po_number)
 
     bill_date = date_utils.to_safe_date(form_data.get("billDate"))
     if not bill_date:

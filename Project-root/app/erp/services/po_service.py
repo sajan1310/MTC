@@ -391,17 +391,53 @@ def save_po(conn, cur, form_data):
             )
         header_id = header_row["id"]
 
+        # What this PO's lines had billed against them before the edit, so
+        # the edit can be told exactly what it strands -- and only that.
+        cur.execute(
+            "SELECT item_name AS name, size, narration FROM erp.po_lines WHERE header_id = %s",
+            (header_id,),
+        )
+        before_attached = _attached_by_item(
+            old_po_number,
+            cur.fetchall(),
+            bill_service._aggregate_billed_base_qty_by_po(cur),
+        )
+
         # The source allows renumbering a PO with no duplicate check -- a
         # latent gap (two rows could end up sharing a PO number). Not
         # preserved as-is: a friendly pre-check here, same style as every
         # other rename-collision check in this codebase.
-        if po_number.lower() != old_po_number.lower():
+        renumbered = po_number.lower() != old_po_number.lower()
+        if renumbered:
             cur.execute(
                 "SELECT id FROM erp.po_headers WHERE lower(po_number) = lower(%s) AND deleted_at IS NULL AND id != %s",
                 (po_number, header_id),
             )
             if cur.fetchone():
                 raise ValueError(f"PO #{po_number} already exists.")
+            # A number with a past is not free, even if no live PO holds it.
+            # The uniqueness index only covers live POs, so a DELETED PO's
+            # number could be taken -- and every bill still naming it would
+            # silently start counting against this, a different order.
+            cur.execute(
+                "SELECT 1 FROM erp.po_headers WHERE lower(po_number) = lower(%s) AND id != %s",
+                (po_number, header_id),
+            )
+            if cur.fetchone():
+                raise ValueError(
+                    f"PO #{po_number} belonged to a PO that has since been deleted. "
+                    "Pick a number that has never been used."
+                )
+            cur.execute(
+                "SELECT count(*) AS n FROM erp.bill_lines WHERE lower(btrim(po_number)) = lower(%s)",
+                (po_number,),
+            )
+            named = cur.fetchone()["n"]
+            if named:
+                raise ValueError(
+                    f"{named} bill line(s) already name PO #{po_number}. "
+                    "Pick a number no bill refers to."
+                )
 
         cur.execute(
             """
@@ -423,6 +459,21 @@ def save_po(conn, cur, form_data):
                 header_id,
             ),
         )
+        if renumbered:
+            # Bills link to a PO by NUMBER. Renaming the PO without carrying
+            # the new number to them used to disconnect every bill against
+            # it: the order fell back to "PO Issued" with its full quantity
+            # pending, and the bills fulfilled nothing. Rate history names
+            # the PO too, so it moves with it rather than pointing at a
+            # number that no longer exists.
+            cur.execute(
+                "UPDATE erp.bill_lines SET po_number = %s WHERE lower(btrim(po_number)) = lower(%s)",
+                (po_number, old_po_number),
+            )
+            cur.execute(
+                "UPDATE erp.rate_history SET po_number = %s WHERE lower(btrim(po_number)) = lower(%s)",
+                (po_number, old_po_number),
+            )
         cur.execute("DELETE FROM erp.po_lines WHERE header_id = %s", (header_id,))
     else:
         cur.execute(
@@ -481,7 +532,53 @@ def save_po(conn, cur, form_data):
     fresh_list = _load_po_list(cur, fresh_billed_map, only_po_number=po_number)
     fresh_po = fresh_list[0] if fresh_list else None
 
+    if is_edit:
+        after_attached = _attached_by_item(po_number, items, fresh_billed_map)
+        stranded = sorted(
+            f'"{name}{" " + size if size else ""}"'
+            for (name, size), billed in before_attached.items()
+            if billed > after_attached.get((name, size), 0.0) + 0.0001
+        )
+        if stranded:
+            message += (
+                f" Warning: {', '.join(stranded)} "
+                f"{'has' if len(stranded) == 1 else 'have'} already been billed against this PO "
+                "but no longer appear on it, so those bills now fulfil nothing. "
+                "Put the item back, or mark those bill lines Direct."
+            )
+
     return build_response(True, {"poNumber": po_number, "po": fresh_po}, message)
+
+
+def _attached_by_item(po_number, lines, billed_map) -> dict:
+    """Billed base quantity attached to a PO's lines, per (item, size).
+
+    Bills link to a PO line by item + size (+ narration where the PO needs
+    it to tell two lines apart), so removing a line, or renaming its item
+    or size, leaves what was already billed against it attached to nothing
+    -- the PO then reads as though those goods never came. Comparing this
+    before and after an edit names exactly what the edit stranded, and
+    nothing that was already unmatched beforehand.
+
+    Grouped per item + size rather than per line, so an edit that only
+    re-words a narration -- which the billed aggregate's fallback still
+    connects when the item has a single line -- is not reported as a loss.
+    """
+    attached = {}
+    seen = set()
+    for line in lines or []:
+        key = bill_service._build_po_line_key(
+            po_number, line["name"], line["size"], line["narration"]
+        )
+        if key in seen:  # two identical lines share one billed total
+            continue
+        seen.add(key)
+        group = (
+            str(line["name"] or "").strip().lower(),
+            str(line["size"] or "").strip().lower(),
+        )
+        attached[group] = attached.get(group, 0.0) + float((billed_map or {}).get(key, 0.0))
+    return attached
 
 
 @rpc_method("deletePO", mutation=True)
@@ -506,7 +603,41 @@ def delete_po(conn, cur, po_number):
         "UPDATE erp.po_headers SET deleted_at = NOW(), updated_by = %s WHERE id = %s",
         (get_current_user_id(), row["id"]),
     )
-    return build_response(True, None, f"PO #{target} deleted.")
+    return build_response(
+        True, None, f"PO #{target} deleted." + _bills_still_naming(cur, [target])
+    )
+
+
+def _bills_still_naming(cur, po_numbers) -> str:
+    """A sentence to append to a delete's confirmation, naming how many
+    bill lines still point at the PO(s) just deleted -- or "" if none do.
+
+    Bills are an independent financial record and a PO delete never touches
+    them. But a bill line naming a deleted PO fulfils nothing, and the bill
+    form will refuse to re-save it until it is marked Direct or linked to an
+    open PO (bill_service._assert_po_links_are_live). Saying so at the
+    moment of deleting is what makes that a to-do rather than a surprise.
+    """
+    keys = [str(p).strip().lower() for p in po_numbers if str(p).strip()]
+    if not keys:
+        return ""
+    cur.execute(
+        """
+        SELECT count(*) AS lines, count(DISTINCT h.id) AS bills
+        FROM erp.bill_lines l
+        JOIN erp.bill_headers h ON h.id = l.header_id
+        WHERE h.deleted_at IS NULL AND lower(btrim(l.po_number)) = ANY(%s)
+        """,
+        (keys,),
+    )
+    row = cur.fetchone()
+    if not row or not row["lines"]:
+        return ""
+    return (
+        f" {row['lines']} line(s) on {row['bills']} bill(s) still name "
+        f"{'this PO' if len(keys) == 1 else 'these POs'}: mark them Direct, "
+        "or link them to an open PO, next time those bills are edited."
+    )
 
 
 @rpc_method("deletePOsBulk", mutation=True)
@@ -529,7 +660,9 @@ def delete_pos_bulk(conn, cur, po_numbers):
     rows_deleted = cur.rowcount
 
     return build_response(
-        True, {"deletedIds": list(targets)}, f"Deleted {rows_deleted} PO(s)."
+        True,
+        {"deletedIds": list(targets)},
+        f"Deleted {rows_deleted} PO(s)." + _bills_still_naming(cur, list(targets)),
     )
 
 

@@ -224,6 +224,12 @@ def test_save_bill_rejects_duplicate_vendor_bill_number_pair(erp_client):
 def test_save_bill_multi_po_per_bill(erp_client):
     vendor = _unique_name("MultiPoVendor")
     bill_number = _unique_name("MultiPoBill")
+    # Two real POs from this vendor. The test used to link to hard-coded
+    # "1001" / "1002", which only worked because nothing checked a bill's
+    # PO existed or belonged to its vendor -- the gap that left 116 live
+    # bill lines naming a PO that isn't there. It does check now.
+    po_a = _po(erp_client, vendor, [{"name": "A", "qty": 1, "unit": "Pcs", "price": 1}])
+    po_b = _po(erp_client, vendor, [{"name": "B", "qty": 1, "unit": "Pcs", "price": 1}])
     resp = _rpc(
         erp_client,
         "saveBill",
@@ -233,15 +239,15 @@ def test_save_bill_multi_po_per_bill(erp_client):
                 "billNumber": bill_number,
                 "billDate": "01/01/2026",
                 "items": [
-                    {"name": "A", "qty": 1, "price": 1, "po": "1001"},
-                    {"name": "B", "qty": 1, "price": 1, "po": "1002"},
+                    {"name": "A", "qty": 1, "price": 1, "po": po_a},
+                    {"name": "B", "qty": 1, "price": 1, "po": po_b},
                     {"name": "C", "qty": 1, "price": 1},  # no PO -> DIRECT
                 ],
             }
         ],
         mutation=True,
     )
-    assert resp.get_json()["success"] is True
+    assert resp.get_json()["success"] is True, resp.get_json()["message"]
 
     listed = _rpc(erp_client, "getBillData").get_json()["data"]
     match = next(
@@ -251,10 +257,10 @@ def test_save_bill_multi_po_per_bill(erp_client):
     # filtered out of poNumbers -- getBillData tracks every non-blank
     # per-line value (that filtering only happens in the billed-qty
     # aggregation used for PO status, a different function).
-    assert set(match["poNumbers"]) == {"1001", "1002", "DIRECT"}
+    assert set(match["poNumbers"]) == {po_a, po_b, "DIRECT"}
     po_numbers_by_item = {i["name"]: i["poNumber"] for i in match["items"]}
-    assert po_numbers_by_item["A"] == "1001"
-    assert po_numbers_by_item["B"] == "1002"
+    assert po_numbers_by_item["A"] == po_a
+    assert po_numbers_by_item["B"] == po_b
     assert po_numbers_by_item["C"] == "DIRECT"
 
 
@@ -888,3 +894,145 @@ def test_over_billing_is_caught_on_a_line_reached_by_the_fallback(erp_client):
 
     assert "Warning" in body["message"], body["message"]
     assert "2.00 over" in body["message"]
+
+
+# --- POs keep working as they are edited, renumbered and deleted -----------
+#
+# Bills link to POs by NUMBER, and nothing kept that link honest: on the
+# live data 116 bill lines name a PO that is not there (88 that never
+# existed, 28 deleted), and renumbering a PO on desktop silently cut every
+# bill away from it. These pin the guards that keep new entries straight.
+
+
+def _raw_bill(client, vendor, lines):
+    return _rpc(
+        client,
+        "saveBill",
+        [{"vendor": vendor, "billNumber": _unique_name("GuardBill"),
+          "billDate": "05/01/2026", "items": lines}],
+        mutation=True,
+    ).get_json()
+
+
+def test_a_bill_cannot_name_a_po_that_does_not_exist(erp_client):
+    body = _raw_bill(erp_client, _unique_name("NoPoVendor"), [
+        {"name": _unique_name("Item"), "qty": 1, "price": 1, "po": "987654321"},
+    ])
+    assert body["success"] is False
+    assert "There is no PO #987654321" in body["message"]
+    assert "Direct" in body["message"]
+
+
+def test_a_bill_cannot_name_a_deleted_po(erp_client):
+    vendor, item = _unique_name("DelPoVendor"), _unique_name("DelPoItem")
+    po = _po(erp_client, vendor, [{"name": item, "qty": 5, "unit": "Pcs", "price": 1}])
+    assert _rpc(erp_client, "deletePO", [po], mutation=True).get_json()["success"] is True
+
+    body = _raw_bill(erp_client, vendor, [{"name": item, "qty": 5, "price": 1, "po": po}])
+    assert body["success"] is False
+    assert f"PO #{po} has been deleted" in body["message"]
+
+
+def test_a_bill_cannot_close_out_another_vendors_po(erp_client):
+    item = _unique_name("XVendorItem")
+    po = _po(erp_client, _unique_name("PlacedWith"), [
+        {"name": item, "qty": 5, "unit": "Pcs", "price": 1},
+    ])
+    body = _raw_bill(erp_client, _unique_name("BilledBy"), [
+        {"name": item, "qty": 5, "price": 1, "po": po},
+    ])
+    assert body["success"] is False
+    assert "was placed with" in body["message"]
+
+
+def test_direct_and_unlinked_bill_lines_are_left_alone(erp_client):
+    """Direct is a deliberate choice -- nearly half of all live bill lines
+    use it -- and the guard must not so much as look at it."""
+    body = _raw_bill(erp_client, _unique_name("DirectVendor"), [
+        {"name": _unique_name("A"), "qty": 1, "price": 1, "po": "DIRECT"},
+        {"name": _unique_name("B"), "qty": 1, "price": 1},
+    ])
+    assert body["success"] is True, body["message"]
+
+
+def test_renumbering_a_po_carries_its_bills_with_it(erp_client):
+    vendor, item = _unique_name("RenumVendor"), _unique_name("RenumItem")
+    po = _po(erp_client, vendor, [{"name": item, "qty": 10, "unit": "Pcs", "price": 1}])
+    _bill(erp_client, vendor, po, [{"name": item, "qty": 10, "price": 1}])
+    assert _po_by_number(erp_client, po)["status"] == "Completed"
+
+    new_number = f"R{uuid.uuid4().hex[:8]}"
+    resp = _rpc(erp_client, "savePO", [{
+        "existingPoNumber": po, "poNumber": new_number, "vendor": vendor,
+        "items": [{"name": item, "qty": 10, "unit": "Pcs", "price": 1}],
+    }], mutation=True).get_json()
+    assert resp["success"] is True, resp["message"]
+
+    # Used to fall back to "PO Issued" with all 10 pending: the bill still
+    # named the old number and fulfilled nothing.
+    renamed = _po_by_number(erp_client, new_number)
+    assert renamed["status"] == "Completed"
+    assert renamed["items"][0]["pendingQty"] == 0
+
+
+def test_a_deleted_pos_number_cannot_be_reused(erp_client):
+    """The uniqueness index only covers LIVE POs. Taking a deleted PO's
+    number would quietly hand this PO every bill still naming it."""
+    vendor = _unique_name("ReuseVendor")
+    gone = _po(erp_client, vendor, [{"name": _unique_name("X"), "qty": 1, "unit": "Pcs", "price": 1}])
+    _rpc(erp_client, "deletePO", [gone], mutation=True)
+
+    live = _po(erp_client, vendor, [{"name": _unique_name("Y"), "qty": 1, "unit": "Pcs", "price": 1}])
+    resp = _rpc(erp_client, "savePO", [{
+        "existingPoNumber": live, "poNumber": gone, "vendor": vendor,
+        "items": [{"name": _unique_name("Y"), "qty": 1, "unit": "Pcs", "price": 1}],
+    }], mutation=True).get_json()
+    assert resp["success"] is False
+    assert "has since been deleted" in resp["message"]
+
+
+def test_editing_a_billed_item_off_a_po_says_so(erp_client):
+    vendor = _unique_name("StrandVendor")
+    kept, dropped = _unique_name("Kept"), _unique_name("Dropped")
+    po = _po(erp_client, vendor, [
+        {"name": kept, "qty": 5, "unit": "Pcs", "price": 1},
+        {"name": dropped, "qty": 5, "unit": "Pcs", "price": 1},
+    ])
+    _bill(erp_client, vendor, po, [{"name": dropped, "qty": 5, "price": 1}])
+
+    resp = _rpc(erp_client, "savePO", [{
+        "existingPoNumber": po, "vendor": vendor,
+        "items": [{"name": kept, "qty": 5, "unit": "Pcs", "price": 1}],
+    }], mutation=True).get_json()
+    assert resp["success"] is True  # advisory -- the edit is allowed
+    assert "Warning" in resp["message"]
+    assert dropped.lower() in resp["message"].lower()
+
+
+def test_rewording_a_narration_is_not_reported_as_stranding(erp_client):
+    """The billed aggregate still connects a bill to an item's only line
+    when the narration changes, so nothing was lost and nothing is said."""
+    vendor, item = _unique_name("RewordVendor"), _unique_name("RewordItem")
+    po = _po(erp_client, vendor, [
+        {"name": item, "narration": "old words", "qty": 5, "unit": "Pcs", "price": 1},
+    ])
+    _bill(erp_client, vendor, po, [{"name": item, "narration": "old words", "qty": 5, "price": 1}])
+
+    resp = _rpc(erp_client, "savePO", [{
+        "existingPoNumber": po, "vendor": vendor,
+        "items": [{"name": item, "narration": "new words", "qty": 5, "unit": "Pcs", "price": 1}],
+    }], mutation=True).get_json()
+    assert resp["success"] is True
+    assert "Warning" not in resp["message"], resp["message"]
+    assert _po_by_number(erp_client, po)["status"] == "Completed"
+
+
+def test_deleting_a_po_says_which_bills_still_name_it(erp_client):
+    vendor, item = _unique_name("DelMsgVendor"), _unique_name("DelMsgItem")
+    po = _po(erp_client, vendor, [{"name": item, "qty": 5, "unit": "Pcs", "price": 1}])
+    _bill(erp_client, vendor, po, [{"name": item, "qty": 5, "price": 1}])
+
+    body = _rpc(erp_client, "deletePO", [po], mutation=True).get_json()
+    assert body["success"] is True
+    assert "1 line(s) on 1 bill(s) still name this PO" in body["message"]
+    assert "Direct" in body["message"]
