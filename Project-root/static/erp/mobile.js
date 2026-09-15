@@ -2221,9 +2221,12 @@ MApp.Print = {
   // Desktop's own Download sends the inner markup and is unchanged: its
   // templates and its print path are read-only from here.
 
-  // WeasyPrint draws no box-shadow, which is how Bootstrap stripes a
-  // table, so the stripe goes in as the colour it composites to on paper
-  // (white, under the shim's 3% and Bootstrap's 5% black).
+  // Bootstrap stripes a table with an inset box-shadow, which WeasyPrint
+  // does not draw, so the stripe goes in as the colour it composites to on
+  // paper (white, under the shim's 3% and Bootstrap's 5% black). 70.0 added
+  // box-shadow and draws .shadow-sm's drop shadow, but measured on 70.0 this
+  // inset stripe still does not render: without this rule stripes print
+  // #f8f8f8 instead of #ebebeb. With it they are pixel-identical to 69.0.
   PDF_ADDENDUM: '.print-container .table-striped > tbody > tr:nth-of-type(odd) > * { background-color: #ebebeb; }',
 
   // mobile_styles.css's document rules -- those confined to print

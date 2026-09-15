@@ -161,6 +161,23 @@ class TestRendering:
         assert "PO-2026-0417" in text
         assert "Freewheel" in text
 
+    def test_embeds_a_data_uri_image(self, caplog):
+        """The company logo reaches the renderer as a data: URI, so it has to
+        survive the whole render, not just the fetcher. WeasyPrint 70.0 took
+        fetchers as URLFetcher subclasses; the old plain function still passed
+        test_allows_data_uris above while every render with a logo crashed."""
+        pypdf = pytest.importorskip("pypdf")
+        png = (
+            "data:image/png;base64,"
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        )
+        with caplog.at_level("ERROR"):
+            pdf = svc.render_pdf(f'<p>document</p><img src="{png}" width="40">')
+
+        assert "Failed to load image" not in caplog.text
+        images = pypdf.PdfReader(io.BytesIO(pdf)).pages[0].images
+        assert len(images) == 1
+
     def test_does_not_execute_script(self):
         pdf = svc.render_pdf("<p>safe</p><script>document.title='pwned'</script>")
         assert pdf.startswith(b"%PDF-")

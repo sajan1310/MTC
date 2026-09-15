@@ -135,7 +135,7 @@ class PdfRenderUnavailable(RuntimeError):
     """
 
 
-def _blocked_url_fetcher(url, *args, **kwargs):
+def _blocked_url_fetcher(url, headers=None):
     """Refuse every fetch except `data:`.
 
     WeasyPrint calls this for every external resource the document references.
@@ -143,10 +143,30 @@ def _blocked_url_fetcher(url, *args, **kwargs):
     silently render without an image it expected, which is harder to notice.
     """
     if url.startswith("data:"):
-        from weasyprint import default_url_fetcher
+        from weasyprint import URLFetcher
 
-        return default_url_fetcher(url, *args, **kwargs)
+        return URLFetcher(allowed_protocols=("data",)).fetch(url, headers)
     raise ValueError(f"External resources are not fetched when rendering: {url!r}")
+
+
+def _url_fetcher():
+    """_blocked_url_fetcher in the shape WeasyPrint requires since 70.0.
+
+    70.0 takes a URLFetcher subclass, not a function. Handed the function it
+    did not fall back: `default_url_fetcher` was gone, so the company logo (a
+    data: URI) failed, and any refused URL crashed the render on a missing
+    `_fail_on_errors` instead of being skipped and logged. Built per call
+    because weasyprint is imported lazily (see probe). allowed_protocols
+    repeats the refusal inside WeasyPrint itself, so data: stays the only
+    scheme even if fetch() were ever bypassed.
+    """
+    from weasyprint import URLFetcher
+
+    class _BlockedURLFetcher(URLFetcher):
+        def fetch(self, url, headers=None):
+            return _blocked_url_fetcher(url, headers)
+
+    return _BlockedURLFetcher(allowed_protocols=("data",))
 
 
 # The density tiers from static/erp/styles.css, restated for this renderer.
@@ -286,7 +306,7 @@ def render_pdf(body_html: str, *, landscape: bool = False, density: str = "") ->
         # No base_url: a relative URL then has nothing to resolve against and
         # cannot reach the filesystem.
         base_url=None,
-        url_fetcher=_blocked_url_fetcher,
+        url_fetcher=_url_fetcher(),
     )
     return document.write_pdf()
 

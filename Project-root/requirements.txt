@@ -63,7 +63,7 @@ google-auth==2.29.0             # service-account creds (scripts/migration/sheet
 # Without them the endpoint returns 503, the Download buttons say so, and Print
 # still produces a searchable PDF. Verify with:
 #   python -m app.erp.services.pdf_render_service
-weasyprint==69.0
+weasyprint==70.0
 
 # ── Environment ──────────────────────────────────────────────────────
 python-dotenv==1.0.1
