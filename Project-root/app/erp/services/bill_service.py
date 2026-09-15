@@ -189,7 +189,10 @@ def _assert_po_links_are_live(cur, vendor, items, default_po_number) -> None:
     """
     wanted = {}
     for item in items or []:
-        po = str(item.get("po") or item.get("poNumber") or "").strip() or default_po_number
+        po = (
+            str(item.get("po") or item.get("poNumber") or "").strip()
+            or default_po_number
+        )
         if po and po.upper() != "DIRECT":
             wanted.setdefault(po.lower(), po)
     if not wanted:
@@ -238,13 +241,15 @@ def _resolve_po_item(po, po_num, bill_item):
     lines that differ only by narration are two different things ordered,
     and guessing between them would bill the wrong one.
     """
+
     def part(v) -> str:
         return str(v if v is not None else "").strip().lower()
 
     name, size = part(bill_item.get("name")), part(bill_item.get("size"))
     narration = part(bill_item.get("narration"))
     same_item = [
-        pi for pi in po["items"]
+        pi
+        for pi in po["items"]
         if part(pi["name"]) == name and part(pi["size"]) == size
     ]
     exact = [pi for pi in same_item if part(pi["narration"]) == narration]

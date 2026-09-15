@@ -156,9 +156,13 @@ def test_dated_sheets_backup_holds_no_transaction_while_talking_to_sheets(
     def write_values(*_args, **_kwargs):
         seen.append(_transaction_states(opened))
 
-    monkeypatch.setattr(backup_db_to_sheets, "TABLES", ["erp.units", "erp.color_master"])
+    monkeypatch.setattr(
+        backup_db_to_sheets, "TABLES", ["erp.units", "erp.color_master"]
+    )
     monkeypatch.setattr(backup_db_to_sheets, "_ensure_sheet_tab", ensure_tab)
-    monkeypatch.setattr(backup_db_to_sheets.sheets_client, "sheets_write_client", MagicMock)
+    monkeypatch.setattr(
+        backup_db_to_sheets.sheets_client, "sheets_write_client", MagicMock
+    )
     monkeypatch.setattr(backup_db_to_sheets.sheets_client, "drive_client", MagicMock)
     monkeypatch.setattr(backup_db_to_sheets.sheets_client, "write_values", write_values)
 

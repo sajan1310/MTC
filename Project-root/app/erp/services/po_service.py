@@ -577,7 +577,9 @@ def _attached_by_item(po_number, lines, billed_map) -> dict:
             str(line["name"] or "").strip().lower(),
             str(line["size"] or "").strip().lower(),
         )
-        attached[group] = attached.get(group, 0.0) + float((billed_map or {}).get(key, 0.0))
+        attached[group] = attached.get(group, 0.0) + float(
+            (billed_map or {}).get(key, 0.0)
+        )
     return attached
 
 

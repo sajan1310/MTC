@@ -1500,6 +1500,8 @@ def test_manual_correction_downward_still_cannot_drive_produced_negative(erp_cli
     assert body["success"] is False
     assert "produced stock" in body["message"]
     assert _pool_by_color(erp_client, frame_name)["Black"]["availableQty"] == 10
+
+
 # --- Recounts are counts, not differences (migration 045) --------------------
 #
 # The audit that produced these: 57 of 314 recounted buckets in the live
@@ -1542,9 +1544,7 @@ def _make_lot(client, down_id, up_name, qty, when=None):
         "assignedTo": "Worker A",
         "status": "Completed",
         "qty": qty,
-        "componentsConsumed": [
-            {"itemName": up_name, "qty": qty, "sourceType": "POOL"}
-        ],
+        "componentsConsumed": [{"itemName": up_name, "qty": qty, "sourceType": "POOL"}],
     }
     if when is not None:
         payload["date"] = when.isoformat()

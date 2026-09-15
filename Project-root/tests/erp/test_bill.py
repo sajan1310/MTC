@@ -822,13 +822,28 @@ def _po_by_number(client, po_number):
 
 def test_a_bill_whose_narration_drifted_still_fulfils_its_order(erp_client):
     vendor, item = _unique_name("DriftVendor"), _unique_name("DriftItem")
-    po_number = _po(erp_client, vendor, [
-        {"name": item, "size": "", "narration": "Basket With Ring",
-         "qty": 10, "unit": "Pcs", "price": 1},
-    ])
-    _bill(erp_client, vendor, po_number, [
-        {"name": item, "size": "", "narration": "", "qty": 10, "price": 1},
-    ])
+    po_number = _po(
+        erp_client,
+        vendor,
+        [
+            {
+                "name": item,
+                "size": "",
+                "narration": "Basket With Ring",
+                "qty": 10,
+                "unit": "Pcs",
+                "price": 1,
+            },
+        ],
+    )
+    _bill(
+        erp_client,
+        vendor,
+        po_number,
+        [
+            {"name": item, "size": "", "narration": "", "qty": 10, "price": 1},
+        ],
+    )
 
     po = _po_by_number(erp_client, po_number)
     assert po["status"] == "Completed", po
@@ -842,16 +857,42 @@ def test_two_lines_that_differ_only_by_narration_stay_strict(erp_client):
     that names neither goes to neither.
     """
     vendor, item = _unique_name("StrictVendor"), _unique_name("Carton")
-    po_number = _po(erp_client, vendor, [
-        {"name": item, "size": "20 inch", "narration": "3.00 Size Carton",
-         "qty": 300, "unit": "Pcs", "price": 1},
-        {"name": item, "size": "20 inch", "narration": "Regular Size (45x7x25)",
-         "qty": 500, "unit": "Pcs", "price": 1},
-    ])
-    _bill(erp_client, vendor, po_number, [
-        {"name": item, "size": "20 inch", "narration": "Some Other Carton",
-         "qty": 300, "price": 1},
-    ])
+    po_number = _po(
+        erp_client,
+        vendor,
+        [
+            {
+                "name": item,
+                "size": "20 inch",
+                "narration": "3.00 Size Carton",
+                "qty": 300,
+                "unit": "Pcs",
+                "price": 1,
+            },
+            {
+                "name": item,
+                "size": "20 inch",
+                "narration": "Regular Size (45x7x25)",
+                "qty": 500,
+                "unit": "Pcs",
+                "price": 1,
+            },
+        ],
+    )
+    _bill(
+        erp_client,
+        vendor,
+        po_number,
+        [
+            {
+                "name": item,
+                "size": "20 inch",
+                "narration": "Some Other Carton",
+                "qty": 300,
+                "price": 1,
+            },
+        ],
+    )
 
     po = _po_by_number(erp_client, po_number)
     assert po["status"] == "PO Issued", po
@@ -860,15 +901,42 @@ def test_two_lines_that_differ_only_by_narration_stay_strict(erp_client):
 
 def test_an_exact_narration_match_is_still_preferred(erp_client):
     vendor, item = _unique_name("ExactVendor"), _unique_name("Carton")
-    po_number = _po(erp_client, vendor, [
-        {"name": item, "size": "20 inch", "narration": "Small",
-         "qty": 100, "unit": "Pcs", "price": 1},
-        {"name": item, "size": "20 inch", "narration": "Large",
-         "qty": 100, "unit": "Pcs", "price": 1},
-    ])
-    _bill(erp_client, vendor, po_number, [
-        {"name": item, "size": "20 inch", "narration": "Large", "qty": 100, "price": 1},
-    ])
+    po_number = _po(
+        erp_client,
+        vendor,
+        [
+            {
+                "name": item,
+                "size": "20 inch",
+                "narration": "Small",
+                "qty": 100,
+                "unit": "Pcs",
+                "price": 1,
+            },
+            {
+                "name": item,
+                "size": "20 inch",
+                "narration": "Large",
+                "qty": 100,
+                "unit": "Pcs",
+                "price": 1,
+            },
+        ],
+    )
+    _bill(
+        erp_client,
+        vendor,
+        po_number,
+        [
+            {
+                "name": item,
+                "size": "20 inch",
+                "narration": "Large",
+                "qty": 100,
+                "price": 1,
+            },
+        ],
+    )
 
     by_narration = {
         i["narration"]: i["pendingQty"]
@@ -884,13 +952,34 @@ def test_over_billing_is_caught_on_a_line_reached_by_the_fallback(erp_client):
     PO lines, among them 700 cartons billed against a 500 order.
     """
     vendor, item = _unique_name("OverDriftVendor"), _unique_name("OverDriftItem")
-    po_number = _po(erp_client, vendor, [
-        {"name": item, "size": "", "narration": "44x7x20.5",
-         "qty": 5, "unit": "Pcs", "price": 1},
-    ])
-    body = _bill(erp_client, vendor, po_number, [
-        {"name": item, "size": "", "narration": "43.5x7x20.5", "qty": 7, "price": 1},
-    ])
+    po_number = _po(
+        erp_client,
+        vendor,
+        [
+            {
+                "name": item,
+                "size": "",
+                "narration": "44x7x20.5",
+                "qty": 5,
+                "unit": "Pcs",
+                "price": 1,
+            },
+        ],
+    )
+    body = _bill(
+        erp_client,
+        vendor,
+        po_number,
+        [
+            {
+                "name": item,
+                "size": "",
+                "narration": "43.5x7x20.5",
+                "qty": 7,
+                "price": 1,
+            },
+        ],
+    )
 
     assert "Warning" in body["message"], body["message"]
     assert "2.00 over" in body["message"]
@@ -908,16 +997,26 @@ def _raw_bill(client, vendor, lines):
     return _rpc(
         client,
         "saveBill",
-        [{"vendor": vendor, "billNumber": _unique_name("GuardBill"),
-          "billDate": "05/01/2026", "items": lines}],
+        [
+            {
+                "vendor": vendor,
+                "billNumber": _unique_name("GuardBill"),
+                "billDate": "05/01/2026",
+                "items": lines,
+            }
+        ],
         mutation=True,
     ).get_json()
 
 
 def test_a_bill_cannot_name_a_po_that_does_not_exist(erp_client):
-    body = _raw_bill(erp_client, _unique_name("NoPoVendor"), [
-        {"name": _unique_name("Item"), "qty": 1, "price": 1, "po": "987654321"},
-    ])
+    body = _raw_bill(
+        erp_client,
+        _unique_name("NoPoVendor"),
+        [
+            {"name": _unique_name("Item"), "qty": 1, "price": 1, "po": "987654321"},
+        ],
+    )
     assert body["success"] is False
     assert "There is no PO #987654321" in body["message"]
     assert "Direct" in body["message"]
@@ -926,21 +1025,33 @@ def test_a_bill_cannot_name_a_po_that_does_not_exist(erp_client):
 def test_a_bill_cannot_name_a_deleted_po(erp_client):
     vendor, item = _unique_name("DelPoVendor"), _unique_name("DelPoItem")
     po = _po(erp_client, vendor, [{"name": item, "qty": 5, "unit": "Pcs", "price": 1}])
-    assert _rpc(erp_client, "deletePO", [po], mutation=True).get_json()["success"] is True
+    assert (
+        _rpc(erp_client, "deletePO", [po], mutation=True).get_json()["success"] is True
+    )
 
-    body = _raw_bill(erp_client, vendor, [{"name": item, "qty": 5, "price": 1, "po": po}])
+    body = _raw_bill(
+        erp_client, vendor, [{"name": item, "qty": 5, "price": 1, "po": po}]
+    )
     assert body["success"] is False
     assert f"PO #{po} has been deleted" in body["message"]
 
 
 def test_a_bill_cannot_close_out_another_vendors_po(erp_client):
     item = _unique_name("XVendorItem")
-    po = _po(erp_client, _unique_name("PlacedWith"), [
-        {"name": item, "qty": 5, "unit": "Pcs", "price": 1},
-    ])
-    body = _raw_bill(erp_client, _unique_name("BilledBy"), [
-        {"name": item, "qty": 5, "price": 1, "po": po},
-    ])
+    po = _po(
+        erp_client,
+        _unique_name("PlacedWith"),
+        [
+            {"name": item, "qty": 5, "unit": "Pcs", "price": 1},
+        ],
+    )
+    body = _raw_bill(
+        erp_client,
+        _unique_name("BilledBy"),
+        [
+            {"name": item, "qty": 5, "price": 1, "po": po},
+        ],
+    )
     assert body["success"] is False
     assert "was placed with" in body["message"]
 
@@ -948,10 +1059,14 @@ def test_a_bill_cannot_close_out_another_vendors_po(erp_client):
 def test_direct_and_unlinked_bill_lines_are_left_alone(erp_client):
     """Direct is a deliberate choice -- nearly half of all live bill lines
     use it -- and the guard must not so much as look at it."""
-    body = _raw_bill(erp_client, _unique_name("DirectVendor"), [
-        {"name": _unique_name("A"), "qty": 1, "price": 1, "po": "DIRECT"},
-        {"name": _unique_name("B"), "qty": 1, "price": 1},
-    ])
+    body = _raw_bill(
+        erp_client,
+        _unique_name("DirectVendor"),
+        [
+            {"name": _unique_name("A"), "qty": 1, "price": 1, "po": "DIRECT"},
+            {"name": _unique_name("B"), "qty": 1, "price": 1},
+        ],
+    )
     assert body["success"] is True, body["message"]
 
 
@@ -962,10 +1077,19 @@ def test_renumbering_a_po_carries_its_bills_with_it(erp_client):
     assert _po_by_number(erp_client, po)["status"] == "Completed"
 
     new_number = f"R{uuid.uuid4().hex[:8]}"
-    resp = _rpc(erp_client, "savePO", [{
-        "existingPoNumber": po, "poNumber": new_number, "vendor": vendor,
-        "items": [{"name": item, "qty": 10, "unit": "Pcs", "price": 1}],
-    }], mutation=True).get_json()
+    resp = _rpc(
+        erp_client,
+        "savePO",
+        [
+            {
+                "existingPoNumber": po,
+                "poNumber": new_number,
+                "vendor": vendor,
+                "items": [{"name": item, "qty": 10, "unit": "Pcs", "price": 1}],
+            }
+        ],
+        mutation=True,
+    ).get_json()
     assert resp["success"] is True, resp["message"]
 
     # Used to fall back to "PO Issued" with all 10 pending: the bill still
@@ -979,14 +1103,33 @@ def test_a_deleted_pos_number_cannot_be_reused(erp_client):
     """The uniqueness index only covers LIVE POs. Taking a deleted PO's
     number would quietly hand this PO every bill still naming it."""
     vendor = _unique_name("ReuseVendor")
-    gone = _po(erp_client, vendor, [{"name": _unique_name("X"), "qty": 1, "unit": "Pcs", "price": 1}])
+    gone = _po(
+        erp_client,
+        vendor,
+        [{"name": _unique_name("X"), "qty": 1, "unit": "Pcs", "price": 1}],
+    )
     _rpc(erp_client, "deletePO", [gone], mutation=True)
 
-    live = _po(erp_client, vendor, [{"name": _unique_name("Y"), "qty": 1, "unit": "Pcs", "price": 1}])
-    resp = _rpc(erp_client, "savePO", [{
-        "existingPoNumber": live, "poNumber": gone, "vendor": vendor,
-        "items": [{"name": _unique_name("Y"), "qty": 1, "unit": "Pcs", "price": 1}],
-    }], mutation=True).get_json()
+    live = _po(
+        erp_client,
+        vendor,
+        [{"name": _unique_name("Y"), "qty": 1, "unit": "Pcs", "price": 1}],
+    )
+    resp = _rpc(
+        erp_client,
+        "savePO",
+        [
+            {
+                "existingPoNumber": live,
+                "poNumber": gone,
+                "vendor": vendor,
+                "items": [
+                    {"name": _unique_name("Y"), "qty": 1, "unit": "Pcs", "price": 1}
+                ],
+            }
+        ],
+        mutation=True,
+    ).get_json()
     assert resp["success"] is False
     assert "has since been deleted" in resp["message"]
 
@@ -994,16 +1137,28 @@ def test_a_deleted_pos_number_cannot_be_reused(erp_client):
 def test_editing_a_billed_item_off_a_po_says_so(erp_client):
     vendor = _unique_name("StrandVendor")
     kept, dropped = _unique_name("Kept"), _unique_name("Dropped")
-    po = _po(erp_client, vendor, [
-        {"name": kept, "qty": 5, "unit": "Pcs", "price": 1},
-        {"name": dropped, "qty": 5, "unit": "Pcs", "price": 1},
-    ])
+    po = _po(
+        erp_client,
+        vendor,
+        [
+            {"name": kept, "qty": 5, "unit": "Pcs", "price": 1},
+            {"name": dropped, "qty": 5, "unit": "Pcs", "price": 1},
+        ],
+    )
     _bill(erp_client, vendor, po, [{"name": dropped, "qty": 5, "price": 1}])
 
-    resp = _rpc(erp_client, "savePO", [{
-        "existingPoNumber": po, "vendor": vendor,
-        "items": [{"name": kept, "qty": 5, "unit": "Pcs", "price": 1}],
-    }], mutation=True).get_json()
+    resp = _rpc(
+        erp_client,
+        "savePO",
+        [
+            {
+                "existingPoNumber": po,
+                "vendor": vendor,
+                "items": [{"name": kept, "qty": 5, "unit": "Pcs", "price": 1}],
+            }
+        ],
+        mutation=True,
+    ).get_json()
     assert resp["success"] is True  # advisory -- the edit is allowed
     assert "Warning" in resp["message"]
     assert dropped.lower() in resp["message"].lower()
@@ -1013,15 +1168,46 @@ def test_rewording_a_narration_is_not_reported_as_stranding(erp_client):
     """The billed aggregate still connects a bill to an item's only line
     when the narration changes, so nothing was lost and nothing is said."""
     vendor, item = _unique_name("RewordVendor"), _unique_name("RewordItem")
-    po = _po(erp_client, vendor, [
-        {"name": item, "narration": "old words", "qty": 5, "unit": "Pcs", "price": 1},
-    ])
-    _bill(erp_client, vendor, po, [{"name": item, "narration": "old words", "qty": 5, "price": 1}])
+    po = _po(
+        erp_client,
+        vendor,
+        [
+            {
+                "name": item,
+                "narration": "old words",
+                "qty": 5,
+                "unit": "Pcs",
+                "price": 1,
+            },
+        ],
+    )
+    _bill(
+        erp_client,
+        vendor,
+        po,
+        [{"name": item, "narration": "old words", "qty": 5, "price": 1}],
+    )
 
-    resp = _rpc(erp_client, "savePO", [{
-        "existingPoNumber": po, "vendor": vendor,
-        "items": [{"name": item, "narration": "new words", "qty": 5, "unit": "Pcs", "price": 1}],
-    }], mutation=True).get_json()
+    resp = _rpc(
+        erp_client,
+        "savePO",
+        [
+            {
+                "existingPoNumber": po,
+                "vendor": vendor,
+                "items": [
+                    {
+                        "name": item,
+                        "narration": "new words",
+                        "qty": 5,
+                        "unit": "Pcs",
+                        "price": 1,
+                    }
+                ],
+            }
+        ],
+        mutation=True,
+    ).get_json()
     assert resp["success"] is True
     assert "Warning" not in resp["message"], resp["message"]
     assert _po_by_number(erp_client, po)["status"] == "Completed"

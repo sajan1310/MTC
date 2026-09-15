@@ -2000,11 +2000,13 @@ def get_item_ledger_data(item_name):
     # invented order is worse than the order the records were read in.
     for index, entry in enumerate(entries):
         entry["_seq"] = index
-    entries.sort(key=lambda e: (
-        e["dateRaw"] or "",
-        0 if e["countsTowardStock"] else 1,
-        e["_seq"],
-    ))
+    entries.sort(
+        key=lambda e: (
+            e["dateRaw"] or "",
+            0 if e["countsTowardStock"] else 1,
+            e["_seq"],
+        )
+    )
     for index, entry in enumerate(entries):
         entry["_seq"] = index
 

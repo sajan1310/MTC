@@ -74,7 +74,7 @@ def test_the_timestamp_is_filled_in_without_anyone_passing_it(erp_client):
         cur,
     ):
         for table in DOCUMENT_TABLES:
-            default = (_columns(cur, table)["created_at"]["column_default"] or "")
+            default = _columns(cur, table)["created_at"]["column_default"] or ""
             assert "now()" in default.lower(), (
                 f"erp.{table}.created_at has no NOW() default "
                 f"(found {default!r}) -- an insert that omits it stores NULL"
@@ -91,7 +91,9 @@ def test_no_document_row_is_left_without_one(erp_client):
         cur,
     ):
         for table in DOCUMENT_TABLES:
-            cur.execute(f"SELECT count(*) AS n FROM erp.{table} WHERE created_at IS NULL")
+            cur.execute(
+                f"SELECT count(*) AS n FROM erp.{table} WHERE created_at IS NULL"
+            )
             assert cur.fetchone()["n"] == 0, f"erp.{table} has rows with no created_at"
 
 
@@ -112,7 +114,9 @@ def test_a_bill_saved_now_carries_the_moment_it_was_saved(erp_client):
                     "billNumber": number,
                     # Deliberately backdated: created_at must not follow it.
                     "billDate": "01/01/2026",
-                    "items": [{"name": f"TSItem-{uuid.uuid4().hex[:6]}", "qty": 1, "price": 1}],
+                    "items": [
+                        {"name": f"TSItem-{uuid.uuid4().hex[:6]}", "qty": 1, "price": 1}
+                    ],
                 }
             ]
         },

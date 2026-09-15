@@ -87,9 +87,7 @@ def test_the_version_is_found_however_long_the_workers_preamble_gets(erp_client)
     from app.erp import pages
 
     for worker in ("mobile-sw.js", "sw.js"):
-        path = os.path.join(
-            erp_client.application.static_folder, "erp", worker
-        )
+        path = os.path.join(erp_client.application.static_folder, "erp", worker)
         with open(path, encoding="utf-8") as fh:
             offset = fh.read().index("const CACHE_NAME")
         assert offset > 4096, (
