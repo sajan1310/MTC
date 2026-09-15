@@ -178,25 +178,30 @@ def run_backup(
         print(f"Created backup spreadsheet: {title} ({spreadsheet_id})")
 
     conn = psycopg2.connect(database_url)
+    # Autocommit, so the connection is plain idle -- not idle IN TRANSACTION,
+    # which the server kills after 60 s -- while each tab uploads. The GAS
+    # mirror lost 14 of 28 sheets to exactly that on 2026-09-15; see
+    # mirror_db_to_gas_sheets.run_mirror. No `with conn:` block: since
+    # psycopg2 2.9 it opens a transaction even on an autocommit connection.
+    conn.set_session(readonly=True, autocommit=True)
     try:
-        with conn:
-            with conn.cursor() as cur:
-                first = True
-                for table in TABLES:
-                    columns, rows = fetch_table_rows(cur, table)
-                    tab_name = table.split(".", 1)[1][:99]  # Sheets tab-name length cap
-                    actual_tab, is_fresh = _ensure_sheet_tab(
-                        sheets, spreadsheet_id, tab_name, first
-                    )
-                    first = False
-                    sheets_client.write_values(
-                        sheets,
-                        spreadsheet_id,
-                        actual_tab,
-                        [columns] + rows,
-                        fresh=is_fresh,
-                    )
-                    print(f"  {table} -> tab '{actual_tab}': {len(rows)} rows")
+        with conn.cursor() as cur:
+            first = True
+            for table in TABLES:
+                columns, rows = fetch_table_rows(cur, table)
+                tab_name = table.split(".", 1)[1][:99]  # Sheets tab-name length cap
+                actual_tab, is_fresh = _ensure_sheet_tab(
+                    sheets, spreadsheet_id, tab_name, first
+                )
+                first = False
+                sheets_client.write_values(
+                    sheets,
+                    spreadsheet_id,
+                    actual_tab,
+                    [columns] + rows,
+                    fresh=is_fresh,
+                )
+                print(f"  {table} -> tab '{actual_tab}': {len(rows)} rows")
     finally:
         conn.close()
 

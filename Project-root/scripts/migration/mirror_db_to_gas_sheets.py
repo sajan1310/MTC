@@ -459,6 +459,16 @@ def run_mirror(
 
     sheets = sheets_client.sheets_write_client()
     conn = psycopg2.connect(database_url)
+    # psycopg2 opens a transaction on the first SELECT and holds it until
+    # commit, so without autocommit this connection sat "idle in
+    # transaction" through every sheet's upload. The server kills that after
+    # 60 s (idle_in_transaction_session_timeout, deploy/provision.sh), and
+    # one slow upload -- Process Components, 6,032 rows under Sheets API
+    # retry backoff -- was enough: every sheet after it failed with
+    # "connection already closed", 14 of 28 on 2026-09-15. Autocommit ends
+    # each read as it completes; plain idle has no timeout. Read-only
+    # because nothing here should ever write to Postgres.
+    conn.set_session(readonly=True, autocommit=True)
     results = []
     try:
         for entry in entries:

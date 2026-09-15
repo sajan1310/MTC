@@ -76,6 +76,99 @@ def test_every_sheet_entry_builds_rows_without_error(app):
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# No transaction held open across a Sheets call (real DB, stubbed Sheets)
+# ─────────────────────────────────────────────────────────────────────────
+#
+# The server kills a connection left idle IN TRANSACTION for 60 s
+# (idle_in_transaction_session_timeout, deploy/provision.sh). On 2026-09-15
+# one slow upload in the GAS mirror crossed that and the other 14 sheets all
+# failed with "connection already closed". Neither export can control how
+# long Google takes, so the invariant is that no transaction is open while
+# Google is being talked to at all -- checked here at every Sheets call.
+
+
+def _test_db_dsn() -> str:
+    return (
+        f"host={os.getenv('TEST_DB_HOST', os.getenv('DB_HOST', '127.0.0.1'))} "
+        f"dbname={os.getenv('TEST_DB_NAME', 'testdb')} "
+        f"user={os.getenv('TEST_DB_USER', os.getenv('DB_USER', 'postgres'))} "
+        f"password={os.getenv('TEST_DB_PASS', os.getenv('DB_PASS', 'abcd'))}"
+    )
+
+
+def _record_connections(monkeypatch):
+    import psycopg2
+
+    opened = []
+    real_connect = psycopg2.connect
+
+    def connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(psycopg2, "connect", connect)
+    return opened
+
+
+def _transaction_states(opened: list) -> list:
+    return [c.get_transaction_status() for c in opened if not c.closed]
+
+
+def test_gas_mirror_holds_no_transaction_while_talking_to_sheets(app, monkeypatch):
+    import psycopg2.extensions as ext
+
+    opened = _record_connections(monkeypatch)
+    seen = []
+
+    def fetch_sheet_values(*_args, **_kwargs):
+        seen.append(_transaction_states(opened))
+        return []
+
+    monkeypatch.setattr(mirror.sheets_client, "sheets_write_client", MagicMock)
+    monkeypatch.setattr(mirror.sheets_client, "fetch_sheet_values", fetch_sheet_values)
+
+    entries = [
+        e
+        for e in mirror.load_mapping(MAPPING_PATH)["sheets"]
+        if e["key"] in ("UNITS", "COLOR_MASTER", "PROCESS_COMPONENTS")
+    ]
+    with app.app_context():
+        mirror.run_mirror(_test_db_dsn(), "SHEET_ID", entries, dry_run=True)
+
+    assert len(seen) == len(entries)
+    assert all(states == [ext.TRANSACTION_STATUS_IDLE] for states in seen), seen
+
+
+def test_dated_sheets_backup_holds_no_transaction_while_talking_to_sheets(
+    app, monkeypatch
+):
+    import backup_db_to_sheets
+    import psycopg2.extensions as ext
+
+    opened = _record_connections(monkeypatch)
+    seen = []
+
+    def ensure_tab(_sheets, _sid, tab_name, _first):
+        seen.append(_transaction_states(opened))
+        return tab_name, True
+
+    def write_values(*_args, **_kwargs):
+        seen.append(_transaction_states(opened))
+
+    monkeypatch.setattr(backup_db_to_sheets, "TABLES", ["erp.units", "erp.color_master"])
+    monkeypatch.setattr(backup_db_to_sheets, "_ensure_sheet_tab", ensure_tab)
+    monkeypatch.setattr(backup_db_to_sheets.sheets_client, "sheets_write_client", MagicMock)
+    monkeypatch.setattr(backup_db_to_sheets.sheets_client, "drive_client", MagicMock)
+    monkeypatch.setattr(backup_db_to_sheets.sheets_client, "write_values", write_values)
+
+    backup_db_to_sheets.run_backup(_test_db_dsn(), None, "SHEET_ID")
+
+    assert len(seen) == 4  # a tab check and a write per table
+    assert all(states == [ext.TRANSACTION_STATUS_IDLE] for states in seen), seen
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Pure row-builders (no DB/Sheets)
 # ─────────────────────────────────────────────────────────────────────────
 
