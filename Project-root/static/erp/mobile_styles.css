@@ -1066,6 +1066,446 @@ textarea:focus-visible,
   .mapp-lot-action { transition: none; }
 }
 
+/* What a lot is, beyond its number: the colours that make it up, the
+   product it is for, an output that is not the process's own, what it
+   pays. One wrapping line of small print under the title row. */
+.mapp-lot-extras {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mb-sp-1) var(--mb-sp-3);
+  margin-top: var(--mb-sp-2);
+  font-size: 0.8125rem;
+  color: var(--mb-steel);
+}
+
+.mapp-lot-colors-text {
+  color: var(--mb-ink-soft);
+  font-weight: 600;
+}
+
+.mapp-lot-extra { white-space: nowrap; }
+
+/* ── Log Lot form ─────────────────────────────────────────────────────
+   Size, model and type narrow the process list; side by side they read
+   as the filter they are rather than three more steps to climb. */
+.mapp-lot-cascade {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
+  gap: 0 var(--mb-sp-2);
+}
+
+.mapp-lot-cascade .mb-field { margin-bottom: var(--mb-sp-4); }
+
+.mapp-lot-cascade .mb-picker-field {
+  font-size: 0.875rem;
+  padding: 0 var(--mb-sp-3);
+}
+
+.mapp-lot-qty-field { margin-bottom: 0; }
+
+/* Inline text actions inside the form -- compact, still a full target
+   (see .mb-btn-text::after). */
+.mapp-lot-link {
+  padding: 0;
+  border: none;
+  font-size: 0.875rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mapp-lot-primary {
+  display: grid;
+  gap: var(--mb-sp-2);
+  margin: var(--mb-sp-3) 0 var(--mb-sp-4);
+}
+
+.mapp-lot-primary-opt {
+  display: flex;
+  align-items: center;
+  gap: var(--mb-sp-3);
+  min-height: var(--mb-tap-min);
+  padding: var(--mb-sp-2) var(--mb-sp-4);
+  border: 2px solid var(--mb-steel-faint);
+  border-radius: var(--mb-radius-md);
+  background: var(--mb-surface);
+  color: var(--mb-ink);
+  font-size: 0.9375rem;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mapp-lot-primary-opt[aria-checked="true"] {
+  border-color: var(--mb-safety);
+  background: var(--mb-safety-faint);
+}
+
+.mapp-lot-radio {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border: 2px solid var(--mb-steel-light);
+  border-radius: 50%;
+}
+
+.mapp-lot-primary-opt[aria-checked="true"] .mapp-lot-radio {
+  border-color: var(--mb-safety);
+  box-shadow: inset 0 0 0 4px var(--mb-surface);
+  background: var(--mb-safety);
+}
+
+.mapp-lot-group {
+  margin-bottom: var(--mb-sp-4);
+  padding-top: var(--mb-sp-3);
+  border-top: 1px solid var(--mb-steel-faint);
+}
+
+.mapp-lot-group:first-of-type {
+  padding-top: 0;
+  border-top: none;
+}
+
+.mapp-lot-group-head .mb-btn-text { white-space: nowrap; }
+
+.mapp-lot-group-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--mb-sp-3);
+  margin-bottom: var(--mb-sp-2);
+}
+
+.mapp-lot-group-title {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--mb-ink);
+}
+
+.mapp-lot-group-role {
+  font-size: 0.75rem;
+  color: var(--mb-steel);
+  margin-top: 2px;
+}
+
+.mapp-lot-color-list {
+  display: grid;
+  gap: var(--mb-sp-2);
+}
+
+/* One colour: tap the name to include it, then type how many. Typed,
+   not stepped -- a lot of 240 took 240 taps on the old +/- stepper. */
+.mapp-lot-color {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--mb-sp-1) var(--mb-sp-2);
+  padding: var(--mb-sp-1) var(--mb-sp-2) var(--mb-sp-1) 0;
+  border: 2px solid var(--mb-steel-faint);
+  border-radius: var(--mb-radius-md);
+  background: var(--mb-surface);
+}
+
+.mapp-lot-color.is-checked {
+  border-color: var(--mb-safety);
+  background: var(--mb-safety-faint);
+}
+
+.mapp-lot-color-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--mb-sp-2);
+  min-width: 0;
+  min-height: var(--mb-tap-min);
+  padding: 0 var(--mb-sp-2) 0 var(--mb-sp-3);
+  border: none;
+  background: none;
+  color: var(--mb-ink);
+  font-size: 0.9375rem;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mapp-lot-check {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border: 2px solid var(--mb-steel-light);
+  border-radius: 6px;
+  background: var(--mb-surface);
+}
+
+.mapp-lot-color.is-checked .mapp-lot-check {
+  border-color: var(--mb-safety);
+  background: var(--mb-safety);
+}
+
+.mapp-lot-color.is-checked .mapp-lot-check::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 2px;
+  width: 6px;
+  height: 11px;
+  border: solid var(--mb-on-safety);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.mapp-lot-color-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mapp-lot-color-avail {
+  margin-left: auto;
+  padding-left: var(--mb-sp-2);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--mb-steel);
+  white-space: nowrap;
+}
+
+.mapp-lot-color-avail.is-empty { color: var(--mb-enamel-red-ink); }
+
+.mb-field .mapp-lot-color-qty,
+.mapp-lot-color-qty {
+  width: 6.5rem;
+  min-height: var(--mb-tap-min);
+  padding: 0 var(--mb-sp-3);
+  border: 2px solid var(--mb-steel-light);
+  border-radius: var(--mb-radius-sm);
+  background: var(--mb-surface);
+  color: var(--mb-ink);
+  font-family: var(--mb-font-display);
+  font-size: 1.125rem;
+  text-align: right;
+}
+
+.mapp-lot-color-qty:focus {
+  border-color: var(--mb-safety);
+  outline: none;
+}
+
+.mapp-lot-color-note {
+  grid-column: 1 / -1;
+  padding: 0 0 var(--mb-sp-1) var(--mb-sp-3);
+  font-size: 0.75rem;
+  color: var(--mb-steel);
+}
+
+.mapp-lot-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: var(--mb-sp-3) 0 var(--mb-sp-1);
+  border-top: 2px solid var(--mb-steel-faint);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--mb-steel);
+}
+
+.mapp-lot-total strong {
+  font-family: var(--mb-font-display);
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--mb-ink);
+}
+
+.mapp-lot-color-tools {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--mb-sp-2) var(--mb-sp-4);
+  margin-top: var(--mb-sp-2);
+}
+
+/* Which primary colour went with which secondary one -- a small grid,
+   scrolled sideways on its own when the colours outrun the screen. */
+.mapp-lot-alloc {
+  margin-bottom: var(--mb-sp-5);
+  padding: var(--mb-sp-3);
+  border-radius: var(--mb-radius-md);
+  background: var(--mb-steel-faint);
+}
+
+.mapp-lot-alloc-scroll {
+  overflow-x: auto;
+  margin: var(--mb-sp-3) 0 var(--mb-sp-2);
+}
+
+.mapp-lot-alloc-table {
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.mapp-lot-alloc-table th,
+.mapp-lot-alloc-table td {
+  padding: var(--mb-sp-1) var(--mb-sp-2);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.mapp-lot-alloc-table th:first-child { text-align: left; }
+
+.mapp-lot-alloc-table input {
+  width: 4.5rem;
+  min-height: 40px;
+  padding: 0 var(--mb-sp-2);
+  border: 2px solid var(--mb-steel-light);
+  border-radius: var(--mb-radius-sm);
+  background: var(--mb-surface);
+  color: var(--mb-ink);
+  text-align: right;
+}
+
+.mapp-lot-alloc-table .is-ok,
+.mapp-lot-alloc-status.is-ok { color: var(--mb-enamel-green-ink); font-weight: 700; }
+
+.mapp-lot-alloc-table .is-bad,
+.mapp-lot-alloc-status.is-bad { color: var(--mb-enamel-red-ink); font-weight: 700; }
+
+.mapp-lot-alloc-status { font-size: 0.8125rem; }
+
+/* What the lot consumed. Folded by default -- the recipe is usually
+   right -- and opened by itself once a line has been changed by hand. */
+.mapp-lot-mats {
+  margin-bottom: var(--mb-sp-5);
+  border: 2px solid var(--mb-steel-faint);
+  border-radius: var(--mb-radius-md);
+  background: var(--mb-surface);
+}
+
+.mapp-lot-mats > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mb-sp-3);
+  min-height: var(--mb-tap-min);
+  padding: 0 var(--mb-sp-4);
+  cursor: pointer;
+  list-style: none;
+}
+
+.mapp-lot-mats > summary::-webkit-details-marker { display: none; }
+
+.mapp-lot-mats > summary::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border: solid var(--mb-steel);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.mapp-lot-mats[open] > summary::after { transform: rotate(-135deg); }
+
+.mapp-lot-mats > :not(summary) {
+  margin-left: var(--mb-sp-4);
+  margin-right: var(--mb-sp-4);
+}
+
+.mapp-lot-mats > :last-child { margin-bottom: var(--mb-sp-2); }
+
+.mapp-lot-mats-title {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--mb-steel);
+}
+
+.mapp-lot-mats-count {
+  margin-left: auto;
+  font-size: 0.8125rem;
+  color: var(--mb-ink-soft);
+}
+
+.mapp-mat-section { margin-top: var(--mb-sp-4); }
+
+.mapp-mat {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "main qty" "main actions";
+  align-items: start;
+  gap: var(--mb-sp-1) var(--mb-sp-3);
+  padding: var(--mb-sp-2) 0;
+  border-bottom: 1px solid var(--mb-steel-faint);
+}
+
+.mapp-mat-main { grid-area: main; min-width: 0; }
+
+.mapp-mat-name {
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: var(--mb-ink);
+  overflow-wrap: anywhere;
+}
+
+.mapp-mat-size {
+  font-weight: 500;
+  color: var(--mb-steel);
+}
+
+.mapp-mat-sub {
+  font-size: 0.75rem;
+  color: var(--mb-steel);
+  margin-top: 2px;
+}
+
+.mapp-mat.is-edited .mapp-mat-sub { color: var(--mb-safety-ink); font-weight: 600; }
+
+.mapp-mat-qty {
+  grid-area: qty;
+  display: flex;
+  align-items: center;
+  gap: var(--mb-sp-1);
+}
+
+.mapp-mat-qty input {
+  width: 5.5rem;
+  min-height: 44px;
+  padding: 0 var(--mb-sp-2);
+  border: 2px solid var(--mb-steel-faint);
+  border-radius: var(--mb-radius-sm);
+  background: var(--mb-surface);
+  color: var(--mb-ink);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.mapp-mat-qty input:focus {
+  border-color: var(--mb-safety);
+  outline: none;
+}
+
+.mapp-mat.is-edited .mapp-mat-qty input { border-color: var(--mb-safety); }
+
+/* More than the stock or pool holds -- still allowed (a negative pool
+   bucket is a signal, not an error), but never unnoticed. */
+.mapp-mat.is-short .mapp-mat-qty input { border-color: var(--mb-enamel-red); }
+
+.mapp-mat-unit {
+  min-width: 2rem;
+  font-size: 0.75rem;
+  color: var(--mb-steel);
+}
+
+.mapp-mat-actions {
+  grid-area: actions;
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--mb-sp-4);
+}
+
+.mapp-mat-remove { color: var(--mb-enamel-red-ink); }
+
 /* A screen title with an action beside it. The top bar is shared by every
    tab, so a per-screen action cannot live there -- it would appear on Home
    and Dispatch too, where it means nothing. */

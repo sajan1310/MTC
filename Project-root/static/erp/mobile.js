@@ -3813,26 +3813,1161 @@ MApp.Stock = {
 };
 
 // ================================================================
-// PRODUCTION — card list + the "Log Lot" full-screen sheet, the primary
-// action screen. The Size/Model/Process Type/Process cascade is pure
-// client-side array filtering over one already-loaded process list (no
-// per-level fetch, so no suppress-flags/sequence counters are needed —
-// see _applyCascadeEnabledStates, which always re-derives each picker's
-// enabled state from current selection instead of tracking it separately).
-// The one real fetch in this flow is loading a chosen process's color
-// groups/axes/recipe (_setCascadeBusy brackets it); saving disables the
-// whole sheet via MApp.Util.setSheetBusy.
+// LOT MODEL — the Production Lot form's colour checklist and the
+// components a lot consumes, held as data instead of DOM.
 //
-// Color checklist scope note: when a process has 2+ independent color
-// axes (e.g. Frame + Mudguard), the mobile form treats the PRIMARY axis
-// as the real per-color chip+stepper checklist (drives lot qty, exactly
-// like desktop), and every OTHER axis as a single "pick one color for
-// this whole batch" choice applied to the full lot qty. Desktop instead
-// lets different primary colors within the same lot pair with different
-// secondary colors (auto-matched via Process Color Links) — a genuinely
-// complex feature intentionally simplified here for one-handed field
-// logging. A lot that needs mixed secondary colors within one batch
-// should still be logged on desktop.
+// Desktop's Production Lot form (production.js, read-only reference) is
+// where these rules were worked out, one hard-won case at a time: which
+// colours count toward the lot total and which only ride along, which
+// secondary colours follow a primary one, when a recipe row is common,
+// per colour, or split across the colours of a Warehouse Pool item, what
+// single-colour pool bucket a common row draws from. Desktop keeps that
+// state in its checkboxes and table cells. A phone screen cannot show
+// those tables, so the phone used to keep a much smaller model of its
+// own -- and a lot logged on the phone recorded different consumption
+// from the identical lot logged at a desk (a pool item drawn from
+// arbitrary buckets, a sub-group added into the lot total, a common part
+// consumed twice beside its per-colour sibling).
+//
+// This is desktop's model, ported method for method (each carries the
+// name it has in production.js), minus the DOM: rows and groups instead
+// of checklist markup, and every table cell recomputed from the current
+// state instead of patched as each event fires. The two agree -- desktop
+// patches every cell a change touches, so after any edit its tables hold
+// what a full recompute would -- and mobile_lot_model_parity.test.js
+// holds them to it by driving desktop's own form alongside this.
+// ================================================================
+MApp.LotModel = {
+  SUB_GROUP_BUCKET_LABEL: 'Other (recorded per color — does not add to the lot total)',
+
+  // ctx: { process, outputItemName, colors (getProcessColorGroups),
+  //        axesData (getProcessColorAxes), recipe (getProcessComponentsData),
+  //        poolRows (getWarehousePoolData), items (getItemsData),
+  //        colorMaster (getColors), stock (getStockData), manualColors }
+  using(ctx) {
+    const m = Object.create(this);
+    m.ctx = Object.assign({ colors: [], recipe: [], poolRows: [], items: [], colorMaster: [], stock: [] }, ctx || {});
+    m.G = MApp.SheetGrouping.using({ items: m.ctx.items, colors: m.ctx.colorMaster });
+    m.groups = [];
+    m.rows = [];
+    m.options = [];
+    m.primaryKey = '';
+    m.allocationValues = {};
+    m.plainQty = '';
+    m.seq = 0;
+    m.rowSeq = 0;
+    m.manual = false;
+    m.pins = new Map();
+    m.removed = new Set();
+    m.added = [];
+    m.saved = null;
+    m.matrixRows = [];
+    m.poolColorMap = m.getPoolColorAwareItemNames();
+    m.build();
+    return m;
+  },
+
+  // ── shared text rules (core.js / api.js) ────────────────────────────
+  sameText(a, b) {
+    return String(a == null ? '' : a).trim().toLowerCase() === String(b == null ? '' : b).trim().toLowerCase();
+  },
+
+  isCommon(colorGroup) {
+    return String(colorGroup == null ? '' : colorGroup).trim().toUpperCase() === 'COMMON';
+  },
+
+  num(value, fallback = 0) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  },
+
+  // production.js#formatQty -- four decimals, trailing zeros dropped. The
+  // form's inputs hold this string, so every quantity desktop saves has
+  // been through it once.
+  formatQty(value) {
+    return Number(this.num(value).toFixed(4)).toString();
+  },
+
+  fq(value) {
+    return this.num(this.formatQty(value));
+  },
+
+  // production.js#_colorNamesMatch
+  colorNamesMatch(a, b) {
+    const x = String(a || '').trim().toLowerCase();
+    const y = String(b || '').trim().toLowerCase();
+    if (!x || !y) return false;
+    if (x === y) return true;
+    const shorter = x.length <= y.length ? x : y;
+    const longer = x.length <= y.length ? y : x;
+    const escaped = shorter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[-/\\s])${escaped}($|[-/\\s])`).test(longer);
+  },
+
+  // production.js#_matchedColorToken
+  matchedColorToken(colorGroup, color) {
+    const cg = String(colorGroup || '').trim();
+    if (!cg) return null;
+    if (this.sameText(cg, color)) return String(color || '').trim();
+    const segments = String(color || '').split(' / ').map(x => x.trim()).filter(Boolean);
+    return segments.find(seg => this.sameText(seg, cg)) || null;
+  },
+
+  // ── pool colours (production.js#getPoolColorAwareItemNames) ──────────
+  getPoolColorAwareItemNames() {
+    const comps = this.ctx.recipe || [];
+    const axes = this._axes();
+    const commonPoolItems = new Set(comps
+      .filter(c => c.sourceType === 'POOL' && (!c.colorGroup || this.isCommon(c.colorGroup)))
+      .map(c => (c.itemName || '').trim().toLowerCase()));
+
+    const colorSets = new Map();
+    (this.ctx.poolRows || []).forEach(r => {
+      const key = (r.outputItemName || '').trim().toLowerCase();
+      if (!r.color || !commonPoolItems.has(key)) return;
+      if (!colorSets.has(key)) colorSets.set(key, new Set());
+      colorSets.get(key).add(r.color);
+    });
+    axes.forEach(axis => {
+      if ((axis.source !== 'pool' && axis.source !== 'merged') || !Array.isArray(axis.colors)) return;
+      (axis.label || '').split(',').map(s => s.trim().toLowerCase()).forEach(key => {
+        if (!commonPoolItems.has(key)) return;
+        if (!colorSets.has(key)) colorSets.set(key, new Set());
+        axis.colors.forEach(col => colorSets.get(key).add(col));
+      });
+    });
+
+    const result = new Map();
+    colorSets.forEach((set, key) => result.set(key, Array.from(set).sort()));
+    return result;
+  },
+
+  poolColorsFor(itemName) {
+    return this.poolColorMap.get(String(itemName || '').trim().toLowerCase()) || [];
+  },
+
+  _axes() {
+    const data = this.ctx.axesData;
+    return (data && Array.isArray(data.axes)) ? data.axes : [];
+  },
+
+  // ── the checklist (production.js#renderGroupedColorChecklist) ────────
+  build() {
+    this.groups = [];
+    this.rows = [];
+    this.options = [];
+    this.primaryKey = '';
+    const colors = this.ctx.colors || [];
+
+    if (this.ctx.manualColors) {
+      this.mode = 'colors';
+      this.manual = true;
+      this.groups.push({ key: '', label: 'Colors produced', radio: false });
+      this._addRows(this._manualColorNames(), '', true, undefined);
+    } else if (colors.length === 0) {
+      this.mode = 'qty';
+    } else {
+      this.mode = 'colors';
+      this._buildGrouped(colors);
+    }
+    this.poolDefs = this._buildPoolDefs();
+  },
+
+  _manualColorNames(extra) {
+    return Array.from(new Set([
+      ...(this.ctx.colorMaster || []).map(c => c.name).filter(Boolean),
+      ...(extra || [])
+    ]));
+  },
+
+  _buildGrouped(colors) {
+    const axes = this._axes();
+    if (axes.length >= 2) {
+      const data = this.ctx.axesData || {};
+      const primaryAxisKey = data.primaryIsDefault ? '' : (data.primaryAxisKey || '');
+      axes.forEach(axis => {
+        const isPrimary = !!primaryAxisKey && axis.key === primaryAxisKey;
+        this.groups.push({ key: axis.key, label: axis.label, radio: true, source: axis.source });
+        this._addRows(axis.colors || [], axis.key, false, isPrimary);
+        this.options.push({ key: axis.key, label: axis.label, isPrimary, source: axis.source });
+      });
+      this.primaryKey = primaryAxisKey;
+      this._subGroupBucket(this._nonAxisSubGroupColors(colors, axes));
+      return;
+    }
+
+    const comps = this.ctx.recipe || [];
+    const multiColorItems = comps.filter(c => c.sourceType === 'POOL' && (!c.colorGroup || this.isCommon(c.colorGroup))
+      && this.poolColorsFor(c.itemName).length > 1);
+    const clusters = new Map();
+    multiColorItems.forEach(c => {
+      const itemColors = this.poolColorsFor(c.itemName);
+      const signature = itemColors.slice().sort((a, b) => a.localeCompare(b)).join('|').toLowerCase();
+      if (!clusters.has(signature)) clusters.set(signature, { colorSet: new Set(itemColors.map(x => x.toLowerCase())), itemNames: [] });
+      clusters.get(signature).itemNames.push(c.itemName);
+    });
+
+    if (clusters.size === 0) {
+      if (axes.length > 0) this._axisAndSubGroup(colors, axes[0]);
+      else {
+        this.groups.push({ key: '', label: 'Colors produced', radio: false });
+        this._addRows(colors, '', false, undefined);
+      }
+      return;
+    }
+
+    const used = new Set();
+    let groupIdx = 0;
+    let primaryAssigned = false;
+    clusters.forEach(({ colorSet, itemNames }) => {
+      const matching = colors.filter(col => colorSet.has(col.toLowerCase()) && !used.has(col.toLowerCase()));
+      if (matching.length === 0) return;
+      matching.forEach(c => used.add(c.toLowerCase()));
+      groupIdx++;
+      const key = `group_${groupIdx}`;
+      const isPrimary = !primaryAssigned;
+      primaryAssigned = true;
+      this.groups.push({ key, label: itemNames.join(', '), radio: false, source: 'pool' });
+      this._addRows(matching, key, false, isPrimary);
+      this.options.push({ key, label: itemNames.join(', '), isPrimary, source: 'pool' });
+    });
+    this._subGroupBucket(colors.filter(c => !used.has(c.toLowerCase())));
+  },
+
+  // production.js#_renderAxisAndSubGroupChecklist
+  _axisAndSubGroup(colors, axis) {
+    const subGroupColors = this._nonAxisSubGroupColors(colors, [axis]);
+    const subLower = new Set(subGroupColors.map(c => String(c).trim().toLowerCase()));
+    const axisColors = colors.filter(c => !subLower.has(String(c).trim().toLowerCase()));
+    const ownColors = subGroupColors.filter(c => this.G._isColorGroupName(c));
+    const ownAxis = this._outputItemColorAxis(ownColors);
+
+    if (axisColors.length > 0 && ownAxis) {
+      [{ ...axis, colors: axisColors }, ownAxis].forEach(a => {
+        this.groups.push({ key: a.key, label: a.label, radio: true, source: a.source });
+        this._addRows(a.colors, a.key, false, false);
+        this.options.push({ key: a.key, label: a.label, isPrimary: false, source: a.source });
+      });
+      this._subGroupBucket(subGroupColors.filter(c => !this.G._isColorGroupName(c)));
+      return;
+    }
+    if (axisColors.length > 0) {
+      this.groups.push({ key: axis.key, label: axis.label, radio: false, source: axis.source });
+      this._addRows(axisColors, axis.key, false, true);
+      this.options.push({ key: axis.key, label: axis.label, isPrimary: true, source: axis.source });
+    }
+    this._subGroupBucket(subGroupColors);
+  },
+
+  // production.js#_outputItemColorAxis
+  _outputItemColorAxis(ownColors) {
+    if (!ownColors || ownColors.length === 0) return null;
+    const label = String(this.ctx.outputItemName || '').trim();
+    if (!label) return null;
+    return { key: `own:${label.toLowerCase()}`, label, colors: ownColors, source: 'output' };
+  },
+
+  // production.js#_nonAxisSubGroupColors
+  _nonAxisSubGroupColors(colors, axes) {
+    const axisColorsLower = new Set();
+    (axes || []).forEach(a => (a.colors || []).forEach(c => axisColorsLower.add(String(c).trim().toLowerCase())));
+    return (colors || []).filter(c => !axisColorsLower.has(String(c).trim().toLowerCase()));
+  },
+
+  // production.js#_renderSubGroupBucket
+  _subGroupBucket(colors) {
+    if (!colors || colors.length === 0) return;
+    this.groups.push({ key: 'other', label: this.SUB_GROUP_BUCKET_LABEL, radio: false, source: 'other' });
+    this._addRows(colors, 'other', false, false);
+    this.options.push({ key: 'other', label: 'Other', isPrimary: false, source: 'other' });
+  },
+
+  _newRow(color, group, isCustom, isPrimary) {
+    return { id: `r${++this.rowSeq}`, color, group: group || '', isCustom: !!isCustom, isPrimary, checked: false, qty: '', autoSynced: false, seq: 0 };
+  },
+
+  _addRows(colors, group, isCustom, isPrimary) {
+    colors.forEach(color => this.rows.push(this._newRow(color, group, isCustom, isPrimary)));
+  },
+
+  hasRadio() {
+    return this.groups.some(g => g.radio);
+  },
+
+  // production.js#_axisGroupHeadingText
+  groupHeading(group) {
+    if (!group.radio) return group.label;
+    if (!this.primaryKey) return group.label;
+    return group.key === this.primaryKey ? `${group.label} — Color Group (Primary)` : `${group.label} — Sub-Group`;
+  },
+
+  rowById(id) {
+    return this.rows.find(r => r.id === id) || null;
+  },
+
+  rowsIn(groupKey) {
+    return this.rows.filter(r => r.group === groupKey);
+  },
+
+  // ── quantities ──────────────────────────────────────────────────────
+  // What the row's Qty box holds. A checked secondary row that nobody has
+  // typed into follows the lot (production.js#_nonPrimaryFillQty); every
+  // other row holds what was typed.
+  rowQtyText(row) {
+    if (!row.checked) return '';
+    if (row.isPrimary === false && row.autoSynced) {
+      const fill = this.nonPrimaryFillQty(row);
+      return fill > 0 ? this.formatQty(fill) : '';
+    }
+    return row.qty === '' || row.qty == null ? '' : String(row.qty);
+  },
+
+  rowQty(row) {
+    return this.num(this.rowQtyText(row)) || 0;
+  },
+
+  // production.js#_primaryColorAxisTotal
+  primaryAxisTotal() {
+    return this.rows.filter(r => r.isPrimary === true && r.checked)
+      .reduce((sum, r) => sum + (this.num(r.qty) || 0), 0);
+  },
+
+  // production.js#_nonPrimaryFillQty
+  nonPrimaryFillQty(row) {
+    const checkedOnAxis = this.rows.filter(r => r.isPrimary === false && r.group === row.group && r.checked);
+    if (checkedOnAxis.length <= 1) return this.primaryAxisTotal();
+    const matched = this.matchingPrimaryColorQty(row.color);
+    return matched !== null ? matched : this.primaryAxisTotal();
+  },
+
+  // production.js#_matchingPrimaryColorQty
+  matchingPrimaryColorQty(color) {
+    const target = String(color || '').trim();
+    if (!target) return null;
+    for (const r of this.rows.filter(x => x.isPrimary === true && x.checked)) {
+      if (this.colorNamesMatch(r.color, target)) return this.num(r.qty) || 0;
+    }
+    return null;
+  },
+
+  // production.js#_rawCheckedColorQtys
+  rawCheckedColorQtys() {
+    return this.rows.filter(r => r.checked).map(r => ({
+      color: r.color,
+      qty: this.rowQty(r),
+      isCustom: !!r.isCustom,
+      countsTowardTotal: r.isPrimary !== false,
+      axisKey: r.group || ''
+    }));
+  },
+
+  // production.js#getCheckedColorQtys
+  checkedColorQtys() {
+    const shape = this.allocationShape();
+    return this.rawCheckedColorQtys().map(entry => {
+      if (!entry.countsTowardTotal) return entry;
+      const splits = this._splitsFor(entry.color, shape);
+      return splits ? { ...entry, splits } : entry;
+    });
+  },
+
+  lotTotal() {
+    if (this.mode === 'qty') return this.num(this.plainQty) || 0;
+    return this.rawCheckedColorQtys().filter(c => c.countsTowardTotal).reduce((s, c) => s + c.qty, 0);
+  },
+
+  // production.js#_totalQtyForColorName
+  totalQtyForColorName(color) {
+    const lower = String(color || '').trim().toLowerCase();
+    const named = this.rawCheckedColorQtys().filter(cc => String(cc.color || '').trim().toLowerCase() === lower);
+    const counting = named.filter(cc => cc.countsTowardTotal);
+    return (counting.length > 0 ? counting : named).reduce((s, cc) => s + cc.qty, 0);
+  },
+
+  // ── checklist edits ─────────────────────────────────────────────────
+  // production.js#handleColorCheckToggle (+ _syncMatchingNonPrimaryRows)
+  toggle(row, checked) {
+    if (!row || row.checked === checked) return;
+    this._setChecked(row, checked);
+    if (row.isPrimary === true) this._syncMatchingNonPrimaryRows(row.color, checked);
+  },
+
+  _setChecked(row, checked) {
+    row.checked = checked;
+    if (!checked) {
+      row.qty = '';
+      row.autoSynced = false;
+      return;
+    }
+    row.seq = ++this.seq;
+    if (row.isPrimary === false) row.autoSynced = true;
+    this._colorComps(row.color);
+  },
+
+  _syncMatchingNonPrimaryRows(primaryColor, checked) {
+    const target = String(primaryColor || '').trim();
+    if (!target) return;
+    this.rows.filter(r => r.isPrimary === false && this.colorNamesMatch(r.color, target))
+      .forEach(r => { if (r.checked !== checked) this._setChecked(r, checked); });
+  },
+
+  // production.js#toggleColorGroup
+  toggleGroup(groupKey, checked) {
+    const toggledPrimary = [];
+    this.rowsIn(groupKey).forEach(r => {
+      if (r.checked === checked) return;
+      this._setChecked(r, checked);
+      if (r.isPrimary === true) toggledPrimary.push(r.color);
+    });
+    toggledPrimary.forEach(c => this._syncMatchingNonPrimaryRows(c, checked));
+  },
+
+  // production.js#onColorQtyChanged -- a typed quantity is the operator's,
+  // so a secondary row stops following the lot the moment it is typed in.
+  setQty(row, value) {
+    if (!row) return;
+    row.qty = value == null ? '' : String(value);
+    if (row.isPrimary === false) row.autoSynced = false;
+  },
+
+  // production.js#setPrimaryColorAxisChoice
+  setPrimary(groupKey) {
+    if (!this.groups.some(g => g.radio && g.key === groupKey)) return;
+    // A row that was following the lot keeps the number it showed: it is
+    // about to become a counting row, and counting rows hold what they hold.
+    this.rows.filter(r => r.group === groupKey && r.autoSynced).forEach(r => {
+      r.qty = this.rowQtyText(r);
+      r.autoSynced = false;
+    });
+    this.rows.filter(r => r.group).forEach(r => { r.isPrimary = r.group === groupKey; });
+    this.primaryKey = groupKey;
+  },
+
+  // production.js#addCustomColorRow. Returns an error string, or '' once
+  // the colour is on the checklist and checked.
+  addCustomColor(name, groupKey) {
+    const color = String(name || '').trim();
+    if (!color) return 'Type a colour name first.';
+    if (this.rows.some(r => String(r.color || '').toLowerCase() === color.toLowerCase())) {
+      return `"${color}" is already in this lot's checklist.`;
+    }
+    let target = groupKey ? this.options.find(o => o.key === groupKey) : null;
+    if (!target && !groupKey && this.options.length === 1) target = this.options[0];
+
+    const poolDef = this._poolDefForCustomColor(target);
+    if (poolDef && !poolDef.colors.some(c => c.toLowerCase() === color.toLowerCase())) {
+      poolDef.colors.push(color);
+      poolDef.colors.sort((a, b) => a.localeCompare(b));
+    }
+
+    let row;
+    if (target) {
+      // The group's CURRENT role, not the one recorded when the checklist
+      // was drawn: desktop reads the stale one, so a colour filed into a
+      // group picked as Primary after the fact never counted.
+      const sibling = this.rowsIn(target.key)[0];
+      const isPrimary = sibling ? sibling.isPrimary : target.isPrimary;
+      row = this._newRow(color, target.key, true, isPrimary);
+      const siblings = this.rowsIn(target.key);
+      const at = siblings.length ? this.rows.indexOf(siblings[siblings.length - 1]) + 1 : this.rows.length;
+      this.rows.splice(at, 0, row);
+    } else {
+      if (!this.groups.some(g => g.key === 'custom')) this.groups.push({ key: 'custom', label: 'Custom', radio: false });
+      const structured = this.rows.some(r => r.isPrimary !== undefined);
+      row = this._newRow(color, 'custom', true, structured ? false : undefined);
+      this.rows.push(row);
+    }
+    this.toggle(row, true);
+    return '';
+  },
+
+  // production.js#_poolDefForCustomColor
+  _poolDefForCustomColor(target) {
+    const defs = this.poolDefs || [];
+    if (!target) return defs.length === 1 ? defs[0] : null;
+    if (target.source !== 'pool' && target.source !== 'merged') return null;
+    const names = target.label.split(',').map(s => s.trim().toLowerCase());
+    return defs.find(d => d.rows.some(r => names.includes((r.itemName || '').trim().toLowerCase()))) || null;
+  },
+
+  // production.js#_updateColorCombinationPreview
+  combinationPreview() {
+    const checked = this.checkedColorQtys().filter(c => c.qty > 0 && c.color);
+    const primaryEntries = checked.filter(c => c.countsTowardTotal !== false);
+    const otherEntries = checked.filter(c => c.countsTowardTotal === false);
+    if (primaryEntries.length === 0) return '';
+    const primaryColors = primaryEntries.map(e => e.color);
+    const inherited = new Set();
+    primaryColors.forEach(pc => {
+      const segs = String(pc || '').split(' / ').map(s => s.trim()).filter(Boolean);
+      if (segs.length >= 2) segs.forEach(s => inherited.add(s.toLowerCase()));
+    });
+    const independent = otherEntries.filter(e => inherited.has(String(e.color || '').trim().toLowerCase())
+      || !primaryColors.some(pc => this.colorNamesMatch(pc, e.color)));
+    const axisCounts = new Map();
+    independent.forEach(e => {
+      const key = String(e.axisKey || '').trim().toLowerCase() || '__no_axis_key__';
+      axisCounts.set(key, (axisCounts.get(key) || 0) + 1);
+    });
+    if (Array.from(axisCounts.values()).some(c => c > 1)) {
+      return `Now producing: ${primaryColors.join(', ')} — plus ${independent.length} other color(s) tracked separately (can't combine unambiguously)`;
+    }
+    const axisPos = new Map();
+    this.rows.forEach((r, i) => {
+      const k = String(r.group || '').trim().toLowerCase();
+      if (k && !axisPos.has(k)) axisPos.set(k, i);
+    });
+    const posOf = e => {
+      const k = String(e.axisKey || '').trim().toLowerCase();
+      return axisPos.has(k) ? axisPos.get(k) : Number.MAX_SAFE_INTEGER;
+    };
+    const combos = primaryEntries.map(pe => [pe].concat(independent).sort((a, b) => posOf(a) - posOf(b)).map(e => e.color).join(' / '));
+    return `Now producing: ${combos.join(', ')}`;
+  },
+
+  // ── the cross-axis allocation grid (production.js#_allocationShape) ──
+  allocationShape() {
+    const checked = this.rawCheckedColorQtys().filter(c => c.qty > 0 && c.color);
+    const primaries = checked.filter(c => c.countsTowardTotal);
+    if (primaries.length === 0) return null;
+    const primaryColors = primaries.map(p => p.color);
+    const byAxis = new Map();
+    checked.filter(c => !c.countsTowardTotal).forEach(c => {
+      const key = c.axisKey || '';
+      if (!byAxis.has(key)) byAxis.set(key, []);
+      byAxis.get(key).push(c);
+    });
+    const independent = [...byAxis.entries()].filter(([, entries]) =>
+      !primaryColors.every(pc => entries.some(e => this.colorNamesMatch(pc, e.color))));
+    const lotTotal = primaries.reduce((s, p) => s + p.qty, 0);
+    const isCoConsumption = entries => entries.every(e => Math.abs(e.qty - lotTotal) < 0.0001);
+    const splittable = independent.filter(([, entries]) => entries.length > 1 && !isCoConsumption(entries));
+    if (splittable.length > 1) return { tooMany: true };
+    if (splittable.length === 0) return null;
+    const [axisKey, columns] = splittable[0];
+    return { primaries, axisKey, columns };
+  },
+
+  cellKey(primaryColor, columnColor) {
+    return `${primaryColor}||${columnColor}`;
+  },
+
+  setAllocation(primaryColor, columnColor, value) {
+    this.allocationValues[this.cellKey(primaryColor, columnColor)] = value == null ? '' : String(value);
+  },
+
+  allocationRowTotal(shape, primaryColor) {
+    return shape.columns.reduce((s, c) => s + (this.num(this.allocationValues[this.cellKey(primaryColor, c.color)]) || 0), 0);
+  },
+
+  // production.js#allocationBlockingError
+  allocationError() {
+    const shape = this.allocationShape();
+    if (!shape || shape.tooMany) return '';
+    const bad = shape.primaries.filter(p => Math.abs(this.allocationRowTotal(shape, p.color) - p.qty) >= 0.0001);
+    if (bad.length === 0) return '';
+    return 'Colour allocation is incomplete: ' + bad.map(p => `"${p.color}"`).join(', ')
+      + ' — each row of the allocation grid must add up to that colour\'s own quantity.';
+  },
+
+  _splitsFor(primaryColor, shape) {
+    if (!shape || shape.tooMany) return null;
+    if (!shape.primaries.some(p => p.color === primaryColor)) return null;
+    return shape.columns.map(c => ({
+      qty: this.num(this.allocationValues[this.cellKey(primaryColor, c.color)]) || 0,
+      axes: { [shape.axisKey]: c.color }
+    }));
+  },
+
+  // production.js#loadAllocationValues
+  loadAllocation(breakdown) {
+    this.allocationValues = {};
+    (breakdown || []).forEach(entry => {
+      (entry.splits || []).forEach(cell => {
+        const colors = Object.values(cell.axes || {});
+        if (colors.length !== 1) return;
+        this.allocationValues[this.cellKey(entry.color, colors[0])] = String(cell.qty ?? '');
+      });
+    });
+  },
+
+  // ── availability hints (production.js#_colorRowAvailability) ────────
+  poolAvailByItemColor() {
+    if (this._poolAvail) return this._poolAvail;
+    const byItem = new Map();
+    (this.ctx.poolRows || []).forEach(r => {
+      if (r.productTag) return;
+      const item = String(r.outputItemName || '').trim().toLowerCase();
+      if (!item) return;
+      if (!byItem.has(item)) byItem.set(item, new Map());
+      const colors = byItem.get(item);
+      const color = String(r.color || '').trim().toLowerCase();
+      colors.set(color, (colors.get(color) || 0) + (Number(r.availableQty) || 0));
+    });
+    this._poolAvail = byItem;
+    return byItem;
+  },
+
+  poolAvailForColor(colorMap, color) {
+    if (!colorMap) return null;
+    const key = String(color || '').trim().toLowerCase();
+    if (!key) return null;
+    if (colorMap.has(key)) return colorMap.get(key);
+    let total = 0;
+    colorMap.forEach((qty, bucket) => {
+      if (bucket.split(' / ').map(t => t.trim()).includes(key)) total += qty;
+    });
+    return total;
+  },
+
+  rowAvailability(row) {
+    const opt = this.options.find(o => o.key === row.group);
+    if (!opt) return null;
+    const comps = this.ctx.recipe || [];
+    const labelParts = opt.label.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    const poolItems = comps.filter(c => c.sourceType === 'POOL' && labelParts.includes(String(c.itemName || '').trim().toLowerCase()));
+    const axisLabel = opt.label.trim().toLowerCase();
+    const tagComps = comps.filter(c => String(c.colorAxis || '').trim().toLowerCase() === axisLabel && axisLabel);
+    const parts = [];
+    const avail = this.poolAvailByItemColor();
+    const addPool = itemName => {
+      const qty = this.poolAvailForColor(avail.get(String(itemName || '').trim().toLowerCase()), row.color);
+      if (qty !== null) parts.push({ label: itemName, qty });
+    };
+    poolItems.forEach(c => addPool(c.itemName));
+    tagComps.filter(c => this.matchedColorToken(c.colorGroup, row.color)).forEach(c => {
+      if (c.sourceType === 'POOL') { addPool(c.itemName); return; }
+      const qty = this.stockFor(c.itemName, c.size);
+      if (qty !== null) parts.push({ label: c.itemName, qty });
+    });
+    if (parts.length === 0) return null;
+    return { qty: parts.reduce((min, p) => Math.min(min, p.qty), Infinity), parts };
+  },
+
+  stockFor(itemName, size) {
+    const name = String(itemName || '').trim().toLowerCase();
+    const sz = String(size || '').trim().toLowerCase();
+    const entry = (this.ctx.stock || []).find(s => String(s.name || '').trim().toLowerCase() === name
+      && (!sz || String(s.size || '').trim().toLowerCase() === sz));
+    return entry ? (Number(entry.currentStock) || 0) : null;
+  },
+
+  // What one consumption line can draw on: Stock for an item, the pool
+  // bucket it names for a pool line (the item's whole untagged balance
+  // for a line that names none). Null when nothing is known.
+  lineAvailability(line) {
+    if (line.sourceType !== 'POOL') return this.stockFor(line.itemName, line.size);
+    const colorMap = this.poolAvailByItemColor().get(String(line.itemName || '').trim().toLowerCase());
+    if (!colorMap) return 0;
+    const bucket = String(line.poolColor || '').trim() || (this.isCommon(line.colorGroup) ? '' : String(line.colorGroup || '').trim());
+    if (bucket) return this.poolAvailForColor(colorMap, bucket);
+    let total = 0;
+    colorMap.forEach(q => { total += q; });
+    return total;
+  },
+
+  // ── components consumed ─────────────────────────────────────────────
+  // The item <option> desktop selects for a component names it the way
+  // Items Master spells it (production.js#_buildItemPreselectOption); a
+  // pool item or an unknown name goes through as written.
+  _optionName(itemName, size, sourceType) {
+    if (!itemName) return '';
+    if (sourceType === 'POOL') return String(itemName).trim();
+    const item = (this.ctx.items || []).find(i => this.sameText(i.name, itemName)
+      && (this.sameText(size || '', i.size || '') || (!size && !i.size)));
+    return String(item ? item.name : itemName).trim();
+  },
+
+  // production.js#_sharedItemSlotKeys
+  _sharedItemSlotKeys(components) {
+    const byKey = new Map();
+    (components || []).forEach(c => {
+      if (!c.colorGroup || this.isCommon(c.colorGroup) || c.sourceType === 'POOL') return;
+      const key = this.G._itemSlotKey(c.itemName, c.size);
+      if (!byKey.has(key)) byKey.set(key, new Set());
+      byKey.get(key).add(String(c.colorGroup).trim().toLowerCase());
+    });
+    const shared = new Set();
+    byKey.forEach((groups, key) => { if (groups.size > 1) shared.add(key); });
+    return shared;
+  },
+
+  // production.js#_axisKeyForPoolItemNames
+  _axisKeyForPoolItemNames(itemNames) {
+    const namesLower = (itemNames || []).map(n => String(n || '').trim().toLowerCase()).filter(Boolean);
+    if (namesLower.length === 0) return '';
+    const opt = this.options.find(o => (o.source === 'pool' || o.source === 'merged')
+      && o.label.split(',').map(s => s.trim().toLowerCase()).some(l => namesLower.includes(l)));
+    return opt ? opt.key : '';
+  },
+
+  // production.js#_renderPoolColorGroups ('create'): one table per colour
+  // signature among the common pool items that exist in 2+ colours.
+  _buildPoolDefs() {
+    if (this.mode !== 'colors') return [];
+    const rows = (this.ctx.recipe || []).filter(c => (!c.colorGroup || this.isCommon(c.colorGroup))
+      && c.sourceType === 'POOL' && this.poolColorsFor(c.itemName).length > 1);
+    const bySig = new Map();
+    rows.forEach(row => {
+      const colors = this.poolColorsFor(row.itemName);
+      const signature = colors.slice().sort((a, b) => a.localeCompare(b)).join('|').toLowerCase();
+      if (!bySig.has(signature)) bySig.set(signature, { colors: colors.slice(), rows: [] });
+      bySig.get(signature).rows.push(row);
+    });
+    return Array.from(bySig.values()).map(d => ({ ...d, axisKey: this._axisKeyForPoolItemNames(d.rows.map(r => r.itemName)) }));
+  },
+
+  _axisScoped(axisKey) {
+    const all = this.rawCheckedColorQtys();
+    return axisKey ? all.filter(cc => cc.axisKey === axisKey) : all;
+  },
+
+  // production.js#_checkedPoolGroupColors
+  _checkedPoolGroupColors(colors, axisKey) {
+    const scoped = this._axisScoped(axisKey).filter(cc => cc.qty > 0);
+    const exact = new Set(scoped.map(cc => String(cc.color || '').trim().toLowerCase()));
+    const matchedExactly = colors.filter(c => exact.has(String(c).trim().toLowerCase()));
+    if (matchedExactly.length > 0) return matchedExactly;
+    const tokens = new Set();
+    scoped.forEach(cc => (cc.color || '').split(' / ').forEach(t => {
+      const tl = t.trim().toLowerCase();
+      if (tl) tokens.add(tl);
+    }));
+    return colors.filter(c => tokens.has(c.toLowerCase()));
+  },
+
+  // production.js#_checkedQtyForPoolColor
+  _checkedQtyForPoolColor(colorLower, checked) {
+    const exactTotal = checked.reduce((s, cc) => (String(cc.color || '').trim().toLowerCase() === colorLower ? s + cc.qty : s), 0);
+    if (exactTotal > 0) return exactTotal;
+    return checked.reduce((s, cc) => {
+      const tokens = (cc.color || '').split(' / ').map(t => t.trim().toLowerCase()).filter(Boolean);
+      return tokens.includes(colorLower) ? s + cc.qty : s;
+    }, 0);
+  },
+
+  // Which colours get a Per-Color Components column, in the order they
+  // were checked -- production.js#addMatrixColorColumn, less whatever
+  // _pruneRedundantMatrixColumns takes away: a secondary colour naming the
+  // same units as a checked primary one would debit them twice.
+  matrixColumns() {
+    const checked = this.rows.filter(r => r.checked);
+    const ordered = checked.slice().sort((a, b) => a.seq - b.seq);
+    const columns = [];
+    ordered.forEach(r => {
+      if (columns.some(c => this.sameText(c.color, r.color))) return;
+      columns.push({ color: r.color, pruned: false });
+    });
+    columns.forEach(col => {
+      const nonPrimary = checked.some(r => r.isPrimary === false && this.sameText(r.color, col.color));
+      const ownedByPrimary = checked.some(r => r.isPrimary !== false && this.sameText(r.color, col.color));
+      col.pruned = nonPrimary && !ownedByPrimary && this.G._isColorGroupName(col.color)
+        && this.matchingPrimaryColorQty(col.color) !== null;
+    });
+    return columns;
+  },
+
+  // One colour's recipe rows, each against the Per-Color Components row
+  // it lands on (production.js#populateColorMatrixForColors): rows tagged
+  // with that colour, by token, then the common parts that have a
+  // per-colour sibling elsewhere in the recipe. A row is created the
+  // first time any colour needs it and never removed -- desktop's table
+  // keeps the rows a colour made after that colour is ticked off, and
+  // which row came first decides both the order lines go out in and whose
+  // narration and source a shared row carries.
+  _colorComps(color) {
+    const recipe = this.ctx.recipe || [];
+    const G = this.G;
+    if (!this._sharedKeys) this._sharedKeys = this._sharedItemSlotKeys(recipe);
+    if (!this._overrides) this._overrides = G._getCommonItemsWithColorOverride(recipe);
+    const ensureRow = (name, size, sourceType, narration) => {
+      const key = `${String(name || '').trim()}|${String(size || '').trim()}`.toLowerCase();
+      let row = this.matrixRows.find(r => r.key === key);
+      if (!row) {
+        row = { key, name: String(name || '').trim(), size: String(size || '').trim(), sourceType: sourceType === 'POOL' ? 'POOL' : 'ITEM', narration: String(narration || '').trim() };
+        this.matrixRows.push(row);
+      }
+      return row;
+    };
+    const out = [];
+    const colorComps = recipe
+      .map(c => ({ comp: c, token: this.matchedColorToken(c.colorGroup, color) }))
+      .filter(x => x.token)
+      .map(({ comp, token }) => ({
+        comp,
+        displayName: this._sharedKeys.has(G._itemSlotKey(comp.itemName, comp.size))
+          ? (comp.itemName || '').trim()
+          : G._stripColorSubstring(comp.itemName || '', token)
+      }));
+    colorComps.forEach(({ comp, displayName }) => {
+      out.push({ comp, row: ensureRow(displayName, comp.size, comp.sourceType, G._resolveDisplayNarration(comp.itemName, comp.size, comp.narration)) });
+    });
+    const overridden = new Set(colorComps.map(c => G._itemSlotKey(c.displayName, c.comp.size)));
+    this._overrides.forEach(c => {
+      if (overridden.has(G._itemSlotKey(c.itemName, c.size))) return;
+      out.push({ comp: c, row: ensureRow(c.itemName, c.size, c.sourceType, G._resolveDisplayNarration(c.itemName, c.size, c.narration)) });
+    });
+    return out;
+  },
+
+  // The whole lot's consumption, from the recipe -- desktop's
+  // serializeComponentsConsumed + serializeColorMatrix +
+  // serializePoolColorGroups, in that order.
+  recipeLines() {
+    const recipe = this.ctx.recipe || [];
+    const G = this.G;
+    const lines = [];
+
+    if (this.mode === 'qty') {
+      const lotQty = this.lotTotal();
+      recipe.filter(c => !c.colorGroup || this.isCommon(c.colorGroup) || this.sameText(c.colorGroup, ''))
+        .forEach(c => lines.push({
+          itemName: this._optionName(c.itemName, c.size, c.sourceType),
+          size: String(c.size || '').trim(),
+          narration: G._resolveDisplayNarration(c.itemName, c.size, c.narration),
+          color: '',
+          sourceType: c.sourceType === 'POOL' ? 'POOL' : 'ITEM',
+          qty: this.fq(lotQty * this.num(c.qtyPerUnit)),
+          poolColor: '',
+          colorGroup: 'COMMON',
+          unit: c.unit || ''
+        }));
+      return lines;
+    }
+
+    // populateCommonComponentsFromProcess
+    const total = this.lotTotal();
+    const overrides = G._getCommonItemsWithColorOverride(recipe);
+    recipe.filter(c => !c.colorGroup || this.isCommon(c.colorGroup)).forEach(c => {
+      const poolColors = this.poolColorsFor(c.itemName);
+      if (c.sourceType === 'POOL' && poolColors.length > 1) return;
+      if (overrides.includes(c)) return;
+      const single = c.sourceType === 'POOL' && poolColors.length === 1 ? poolColors[0] : '';
+      lines.push({
+        itemName: this._optionName(c.itemName, c.size, c.sourceType),
+        size: String(c.size || '').trim(),
+        narration: G._resolveDisplayNarration(c.itemName, c.size, c.narration),
+        color: single,
+        sourceType: c.sourceType === 'POOL' ? 'POOL' : 'ITEM',
+        qty: this.fq(total * this.num(c.qtyPerUnit)),
+        poolColor: c.sourceType === 'POOL' ? single : '',
+        colorGroup: 'COMMON',
+        unit: c.unit || ''
+      });
+    });
+
+    // populateColorMatrixForColors, one checked colour at a time
+    const columns = this.matrixColumns();
+    const cells = new Map();
+    columns.forEach(col => {
+      const T = this.totalQtyForColorName(col.color);
+      this._colorComps(col.color).forEach(({ comp: c, row }) => {
+        cells.set(`${row.key}\u0000${col.color.toLowerCase()}`, {
+          itemName: this._optionName(c.itemName, c.size, c.sourceType),
+          poolColor: c.poolColor || '',
+          unit: c.unit || '',
+          qty: this.fq(T !== 0 ? T * this.num(c.qtyPerUnit) : this.num(c.qtyPerUnit))
+        });
+      });
+    });
+    const liveColumns = columns.filter(c => !c.pruned);
+    this.matrixRows.forEach(row => {
+      liveColumns.forEach(col => {
+        const cell = cells.get(`${row.key}\u0000${col.color.toLowerCase()}`);
+        if (!cell || !cell.itemName || !(cell.qty > 0)) return;
+        lines.push({
+          itemName: cell.itemName,
+          size: row.size,
+          narration: row.narration,
+          color: '',
+          sourceType: row.sourceType,
+          qty: cell.qty,
+          colorGroup: col.color,
+          poolColor: row.sourceType === 'POOL' ? cell.poolColor : '',
+          // Desktop's per-colour table has no unit column, so these lines
+          // have always gone out without one -- which the server reads as
+          // "already in the base unit". The recipe row knows its unit, and
+          // a Dozen-measured part consumed as Pcs is wrong by twelve, so
+          // the phone keeps it, as it always has for these lines.
+          unit: cell.unit
+        });
+      });
+    });
+
+    // serializePoolColorGroups
+    (this.poolDefs || []).forEach(def => {
+      const visible = this._checkedPoolGroupColors(def.colors, def.axisKey);
+      const scoped = this._axisScoped(def.axisKey);
+      def.rows.forEach(r => {
+        visible.forEach(color => {
+          const t = this._checkedQtyForPoolColor(String(color || '').trim().toLowerCase(), scoped);
+          if (!(t > 0)) return;
+          const qty = this.fq(t * this.num(r.qtyPerUnit));
+          if (!(qty > 0)) return;
+          lines.push({
+            itemName: String(r.itemName || '').trim(),
+            size: String(r.size || '').trim(),
+            narration: String(r.narration || '').trim(),
+            color: '',
+            sourceType: 'POOL',
+            qty,
+            colorGroup: color,
+            poolColor: '',
+            unit: r.unit || ''
+          });
+        });
+      });
+    });
+    return lines;
+  },
+
+
+  // ── one line's identity, and the edits made to lines ────────────────
+  lineKey(line) {
+    return [line.itemName, line.size, line.colorGroup || 'COMMON', line.sourceType === 'POOL' ? 'POOL' : 'ITEM', line.poolColor]
+      .map(v => String(v == null ? '' : v).trim().toLowerCase()).join('|');
+  },
+
+  _withIds(lines) {
+    const seen = new Map();
+    return lines.map(line => {
+      const key = this.lineKey(line);
+      const n = seen.get(key) || 0;
+      seen.set(key, n + 1);
+      return { ...line, id: `${key}#${n}` };
+    });
+  },
+
+  // Is a saved line's colour still one this lot produces? The server
+  // drops any that is not (production_service.save_production), so the
+  // phone does not offer to send one.
+  _stillInLot(line) {
+    if (this.isCommon(line.colorGroup || 'COMMON')) return true;
+    const cg = String(line.colorGroup || '').trim().toLowerCase();
+    const colors = this.rawCheckedColorQtys().map(c => String(c.color || '').trim().toLowerCase());
+    return colors.some(c => c === cg
+      || c.split(' / ').map(t => t.trim()).includes(cg)
+      || this.colorNamesMatch(c, cg));
+  },
+
+  // The state that decides what the recipe asks for. Saved consumption is
+  // sent back untouched while this is what it was when the lot opened.
+  signature() {
+    return JSON.stringify({ mode: this.mode, qty: this.mode === 'qty' ? this.lotTotal() : null, colors: this.checkedColorQtys() });
+  },
+
+  // An existing lot: its checklist exactly as saved (production.js
+  // #openEditModal) and its recorded consumption kept as the baseline.
+  restore(lot) {
+    const breakdown = (Array.isArray(lot.colorBreakdown) && lot.colorBreakdown.length > 0)
+      ? lot.colorBreakdown
+      : (lot.color ? [{ color: lot.color, qty: lot.qty }] : []);
+
+    if (this.mode === 'qty' && breakdown.length > 0) {
+      this.ctx.manualColors = true;
+      this.manual = true;
+      this.mode = 'colors';
+      this.groups = [{ key: '', label: 'Colors produced', radio: false }];
+      this.rows = [];
+      this._addRows(this._manualColorNames(breakdown.map(b => b.color).filter(Boolean)), '', true, undefined);
+      this.poolDefs = this._buildPoolDefs();
+    }
+
+    if (this.mode === 'qty') {
+      this.plainQty = lot.qty == null ? '' : String(lot.qty);
+    } else {
+      // Which group this lot counted is recorded on it. A process whose
+      // Primary is still only the recipe-order default would otherwise ask
+      // again on every edit, with the lot's own answer sitting right there.
+      if (!this.primaryKey && this.hasRadio()) {
+        const recorded = breakdown.find(b => b && b.countsTowardTotal !== false && b.axisKey
+          && this.groups.some(g => g.radio && g.key === b.axisKey));
+        if (recorded) this.setPrimary(recorded.axisKey);
+      }
+      const claimed = new Set();
+      breakdown.forEach(entry => {
+        if (!entry || !entry.color) return;
+        const free = this.rows.filter(r => !claimed.has(r));
+        let row = entry.axisKey ? free.find(r => r.group === entry.axisKey && this.sameText(r.color, entry.color)) : null;
+        if (!row) row = free.find(r => this.sameText(r.color, entry.color));
+        if (!row) {
+          const real = this.options.find(o => String(o.key || '').toLowerCase() === String(entry.axisKey || '').toLowerCase());
+          const groupKey = real ? real.key : 'custom';
+          if (!real && !this.groups.some(g => g.key === 'custom')) this.groups.push({ key: 'custom', label: 'Custom', radio: false });
+          const sibling = real ? this.rowsIn(real.key)[0] : null;
+          const isPrimary = real ? (sibling ? sibling.isPrimary : !!real.isPrimary) : (entry.countsTowardTotal !== false);
+          row = this._newRow(entry.color, groupKey, !real, isPrimary);
+          this.rows.push(row);
+        }
+        claimed.add(row);
+        row.checked = true;
+        row.seq = ++this.seq;
+        row.qty = entry.qty == null ? '' : String(entry.qty);
+        row.autoSynced = false;
+      });
+      // A secondary row saved at exactly what it would have followed was
+      // following the lot; it goes on following it. One saved at anything
+      // else was typed, and stays as typed.
+      this.rows.filter(r => r.checked && r.isPrimary === false).forEach(r => {
+        const fill = this.nonPrimaryFillQty(r);
+        if (fill > 0 && Math.abs(this.num(r.qty) - this.fq(fill)) < 0.0001) r.autoSynced = true;
+      });
+      this.loadAllocation(breakdown);
+    }
+
+    this.saved = (lot.componentsConsumed || []).map(c => ({
+      itemName: String(c.itemName || '').trim(),
+      size: String(c.size || '').trim(),
+      narration: String(c.narration || '').trim(),
+      color: String(c.color || '').trim(),
+      sourceType: String(c.sourceType || '').trim().toUpperCase() === 'POOL' ? 'POOL' : 'ITEM',
+      qty: this.num(c.qty),
+      colorGroup: String(c.colorGroup || '').trim() || 'COMMON',
+      poolColor: String(c.poolColor || '').trim(),
+      unit: String(c.unit || '').trim()
+    })).filter(c => c.itemName);
+    this.restoredSignature = this.signature();
+    this.restoredLines = this.recipeLines();
+  },
+
+  // The lines the lot will be saved with, before this session's edits.
+  //   New lot: the recipe.
+  //   Existing lot, nothing that feeds the recipe changed: what it saved.
+  //   Existing lot, quantities or colours changed: every saved line that
+  //   is exactly what the recipe asked for follows the recipe to its new
+  //   amount; every saved line that differs from the recipe was entered by
+  //   hand and is kept as entered -- a manual entry outranks the
+  //   calculation. Lines for a colour the lot no longer makes go (the
+  //   server would drop them anyway); a newly checked colour brings its
+  //   recipe lines in.
+  baseLines() {
+    const fresh = this.recipeLines();
+    if (!this.saved || this.saved.length === 0) return fresh;
+    if (this.signature() === this.restoredSignature) return this.saved.map(l => ({ ...l }));
+
+    const index = lines => {
+      const map = new Map();
+      lines.forEach(l => {
+        const k = this.lineKey(l);
+        if (!map.has(k)) map.set(k, []);
+        map.get(k).push(l);
+      });
+      return map;
+    };
+    const before = index(this.restoredLines || []);
+    const after = index(fresh);
+    const out = [];
+    const taken = new Set();
+    const savedKeys = new Set(this.saved.map(l => this.lineKey(l)));
+    this.saved.forEach(s => {
+      const k = this.lineKey(s);
+      const was = (before.get(k) || [])[0];
+      if (was && Math.abs(was.qty - s.qty) <= 0.0006) {
+        const now = (after.get(k) || [])[0];
+        if (now) out.push({ ...s, qty: now.qty });
+        taken.add(k);
+        return;
+      }
+      if (!this._stillInLot(s)) return;
+      out.push({ ...s });
+      taken.add(k);
+    });
+    fresh.forEach(l => {
+      const k = this.lineKey(l);
+      if (taken.has(k) || savedKeys.has(k) || before.has(k)) return;
+      out.push(l);
+    });
+    return out;
+  },
+
+  // Recipe lines, then the operator's own edits on top: a typed quantity
+  // replaces the calculated one, a removed line stays removed, an added
+  // line is kept as added.
+  lines() {
+    const base = this._withIds(this.baseLines()).filter(l => !this.removed.has(l.id)).map(l => {
+      if (!this.pins.has(l.id)) return { ...l, edited: false };
+      return { ...l, qty: this.pins.get(l.id), edited: true };
+    });
+    return base.concat(this.added.map(l => ({ ...l, edited: true, addedByHand: true })));
+  },
+
+  pinQty(id, qty) {
+    const added = this.added.find(l => l.id === id);
+    if (added) { added.qty = qty; return; }
+    this.pins.set(id, qty);
+  },
+
+  unpin(id) {
+    this.pins.delete(id);
+  },
+
+  removeLine(id) {
+    const i = this.added.findIndex(l => l.id === id);
+    if (i !== -1) { this.added.splice(i, 1); return; }
+    this.removed.add(id);
+    this.pins.delete(id);
+  },
+
+  addLine(line) {
+    const id = `add:${++this.rowSeq}`;
+    this.added.push({ ...line, id });
+    return id;
+  },
+
+  // What goes to saveProduction.
+  payloadLines() {
+    return this.lines().map(l => ({
+      itemName: l.itemName,
+      size: l.size || '',
+      narration: l.narration || '',
+      color: l.color || '',
+      sourceType: l.sourceType === 'POOL' ? 'POOL' : 'ITEM',
+      qty: this.num(l.qty),
+      colorGroup: l.colorGroup || 'COMMON',
+      poolColor: l.poolColor || '',
+      unit: l.unit || ''
+    }));
+  },
+
+  primaryLabel() {
+    const g = this.groups.find(x => x.radio && x.key === this.primaryKey);
+    return g ? g.label : '';
+  },
+
+  // production.js's submit handler, the checks it makes before sending.
+  validate() {
+    if (this.mode === 'qty') {
+      if (String(this.plainQty).trim() === '' || !Number.isFinite(Number(this.plainQty))) return 'Enter the quantity produced.';
+      return '';
+    }
+    const checked = this.checkedColorQtys();
+    if (checked.length === 0) return 'Check at least one colour and enter its quantity.';
+    if (checked.some(c => c.qty === 0)) return 'Every checked colour needs a quantity.';
+    if (this.hasRadio() && !this.primaryKey) return 'Pick which group is Primary — its quantities become this lot\'s total.';
+    return this.allocationError();
+  }
+};
+
+// ================================================================
+// PRODUCTION — card list + the "Log Lot" full-screen sheet, the primary
+// action screen.
+//
+// The form asks what desktop's Production Lot form asks, in the same
+// order, and records what desktop records (MApp.LotModel holds desktop's
+// rules):
+//   1. Which process -- one search across every active process, or the
+//      Size → Model → Process Type cascade to narrow it down first.
+//   2. How many -- one quantity, or a quantity per colour. The colours
+//      arrive grouped exactly as desktop groups them: the Primary group
+//      whose quantities make the lot total, secondary groups that follow
+//      it, the "Other" sub-groups recorded alongside, the grid that says
+//      which colour went with which when the numbers alone cannot.
+//   3. What it consumed -- the recipe scaled to those quantities, every
+//      line open to correction. A corrected line keeps its number: a
+//      manual entry outranks the calculation.
+//   4. Who made it, for how much, and where it stands.
+// Logging a lot keeps the sheet open on the same process, ready for the
+// next lot -- a supervisor logs several of one process in a row.
 // ================================================================
 MApp.Production = {
   PROCESS_SIZE_LIST: ['12 inch', '14 inch', '16 inch', '20 inch', '24 inch', '26 inch'],
@@ -3850,21 +4985,29 @@ MApp.Production = {
       { key: 'assignedTo', weight: 5, label: 'Assigned to' },
       { key: 'status', weight: 4, label: 'Status' },
       { key: 'productName', weight: 4, label: 'Product' },
+      // A lot's colours live in colorBreakdown (and, on a lot logged
+      // before breakdowns existed, in color). This read a colorQty field
+      // no lot has ever carried, so "red" matched no lot by its colour.
       { key: 'colors', weight: 3, label: 'Colour',
-        get: l => (l.colorQty || []).map(c => c && c.color) },
+        get: l => (l.colorBreakdown || []).map(c => c && c.color).concat(l.color ? [l.color] : []) },
+      { key: 'output', weight: 2, label: 'Output item', get: l => l.outputItemName || '' },
       { key: 'date', weight: 2, label: 'Date',
         get: l => MApp.Util.formatDateDisplay(l.dateRaw) }
     ]
   },
 
-  // deleteProductionBulk takes production row IDs, which is what
-  // deleteProduction already sends for a single lot (lot.rowIdx).
+  // deleteProductionBulk takes production row IDs plus, per row, what the
+  // list showed -- the server skips (rather than deletes) any lot that has
+  // changed since, the same guard desktop's bulk delete sends.
   SELECT: {
     key: 'production',
     noun: 'lot',
     plural: 'lots',
     method: 'deleteProductionBulk',
-    payload: rows => [rows.map(r => r.rowIdx)],
+    payload: rows => [
+      rows.map(r => r.rowIdx),
+      rows.map(r => ({ rowIdx: r.rowIdx, expectedProductId: r.productId || '', expectedQty: r.qty }))
+    ],
     onDone: () => MApp.Production.load()
   },
 
@@ -3877,28 +5020,21 @@ MApp.Production = {
   models: [],
   processTypes: [],
   contractors: [],
+  colorMaster: [],
+  items: [],
   bomProducts: null,
   _pendingOnly: false,
 
   selection: { size: '', model: '', type: '', processId: '', process: null, productId: '', productName: '' },
-  flatColors: [],
-  axes: [],
-  primaryAxisKey: '',
-  // True whenever primaryAxisKey is only the server's recipe-order
-  // fallback (see get_process_color_axes's primaryIsDefault) rather than a
-  // choice actually confirmed for THIS lot -- gates _renderQtyOrColorSection
-  // into the "pick which group is Primary" step instead of silently
-  // trusting the fallback, same reasoning as the desktop Production form's
-  // primaryIsDefault handling.
-  primaryIsDefault: false,
-  recipeComponents: [],
-  colorQtyByColor: {},
-  secondaryChoice: {},
+  model: null,
   selectedStatus: 'Pending',
   selectedAssignedTo: '',
   selectedExtraChargeType: '',
+  selectedExtraChargeAmount: 0,
+  outputItemName: '',
   editingLot: null,
   _procSelectSeq: 0,
+  _materialsOpen: false,
 
   mount() {
     this.bomProducts = null;
@@ -3958,6 +5094,21 @@ MApp.Production = {
     this.render();
   },
 
+  // "Red 20 · Blue 20" -- the colours that make up the lot's quantity,
+  // then any it records alongside. Blank for a single-quantity lot.
+  _colorSummary(lot) {
+    const breakdown = (lot.colorBreakdown || []).filter(c => c && c.color);
+    if (breakdown.length === 0) return lot.color ? String(lot.color) : '';
+    const fmt = q => Number(Number(q || 0).toFixed(4)).toString();
+    const counting = breakdown.filter(c => c.countsTowardTotal !== false).map(c => `${c.color} ${fmt(c.qty)}`);
+    const others = breakdown.filter(c => c.countsTowardTotal === false).map(c => c.color);
+    const shown = counting.slice(0, 4);
+    let text = shown.join(' · ');
+    if (counting.length > shown.length) text += ` · +${counting.length - shown.length} more`;
+    if (others.length) text += `${text ? ' — ' : ''}with ${others.slice(0, 3).join(', ')}${others.length > 3 ? '…' : ''}`;
+    return text;
+  },
+
   render() {
     const listEl = document.getElementById('production-list');
     if (!listEl) return;
@@ -3993,6 +5144,19 @@ MApp.Production = {
       listEl.innerHTML = banner + shown.map((l, i) => {
         const process = this.processById[l.processId];
         const processName = process ? process.processName : l.processId;
+        const colors = this._colorSummary(l);
+        // What the lot credits the Warehouse Pool as, when that is not the
+        // process's own output -- a rework or variant run. Desktop shows it
+        // on the form; on a card it is the one thing that says this lot's
+        // stock went somewhere unusual.
+        const output = l.outputItemName && process && !MApp.LotModel.sameText(l.outputItemName, process.outputItemName)
+          ? l.outputItemName : '';
+        const extras = [
+          colors ? `<span class="mapp-lot-colors-text">${MApp.Util.escapeHtml(colors)}</span>` : '',
+          l.productName ? `<span class="mapp-lot-extra">For ${MApp.Util.escapeHtml(l.productName)}</span>` : '',
+          output ? `<span class="mapp-lot-extra">Output: ${MApp.Util.escapeHtml(output)}</span>` : '',
+          Number(l.contractorPayable) > 0 ? `<span class="mapp-lot-extra">Payable ${MApp.Util.escapeHtml(MApp.Util.formatCurrency(l.contractorPayable))}</span>` : ''
+        ].filter(Boolean);
         return `
           <div class="mb-card">
             <div class="mb-card-row">
@@ -4001,10 +5165,11 @@ MApp.Production = {
                 <div class="mb-card-sub">${MApp.Util.escapeHtml(processName)}</div>
               </div>
               <div style="text-align:right;">
-                <div class="mb-card-number">${l.qty}</div>
+                <div class="mb-card-number">${MApp.Util.escapeHtml(MApp.LotModel.formatQty(l.qty))}</div>
                 <div class="mb-card-sub">${MApp.Util.escapeHtml(MApp.Util.formatNameCase(l.assignedTo) || '—')}</div>
               </div>
             </div>
+            ${extras.length ? `<div class="mapp-lot-extras">${extras.join('')}</div>` : ''}
             <!-- Status and date together on the left, actions on the right.
                  The date was stacked under the process name, which left
                  everything hugging the left edge with the quantity marooned
@@ -4098,6 +5263,18 @@ MApp.Production = {
     }
   },
 
+  // Desktop's delete: the lot's product and quantity go along so the
+  // server refuses a lot that changed since this list was drawn, and the
+  // server's own message comes back -- deleting a lot whose pool credit
+  // was already drawn on says so, and a canned "Lot deleted." swallowed it.
+  async deleteLot(lot) {
+    if (!MApp.Util.confirmDelete(lot.lotNumber)) return;
+    const res = await MApp.Util.mutateSimple('deleteProduction', [lot.rowIdx, lot.productId || '', lot.qty], null);
+    if (!res || !res.success) return;
+    MApp.Toast.success(res.message || 'Lot deleted.');
+    this.load();
+  },
+
   // ── Size/Model/Process Type helpers (mirror desktop's App.Utils, kept
   // local since the mobile bundle shares nothing with desktop Script.html) ──
   getSizeFromOutputItemName(text) {
@@ -4112,21 +5289,23 @@ MApp.Production = {
     return match ? match.name : 'General';
   },
 
+  _resetFormState() {
+    this.selection = { size: '', model: '', type: '', processId: '', process: null, productId: '', productName: '' };
+    this.model = null;
+    this.outputItemName = '';
+    this.selectedStatus = 'Pending';
+    this.selectedAssignedTo = '';
+    this.selectedExtraChargeType = '';
+    this.selectedExtraChargeAmount = 0;
+    this._materialsOpen = false;
+    this._rateCache = {};
+  },
+
   // ── Log Lot sheet ──────────────────────────────────────────────────
   async openLogLotSheet() {
     const stale = MApp.Util.openGuard(this);
     this.editingLot = null;
-    this.selection = { size: '', model: '', type: '', processId: '', process: null, productId: '', productName: '' };
-    this.flatColors = [];
-    this.axes = [];
-    this.primaryAxisKey = '';
-    this.primaryIsDefault = false;
-    this.recipeComponents = [];
-    this.colorQtyByColor = {};
-    this.secondaryChoice = {};
-    this.selectedStatus = 'Pending';
-    this.selectedAssignedTo = '';
-    this.selectedExtraChargeType = '';
+    this._resetFormState();
 
     const titleEl = document.querySelector('#sheet-log-lot h2');
     if (titleEl) titleEl.textContent = 'Log Lot';
@@ -4141,7 +5320,8 @@ MApp.Production = {
     try {
       await this._ensureRefData();
       if (stale()) return;
-      document.getElementById('log-lot-body').innerHTML = this._formHtml();
+      document.getElementById('log-lot-body').innerHTML = this._formHtml(null);
+      this._wireForm();
     } catch (err) {
       MApp.Toast.error('Could not load production reference data: ' + (err.message || ''));
       this.closeLogLotSheet();
@@ -4155,25 +5335,21 @@ MApp.Production = {
     MApp.Sheet.close('sheet-log-lot');
   },
 
-  // ── Edit (Phase 2) — processId is immutable on an existing lot
-  // (save_production's own contract: "Process cannot be changed on an
-  // existing lot"), so this reuses the create sheet's qty/color-section
-  // machinery (onProcessSelected) but skips the size/model/type/process
-  // cascade entirely, replacing it with a locked, read-only process label.
+  // ── Edit — processId is immutable on an existing lot (save_production's
+  // own contract: "Process cannot be changed on an existing lot"), so the
+  // cascade is replaced by a locked label and everything else is the
+  // create form, restored from what the lot saved.
   async openEditSheet(lot) {
     const stale = MApp.Util.openGuard(this);
     this.editingLot = lot;
-    this.selection = { size: '', model: '', type: '', processId: lot.processId, process: null, productId: lot.productId || '', productName: lot.productName || '' };
-    this.flatColors = [];
-    this.axes = [];
-    this.primaryAxisKey = '';
-    this.primaryIsDefault = false;
-    this.recipeComponents = [];
-    this.colorQtyByColor = {};
-    this.secondaryChoice = {};
+    this._resetFormState();
+    this.selection.processId = lot.processId;
+    this.selection.productId = lot.productId || '';
+    this.selection.productName = lot.productName || '';
     this.selectedStatus = lot.status || 'Pending';
     this.selectedAssignedTo = lot.assignedTo || '';
     this.selectedExtraChargeType = lot.extraChargeType || '';
+    this.selectedExtraChargeAmount = MApp.Util.toNumber(lot.extraChargeAmount);
 
     const titleEl = document.querySelector('#sheet-log-lot h2');
     if (titleEl) titleEl.textContent = 'Edit Lot';
@@ -4189,38 +5365,18 @@ MApp.Production = {
       if (stale()) return;
       const process = this.processById[lot.processId] || this.allProcesses.find(p => p.processId === lot.processId) || null;
       this.selection.process = process;
-      document.getElementById('log-lot-body').innerHTML = this._editFormHtml(lot, process);
-
       if (process) {
-        await this.onProcessSelected(lot.processId);
-        // An existing lot already RECORDS which axis was Primary for it
-        // (its counts-toward-total entries carry that axisKey), so it must
-        // never be sent back through the "pick which group is Primary"
-        // step _renderQtyOrColorSection shows for a brand-new lot on a
-        // process that has no stored default -- that step would withhold
-        // the colour chips and drop the quantities being restored just
-        // below. Only a key that still resolves to a live axis is trusted;
-        // anything else falls through to the picker, which is the correct
-        // outcome once the recorded axis no longer exists.
-        if (Array.isArray(lot.colorBreakdown)) {
-          const recordedPrimary = lot.colorBreakdown.find(
-            cb => cb && cb.countsTowardTotal !== false && cb.axisKey && this.axes.some(a => a.key === cb.axisKey));
-          if (recordedPrimary) {
-            this.primaryAxisKey = recordedPrimary.axisKey;
-            this.primaryIsDefault = false;
-          }
-        }
-        if (this.flatColors.length > 0 && Array.isArray(lot.colorBreakdown)) {
-          lot.colorBreakdown.forEach(cb => {
-            if (cb.countsTowardTotal === false && cb.axisKey) this.secondaryChoice[cb.axisKey] = cb.color;
-            else if (cb.qty > 0) this.colorQtyByColor[cb.color] = cb.qty;
-          });
-          this._renderQtyOrColorSection();
-        } else {
-          const qtyInput = document.getElementById('lot-qty');
-          if (qtyInput) qtyInput.value = lot.qty;
-        }
+        this.selection.size = this.getSizeFromOutputItemName(process.outputItemName);
+        this.selection.model = this.getModelFromOutputItemName(process.outputItemName);
+        this.selection.type = process.processType || 'General';
       }
+      // This lot's own saved Output Item Name, not the process default --
+      // reopening a customised lot must not quietly reset it.
+      this.outputItemName = lot.outputItemName || (process ? (process.outputItemName || '') : '');
+      document.getElementById('log-lot-body').innerHTML = this._formHtml(lot);
+      this._wireForm();
+      if (process) await this.onProcessSelected(lot.processId, { lot });
+      this._showContractorRate();
     } catch (err) {
       MApp.Toast.error('Could not load this lot: ' + (err.message || ''));
       this.closeLogLotSheet();
@@ -4230,81 +5386,25 @@ MApp.Production = {
     }
   },
 
-  _editFormHtml(lot, process) {
-    const statusOptions = ['Pending', 'In Progress', 'Completed', 'Cancelled'];
-    const lotStatus = lot.status || 'Pending';
-    return `
-      <div class="mb-field">
-        <label for="lot-date">Date</label>
-        <input type="date" id="lot-date" value="${dateToInputValue(lot.dateRaw, lot.date)}">
-      </div>
-
-      <div class="mb-field">
-        <label>Process</label>
-        <input type="text" value="${MApp.Util.escapeHtml(process ? process.processName : lot.processId)}" readonly>
-        <div class="mb-field-hint">The process on an existing lot can't be changed — delete and re-log it under a different process instead.</div>
-      </div>
-
-      <div class="mb-field mb-hidden" id="lot-product-tag-wrap">
-        <label>Product tag (optional)</label>
-        <button type="button" class="mb-picker-field${lot.productName ? '' : ' mb-placeholder'}" id="lot-product-field" onclick="MApp.Production.pickProductTag()">${MApp.Util.escapeHtml(lot.productName || 'Choose a product...')}</button>
-        <div class="mb-field-hint">Only needed so Dispatch can find this lot's stock — leave blank for an intermediate stage.</div>
-      </div>
-
-      <div class="mb-field mb-hidden" id="lot-qty-wrap">
-        <label for="lot-qty">Quantity</label>
-        <input type="number" id="lot-qty" inputmode="decimal" min="0" step="1" value="${lot.qty || ''}">
-      </div>
-
-      <div id="lot-color-wrap" class="mb-hidden mb-mb-4"></div>
-
-      <div class="mb-field">
-        <label>Assigned to</label>
-        <button type="button" class="mb-picker-field${lot.assignedTo ? '' : ' mb-placeholder'}" id="lot-assignedto-field" onclick="MApp.Production.pickAssignedTo()">${MApp.Util.escapeHtml(MApp.Util.formatNameCase(lot.assignedTo) || 'Choose or add a name...')}</button>
-        <div class="mb-field-hint" id="lot-rate-hint" hidden></div>
-      </div>
-
-      <div class="mb-field">
-        <label>Extra charge (optional)</label>
-        <button type="button" class="mb-picker-field${lot.extraChargeType ? '' : ' mb-placeholder'}" id="lot-extracharge-field" onclick="MApp.Production.pickExtraCharge()">${MApp.Util.escapeHtml(lot.extraChargeType || 'None')}</button>
-      </div>
-
-      <div class="mb-field">
-        <label for="lot-assignedby">Assigned by (optional)</label>
-        <input type="text" id="lot-assignedby" placeholder="Supervisor name" value="${MApp.Util.escapeHtml(lot.assignedBy || '')}">
-      </div>
-
-      <div class="mb-field">
-        <label>Status</label>
-        <div class="mb-color-chip-list" id="lot-status-row">
-          ${statusOptions.map(s => `<button type="button" class="mb-color-chip${s === lotStatus ? ' checked' : ''}" style="min-width:auto;padding:10px 16px;" data-status="${s}" onclick="MApp.Production.setStatus('${s}')">${s}</button>`).join('')}
-        </div>
-      </div>
-
-      <div class="mb-field">
-        <label for="lot-remarks">Remarks (optional)</label>
-        <textarea id="lot-remarks" rows="3" placeholder="Notes for this lot...">${MApp.Util.escapeHtml(lot.remarks || '')}</textarea>
-      </div>
-    `;
-  },
-
-  async deleteLot(lot) {
-    if (!MApp.Util.confirmDelete(lot.lotNumber)) return;
-    const res = await MApp.Util.mutateSimple('deleteProduction', [lot.rowIdx], 'Lot deleted.');
-    if (res.success) this.load();
-  },
-
   async _ensureRefData() {
     if (this.allProcesses.length === 0) await this.load();
 
-    const [modelsRes, typesRes, contractorsRes] = await Promise.all([
+    const [modelsRes, typesRes, contractorsRes, colorsRes, itemsRes] = await Promise.all([
       MApp.Api.call('getModels'),
       MApp.Api.call('getProcessTypes'),
-      MApp.Api.call('getContractorsData')
+      MApp.Api.call('getContractorsData'),
+      // Colour Master and Items Master decide which colour names are real
+      // colours and how a component is spelled -- the same two lists
+      // desktop's form reads. Best-effort: without them the form still
+      // works, as desktop's does with nothing loaded.
+      MApp.Api.callCached('getColors').catch(() => null),
+      MApp.Api.callCached('getItemsData').catch(() => null)
     ]);
     this.models = (modelsRes && modelsRes.success) ? (modelsRes.data || []) : [];
     this.processTypes = (typesRes && typesRes.success) ? (typesRes.data || []) : [];
     this.contractors = (contractorsRes && contractorsRes.success) ? (contractorsRes.data || []) : [];
+    this.colorMaster = (colorsRes && colorsRes.success) ? (colorsRes.data || []) : [];
+    this.items = (itemsRes && itemsRes.success) ? (itemsRes.data || []) : [];
   },
 
   _skeletonFormHtml() {
@@ -4315,138 +5415,157 @@ MApp.Production = {
     `;
   },
 
-  _formHtml() {
-    const statusOptions = ['Pending', 'In Progress', 'Completed', 'Cancelled'];
+  _pickerFieldHtml(id, label, placeholder, disabled) {
+    const has = !!label;
+    return `<button type="button" class="mb-picker-field${has ? '' : ' mb-placeholder'}" id="${id}"${disabled ? ' disabled' : ''}>${MApp.Util.escapeHtml(has ? label : placeholder)}</button>`;
+  },
+
+  // One form for both paths. `lot` is the lot being edited, or null.
+  _formHtml(lot) {
+    const e = MApp.Util.escapeHtml;
+    const status = this.selectedStatus || 'Pending';
+    const process = this.selection.process;
+    const processBlock = lot
+      ? `
+      <div class="mb-field">
+        <label>Process</label>
+        <input type="text" value="${e(process ? process.processName : lot.processId)}" readonly>
+        <div class="mb-field-hint">Lot ${e(lot.lotNumber || '')} — the process on an existing lot can't be changed; delete and re-log it under a different process instead.</div>
+      </div>`
+      : `
+      <div class="mb-field">
+        <label>Process</label>
+        ${this._pickerFieldHtml('lot-process-field', process ? process.processName : '', 'Search all processes…', false)}
+        <div class="mb-field-hint" id="lot-process-hint">${process ? e(this._processSublabel(process)) : 'Type any part of the name, or narrow it by size, model and type below.'}</div>
+      </div>
+      <div class="mapp-lot-cascade">
+        <div class="mb-field">
+          <label>Size</label>
+          ${this._pickerFieldHtml('lot-size-field', this.selection.size, 'Any size', false)}
+        </div>
+        <div class="mb-field">
+          <label>Model</label>
+          ${this._pickerFieldHtml('lot-model-field', this.selection.model, this.selection.size ? 'Any model' : 'Choose a size first', !this.selection.size)}
+        </div>
+        <div class="mb-field">
+          <label>Process type</label>
+          ${this._pickerFieldHtml('lot-type-field', this.selection.type, this.selection.model ? 'Any type' : 'Choose a model first', !this.selection.model)}
+        </div>
+      </div>`;
+
     return `
       <div class="mb-field">
         <label for="lot-date">Date</label>
-        <input type="date" id="lot-date" value="${MApp.Util.todayInputValue()}">
+        <input type="date" id="lot-date" value="${lot ? dateToInputValue(lot.dateRaw, lot.date) : (this._keepDate || MApp.Util.todayInputValue())}">
       </div>
 
-      <div class="mb-field">
-        <label>Size</label>
-        <button type="button" class="mb-picker-field mb-placeholder" id="lot-size-field" onclick="MApp.Production.pickSize()">Choose a size...</button>
-      </div>
+      ${processBlock}
 
-      <div class="mb-field">
-        <label>Model</label>
-        <button type="button" class="mb-picker-field mb-placeholder" id="lot-model-field" disabled onclick="MApp.Production.pickModel()">Choose a size first...</button>
-      </div>
-
-      <div class="mb-field">
-        <label>Process type</label>
-        <button type="button" class="mb-picker-field mb-placeholder" id="lot-type-field" disabled onclick="MApp.Production.pickProcessType()">Choose a model first...</button>
-      </div>
-
-      <div class="mb-field">
-        <label>Process</label>
-        <button type="button" class="mb-picker-field mb-placeholder" id="lot-process-field" disabled onclick="MApp.Production.pickProcess()">Choose a process type first...</button>
+      <div class="mb-field mb-hidden" id="lot-output-wrap">
+        <label for="lot-output">Output item</label>
+        <input type="text" id="lot-output" value="${e(this.outputItemName)}" autocomplete="off">
+        <div class="mb-field-hint">What this lot adds to the Warehouse Pool. Change it only for a rework or variant run — it stays the process's own for every other lot.</div>
       </div>
 
       <div class="mb-field mb-hidden" id="lot-product-tag-wrap">
         <label>Product tag (optional)</label>
-        <button type="button" class="mb-picker-field mb-placeholder" id="lot-product-field" onclick="MApp.Production.pickProductTag()">Choose a product...</button>
+        ${this._pickerFieldHtml('lot-product-field', this.selection.productName, 'Choose a product...', false)}
         <div class="mb-field-hint">Only needed so Dispatch can find this lot's stock — leave blank for an intermediate stage.</div>
       </div>
 
-      <div class="mb-field mb-hidden" id="lot-qty-wrap">
-        <label for="lot-qty">Quantity</label>
-        <input type="number" id="lot-qty" inputmode="decimal" min="0" step="1" placeholder="0">
-      </div>
-
-      <div id="lot-color-wrap" class="mb-hidden mb-mb-4"></div>
+      <div id="lot-qty-section" class="mb-mb-4"></div>
+      <div id="lot-alloc-section"></div>
+      <div id="lot-materials-section"></div>
 
       <div class="mb-field">
         <label>Assigned to</label>
-        <button type="button" class="mb-picker-field mb-placeholder" id="lot-assignedto-field" onclick="MApp.Production.pickAssignedTo()">Choose or add a name...</button>
+        ${this._pickerFieldHtml('lot-assignedto-field', MApp.Util.formatNameCase(this.selectedAssignedTo), 'Choose or add a name...', false)}
         <div class="mb-field-hint" id="lot-rate-hint" hidden></div>
       </div>
 
       <div class="mb-field">
         <label>Extra charge (optional)</label>
-        <button type="button" class="mb-picker-field mb-placeholder" id="lot-extracharge-field" onclick="MApp.Production.pickExtraCharge()">None</button>
+        ${this._pickerFieldHtml('lot-extracharge-field', this.selectedExtraChargeType ? this._extraChargeLabel() : '', 'None', false)}
       </div>
 
       <div class="mb-field">
         <label for="lot-assignedby">Assigned by (optional)</label>
-        <input type="text" id="lot-assignedby" placeholder="Supervisor name">
+        <input type="text" id="lot-assignedby" placeholder="Supervisor name" value="${e(lot ? (lot.assignedBy || '') : (this._keepAssignedBy || ''))}">
       </div>
 
       <div class="mb-field">
         <label>Status</label>
         <div class="mb-color-chip-list" id="lot-status-row">
-          ${statusOptions.map(s => `<button type="button" class="mb-color-chip${s === 'Pending' ? ' checked' : ''}" style="min-width:auto;padding:10px 16px;" data-status="${s}" onclick="MApp.Production.setStatus('${s}')">${s}</button>`).join('')}
+          ${this.STATUS_OPTIONS.map(s => `<button type="button" class="mb-color-chip${s === status ? ' checked' : ''}" style="min-width:auto;padding:10px 16px;" data-status="${s}" aria-pressed="${s === status}">${s}</button>`).join('')}
         </div>
       </div>
 
       <div class="mb-field">
         <label for="lot-remarks">Remarks (optional)</label>
-        <textarea id="lot-remarks" rows="3" placeholder="Notes for this lot..."></textarea>
+        <textarea id="lot-remarks" rows="3" placeholder="Notes for this lot...">${e(lot ? (lot.remarks || '') : '')}</textarea>
       </div>
     `;
   },
 
-  _updateFieldLabel(id, label) {
+  _extraChargeLabel() {
+    if (!this.selectedExtraChargeType) return 'None';
+    return this.selectedExtraChargeAmount
+      ? `${this.selectedExtraChargeType} (+${MApp.Util.formatCurrency(this.selectedExtraChargeAmount)})`
+      : this.selectedExtraChargeType;
+  },
+
+  _wireForm() {
+    const body = document.getElementById('log-lot-body');
+    if (!body) return;
+    const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
+    on('lot-process-field', () => this.pickProcess());
+    on('lot-size-field', () => this.pickSize());
+    on('lot-model-field', () => this.pickModel());
+    on('lot-type-field', () => this.pickProcessType());
+    on('lot-product-field', () => this.pickProductTag());
+    on('lot-assignedto-field', () => this.pickAssignedTo());
+    on('lot-extracharge-field', () => this.pickExtraCharge());
+    body.querySelectorAll('#lot-status-row [data-status]').forEach(btn => {
+      btn.addEventListener('click', () => this.setStatus(btn.dataset.status));
+    });
+    const output = document.getElementById('lot-output');
+    if (output) output.addEventListener('input', () => { this.outputItemName = output.value; });
+    this._applyProcessVisibility();
+  },
+
+  _updateFieldLabel(id, label, placeholder) {
     const el = document.getElementById(id);
     if (!el) return;
-    el.textContent = label;
-    el.classList.remove('mb-placeholder');
+    el.textContent = label || placeholder || '';
+    el.classList.toggle('mb-placeholder', !label);
   },
 
-  _resetDownstreamFieldLabels(levels) {
-    const placeholders = { model: 'Choose a model...', type: 'Choose a process type...', process: 'Choose a process...' };
-    levels.forEach(level => {
-      const el = document.getElementById('lot-' + level + '-field');
-      if (!el) return;
-      el.textContent = placeholders[level];
-      el.classList.add('mb-placeholder');
-    });
+  _processSublabel(p) {
+    const size = this.getSizeFromOutputItemName(p.outputItemName);
+    const model = this.getModelFromOutputItemName(p.outputItemName);
+    return [size, model, p.processType || 'General', p.sequence != null ? `Stage ${p.sequence}` : ''].filter(Boolean).join(' · ');
   },
 
-  _hideProcessDependentSections() {
-    const tagWrap = document.getElementById('lot-product-tag-wrap');
-    if (tagWrap) tagWrap.classList.add('mb-hidden');
-
-    const qtyWrap = document.getElementById('lot-qty-wrap');
-    if (qtyWrap) {
-      qtyWrap.classList.add('mb-hidden');
-      const q = document.getElementById('lot-qty');
-      if (q) q.value = '';
-    }
-
-    const colorWrap = document.getElementById('lot-color-wrap');
-    if (colorWrap) {
-      colorWrap.classList.add('mb-hidden');
-      colorWrap.innerHTML = '';
-    }
-
-    this.flatColors = [];
-    this.axes = [];
-    this.primaryAxisKey = '';
-    this.primaryIsDefault = false;
-    this.recipeComponents = [];
-    this.colorQtyByColor = {};
-    this.secondaryChoice = {};
-    this.selection.productId = '';
-    this.selection.productName = '';
-
-    this._updateFieldLabel('lot-product-field', 'Choose a product...');
-    document.getElementById('lot-product-field')?.classList.add('mb-placeholder');
+  _cascadeMatches() {
+    return this.activeProcesses
+      .filter(p => !this.selection.size || this.getSizeFromOutputItemName(p.outputItemName) === this.selection.size)
+      .filter(p => !this.selection.model || this.getModelFromOutputItemName(p.outputItemName) === this.selection.model)
+      .filter(p => !this.selection.type || (p.processType || 'General') === this.selection.type);
   },
 
   _applyCascadeEnabledStates() {
     const modelBtn = document.getElementById('lot-model-field');
     const typeBtn = document.getElementById('lot-type-field');
-    const processBtn = document.getElementById('lot-process-field');
     if (modelBtn) modelBtn.disabled = !this.selection.size;
     if (typeBtn) typeBtn.disabled = !this.selection.model;
-    if (processBtn) processBtn.disabled = !this.selection.type;
+    this._updateFieldLabel('lot-size-field', this.selection.size, 'Any size');
+    this._updateFieldLabel('lot-model-field', this.selection.model, this.selection.size ? 'Any model' : 'Choose a size first');
+    this._updateFieldLabel('lot-type-field', this.selection.type, this.selection.model ? 'Any type' : 'Choose a model first');
   },
 
-  // Disables every cascade picker + Save while a process-dependent fetch
-  // (color groups/axes/recipe) is in flight, then re-derives each
-  // picker's correct enabled state from current selection afterwards —
-  // no remembered "previous" state to restore, so nothing can go stale.
+  // Disables every picker + Save while a process's colour groups and
+  // recipe are loading, then re-derives each picker's state from the
+  // selection -- no remembered "previous" state to restore.
   _setCascadeBusy(isBusy) {
     ['lot-size-field', 'lot-model-field', 'lot-type-field', 'lot-process-field', 'lot-product-field'].forEach(id => {
       const el = document.getElementById(id);
@@ -4457,24 +5576,40 @@ MApp.Production = {
     if (!isBusy) this._applyCascadeEnabledStates();
   },
 
+  // Narrowing the cascade drops a chosen process that no longer fits it.
+  _cascadeChanged() {
+    const p = this.selection.process;
+    if (p && !this._cascadeMatches().includes(p)) this._clearProcess();
+    this._applyCascadeEnabledStates();
+  },
+
+  _clearProcess() {
+    this._procSelectSeq++;
+    this.selection.processId = '';
+    this.selection.process = null;
+    this.selection.productId = '';
+    this.selection.productName = '';
+    this.model = null;
+    this.outputItemName = '';
+    this._updateFieldLabel('lot-process-field', '', 'Search all processes…');
+    const hint = document.getElementById('lot-process-hint');
+    if (hint) hint.textContent = 'Type any part of the name, or narrow it by size, model and type below.';
+    this._applyProcessVisibility();
+    this._renderLotSections();
+  },
+
   async pickSize() {
     const sizesPresent = new Set(this.activeProcesses.map(p => this.getSizeFromOutputItemName(p.outputItemName)));
     const ordered = this.PROCESS_SIZE_LIST.filter(s => sizesPresent.has(s));
     if (sizesPresent.has('General')) ordered.push('General');
-    const items = ordered.map(s => ({ value: s, label: s }));
+    const items = [{ value: '', label: 'Any size' }, ...ordered.map(s => ({ value: s, label: s }))];
 
     const picked = await MApp.Picker.open({ title: 'Choose a size', items, selectedValue: this.selection.size, searchable: false });
     if (!picked) return;
-
     this.selection.size = picked.value;
     this.selection.model = '';
     this.selection.type = '';
-    this.selection.processId = '';
-    this.selection.process = null;
-    this._updateFieldLabel('lot-size-field', picked.label);
-    this._resetDownstreamFieldLabels(['model', 'type', 'process']);
-    this._hideProcessDependentSections();
-    this._applyCascadeEnabledStates();
+    this._cascadeChanged();
   },
 
   async pickModel() {
@@ -4484,19 +5619,13 @@ MApp.Production = {
     const masterNames = (this.models || []).map(m => m.name);
     const ordered = masterNames.filter(n => modelsPresent.has(n));
     if (modelsPresent.has('General')) ordered.push('General');
-    const items = ordered.map(m => ({ value: m, label: m }));
+    const items = [{ value: '', label: 'Any model' }, ...ordered.map(m => ({ value: m, label: m }))];
 
     const picked = await MApp.Picker.open({ title: 'Choose a model', items, selectedValue: this.selection.model });
     if (!picked) return;
-
     this.selection.model = picked.value;
     this.selection.type = '';
-    this.selection.processId = '';
-    this.selection.process = null;
-    this._updateFieldLabel('lot-model-field', picked.label);
-    this._resetDownstreamFieldLabels(['type', 'process']);
-    this._hideProcessDependentSections();
-    this._applyCascadeEnabledStates();
+    this._cascadeChanged();
   },
 
   async pickProcessType() {
@@ -4508,102 +5637,141 @@ MApp.Production = {
     const masterNames = (this.processTypes || []).map(t => t.name);
     const ordered = masterNames.filter(t => typesPresent.has(t));
     if (typesPresent.has('General')) ordered.push('General');
-    const items = ordered.map(t => ({ value: t, label: t }));
+    const items = [{ value: '', label: 'Any type' }, ...ordered.map(t => ({ value: t, label: t }))];
 
     const picked = await MApp.Picker.open({ title: 'Choose a process type', items, selectedValue: this.selection.type });
     if (!picked) return;
-
     this.selection.type = picked.value;
-    this.selection.processId = '';
-    this.selection.process = null;
-    this._updateFieldLabel('lot-type-field', picked.label);
-    this._resetDownstreamFieldLabels(['process']);
-    this._hideProcessDependentSections();
-    this._applyCascadeEnabledStates();
+    this._cascadeChanged();
   },
 
+  // Every active process the cascade allows -- all of them when nothing
+  // is narrowed -- searchable by any word of its name or of its size,
+  // model and type. The processes logged most recently come first: the
+  // one a supervisor wants is nearly always one they logged today.
   async pickProcess() {
-    if (!this.selection.type) return;
-    const matches = this.activeProcesses
-      .filter(p => this.getSizeFromOutputItemName(p.outputItemName) === this.selection.size)
-      .filter(p => this.getModelFromOutputItemName(p.outputItemName) === this.selection.model)
-      .filter(p => (p.processType || 'General') === this.selection.type)
-      .sort((a, b) => a.sequence - b.sequence);
-    const items = matches.map(p => ({ value: p.processId, label: p.processName, sublabel: 'Stage ' + p.sequence }));
-
+    const recentRank = new Map();
+    (this.lots || []).forEach(l => {
+      if (l.processId && !recentRank.has(l.processId) && recentRank.size < 6) recentRank.set(l.processId, recentRank.size);
+    });
+    const matches = this._cascadeMatches().slice().sort((a, b) => {
+      const ra = recentRank.has(a.processId) ? recentRank.get(a.processId) : Infinity;
+      const rb = recentRank.has(b.processId) ? recentRank.get(b.processId) : Infinity;
+      if (ra !== rb) return ra - rb;
+      return String(a.processName || '').localeCompare(String(b.processName || '')) || (a.sequence - b.sequence);
+    });
+    if (matches.length === 0) {
+      MApp.Toast.error('No active process matches that size, model and type.');
+      return;
+    }
+    const items = matches.map(p => ({
+      value: p.processId,
+      label: p.processName,
+      sublabel: (recentRank.has(p.processId) ? 'Recent · ' : '') + this._processSublabel(p)
+    }));
     const picked = await MApp.Picker.open({ title: 'Choose a process', items, selectedValue: this.selection.processId });
     if (!picked) return;
-
-    this._updateFieldLabel('lot-process-field', picked.label);
     await this.onProcessSelected(picked.value);
   },
 
-  async onProcessSelected(processId) {
-    const process = this.activeProcesses.find(p => p.processId === processId);
+  // Loads everything desktop's form loads for a process and builds the
+  // lot model from it. `opts.lot` restores an existing lot.
+  async onProcessSelected(processId, opts = {}) {
+    const process = this.activeProcesses.find(p => p.processId === processId)
+      || (opts.lot ? this.allProcesses.find(p => p.processId === processId) : null);
     if (!process) return;
 
     // Tapping through processes quickly (picking the wrong one, then
-    // correcting) can let an EARLIER process's slower getProcessColorAxes/
-    // getProcessColorGroups response land AFTER a later one for the process
-    // actually selected now -- with no guard, that stale response used to
-    // silently overwrite this.axes/flatColors with a DIFFERENT process's
-    // color sub-groups (e.g. an unrelated Packing process's "Kit Bag"/
-    // "Small Kit" tag axes bleeding into a plain process like Rim Fitting
-    // that has none of its own). Same mySeq/_formSeq guard idiom as
-    // Bills/Vendors openForm() elsewhere in this file.
+    // correcting) can let an EARLIER process's slower response land AFTER
+    // the one actually selected now -- with no guard, that stale response
+    // used to silently overwrite the form with a DIFFERENT process's
+    // colour groups. Same mySeq idiom as Bills/Vendors openForm().
     const mySeq = ++this._procSelectSeq;
 
     this.selection.processId = processId;
     this.selection.process = process;
-    this.selection.productId = '';
-    this.selection.productName = '';
-    this._updateFieldLabel('lot-product-field', 'Choose a product...');
-    document.getElementById('lot-product-field')?.classList.add('mb-placeholder');
+    this.selection.size = this.getSizeFromOutputItemName(process.outputItemName);
+    this.selection.model = this.getModelFromOutputItemName(process.outputItemName);
+    this.selection.type = process.processType || 'General';
+    if (!opts.lot) {
+      this.selection.productId = '';
+      this.selection.productName = '';
+      this.outputItemName = process.outputItemName || '';
+      const output = document.getElementById('lot-output');
+      if (output) output.value = this.outputItemName;
+      this._updateFieldLabel('lot-product-field', '', 'Choose a product...');
+    }
+    this._updateFieldLabel('lot-process-field', process.processName, 'Search all processes…');
+    const hint = document.getElementById('lot-process-hint');
+    if (hint) hint.textContent = this._processSublabel(process);
 
     this._setCascadeBusy(true);
+    const qtySection = document.getElementById('lot-qty-section');
+    if (qtySection) qtySection.innerHTML = '<div class="mb-skel mb-skel-card" style="height:96px;"></div>';
     try {
-      const [groupsRes, axesRes, compRes] = await Promise.all([
+      const soft = p => p.catch(() => null);
+      const [groupsRes, axesRes, compRes, poolRes, stockRes] = await Promise.all([
         MApp.Api.call('getProcessColorGroups', processId),
         MApp.Api.call('getProcessColorAxes', processId),
-        MApp.Api.call('getProcessComponentsData', processId)
+        MApp.Api.call('getProcessComponentsData', processId),
+        // Advisory only -- which pool colours exist decides how a pool
+        // component is split, and both feed the "avail." hints -- so a
+        // failure here degrades the hints, never the form.
+        soft(MApp.Api.call('getWarehousePoolData')),
+        soft(MApp.Api.call('getStockData'))
       ]);
       if (mySeq !== this._procSelectSeq) return;
-
-      this.flatColors = (groupsRes && groupsRes.success) ? (groupsRes.data || []) : [];
-      const axesData = (axesRes && axesRes.success) ? (axesRes.data || {}) : {};
-      this.axes = axesData.axes || [];
-      this.primaryAxisKey = axesData.primaryAxisKey || (this.axes[0] && this.axes[0].key) || '';
-      this.primaryIsDefault = this.axes.length >= 2 ? !!axesData.primaryIsDefault : false;
-      this.recipeComponents = (compRes && compRes.success) ? (compRes.data || []) : [];
-      this.colorQtyByColor = {};
-      this.secondaryChoice = {};
-
-      const tagWrap = document.getElementById('lot-product-tag-wrap');
-      if (tagWrap) tagWrap.classList.toggle('mb-hidden', !process.isFinalStage);
+      const ok = r => !!(r && r.success);
 
       if (process.isFinalStage && this.bomProducts === null) {
         const bomRes = await MApp.Api.call('getBOMProductionData');
         if (mySeq !== this._procSelectSeq) return;
-        this.bomProducts = (bomRes && bomRes.success) ? (bomRes.data || []) : [];
+        this.bomProducts = ok(bomRes) ? (bomRes.data || []) : [];
       }
 
-      this._renderQtyOrColorSection();
+      this.model = MApp.LotModel.using({
+        process,
+        outputItemName: this.outputItemName || process.outputItemName || '',
+        colors: ok(groupsRes) ? (groupsRes.data || []) : [],
+        axesData: ok(axesRes) ? (axesRes.data || {}) : {},
+        recipe: ok(compRes) ? (compRes.data || []) : [],
+        poolRows: ok(poolRes) ? (poolRes.data || []) : [],
+        stock: ok(stockRes) ? (stockRes.data || []) : [],
+        items: this.items,
+        colorMaster: this.colorMaster
+      });
+      if (opts.lot) this.model.restore(opts.lot);
+      this._applyProcessVisibility();
+      this._renderLotSections();
+      this._showContractorRate();
     } catch (err) {
       if (mySeq !== this._procSelectSeq) return;
       MApp.Toast.error('Could not load this process: ' + (err.message || ''));
+      if (qtySection) qtySection.innerHTML = '';
     } finally {
       if (mySeq === this._procSelectSeq) this._setCascadeBusy(false);
     }
   },
 
+  _applyProcessVisibility() {
+    const process = this.selection.process;
+    const outputWrap = document.getElementById('lot-output-wrap');
+    if (outputWrap) outputWrap.classList.toggle('mb-hidden', !process);
+    const tagWrap = document.getElementById('lot-product-tag-wrap');
+    if (tagWrap) tagWrap.classList.toggle('mb-hidden', !(process && (process.isFinalStage || this.selection.productId)));
+  },
+
   async pickProductTag() {
-    if (this.bomProducts === null) return;
-    const items = this.bomProducts.map(p => ({ value: p.productId, label: p.productName, sublabel: p.productId }));
+    if (this.bomProducts === null) {
+      const bomRes = await MApp.Api.call('getBOMProductionData').catch(() => null);
+      this.bomProducts = (bomRes && bomRes.success) ? (bomRes.data || []) : [];
+    }
+    const items = [{ value: '', label: 'No product tag' }, ...this.bomProducts.map(p => ({ value: p.productId, label: p.productName, sublabel: p.productId }))];
     const picked = await MApp.Picker.open({ title: 'Choose a product', items, selectedValue: this.selection.productId });
     if (!picked) return;
     this.selection.productId = picked.value;
-    this.selection.productName = picked.label;
-    this._updateFieldLabel('lot-product-field', picked.label);
+    this.selection.productName = picked.value ? picked.label : '';
+    this._updateFieldLabel('lot-product-field', this.selection.productName, 'Choose a product...');
   },
 
   // Fixed from source's own c.name -- getContractorsData returns
@@ -4616,20 +5784,22 @@ MApp.Production = {
     });
     if (!picked) return;
     this.selectedAssignedTo = picked.value;
-    this._updateFieldLabel('lot-assignedto-field', picked.label);
+    this._updateFieldLabel('lot-assignedto-field', picked.label, 'Choose or add a name...');
     // A fresh contractor pick invalidates whatever Extra Charge was
     // showing (it belonged to the previous contractor's own rate card) --
     // same reasoning as desktop's refreshExtraChargeOptions reset.
     this.selectedExtraChargeType = '';
-    this._updateFieldLabel('lot-extracharge-field', 'None');
+    this.selectedExtraChargeAmount = 0;
+    this._updateFieldLabel('lot-extracharge-field', '', 'None');
     this._showContractorRate();
   },
 
-  // Shows what this contractor is paid for this process type and size,
-  // once both are known. The rate is on their rate card and was
-  // previously only visible at a desk -- so the person logging the lot
-  // could not see what it would cost, and a missing rate card entry only
-  // surfaced later as a zero payable.
+  // What this contractor is paid for this process type and size, and --
+  // once the lot has a quantity -- what this lot will pay them: the same
+  // (rate + extra charge) × quantity save_production bills. The rate is on
+  // their rate card and was only visible at a desk, so the person logging
+  // the lot could not see what it would cost, and a missing rate card
+  // entry only surfaced later as a zero payable.
   async _showContractorRate() {
     const hint = document.getElementById('lot-rate-hint');
     if (!hint) return;
@@ -4644,17 +5814,37 @@ MApp.Production = {
       const res = await MApp.Api.call('getContractorRateForProcessType', contractor, processType, size || '');
       if (token !== this._rateSeq) return;
       const rate = res && res.success ? MApp.Util.toNumber(res.data && res.data.ratePerUnit != null ? res.data.ratePerUnit : res.data) : 0;
-      hint.hidden = false;
-      hint.textContent = rate > 0
-        ? `Rate on file: ${MApp.Util.formatCurrency(rate)} per unit.`
-        : 'No rate on file for this contractor and process type — the payable will be zero.';
-      hint.style.color = rate > 0 ? 'var(--mb-steel)' : 'var(--mb-enamel-amber-ink)';
+      this._rate = rate;
+      this._paintRateHint();
     } catch (err) {
       if (token === this._rateSeq) { hint.textContent = ''; hint.hidden = true; }
     }
   },
 
+  _rate: 0,
   _rateSeq: 0,
+
+  _paintRateHint() {
+    const hint = document.getElementById('lot-rate-hint');
+    if (!hint || !this.selectedAssignedTo) return;
+    const rate = this._rate || 0;
+    const extra = this.selectedExtraChargeAmount || 0;
+    const qty = this.model ? this.model.lotTotal() : 0;
+    hint.hidden = false;
+    if (rate <= 0 && extra <= 0) {
+      hint.textContent = 'No rate on file for this contractor and process type — the payable will be zero.';
+      hint.style.color = 'var(--mb-enamel-amber-ink)';
+      return;
+    }
+    let text = `Rate on file: ${MApp.Util.formatCurrency(rate)} per unit.`;
+    if (qty) {
+      text += ` Payable ${MApp.Util.formatCurrency(qty * (rate + extra))} (${MApp.LotModel.formatQty(qty)} × ${MApp.Util.formatCurrency(rate)}`;
+      if (extra) text += ` + ${this.selectedExtraChargeType} ${MApp.Util.formatCurrency(extra)}`;
+      text += ').';
+    }
+    hint.textContent = text;
+    hint.style.color = 'var(--mb-steel)';
+  },
 
   // Extra Charge (Layer 2) options are scoped to whichever contractor is
   // currently Assigned To -- every contractor can offer a different set,
@@ -4673,142 +5863,155 @@ MApp.Production = {
     }
     const items = [
       { value: '', label: 'None' },
-      ...charges.map(c => ({ value: c.serviceType, label: `${c.serviceType} (+${MApp.Util.formatCurrency(c.chargeAmount)})` }))
+      ...charges.map(c => ({ value: c.serviceType, label: `${c.serviceType} (+${MApp.Util.formatCurrency(c.chargeAmount)})`, amount: MApp.Util.toNumber(c.chargeAmount) }))
     ];
     const picked = await MApp.Picker.open({ title: 'Extra charge', items, selectedValue: this.selectedExtraChargeType });
     if (!picked) return;
     this.selectedExtraChargeType = picked.value;
-    this._updateFieldLabel('lot-extracharge-field', picked.value ? picked.label : 'None');
+    this.selectedExtraChargeAmount = picked.value ? (picked.amount || 0) : 0;
+    this._updateFieldLabel('lot-extracharge-field', picked.value ? picked.label : '', 'None');
+    this._paintRateHint();
   },
 
   setStatus(status) {
     this.selectedStatus = status;
     document.querySelectorAll('#lot-status-row [data-status]').forEach(btn => {
-      btn.classList.toggle('checked', btn.dataset.status === status);
+      const on = btn.dataset.status === status;
+      btn.classList.toggle('checked', on);
+      btn.setAttribute('aria-pressed', String(on));
     });
   },
 
-  // ── Color checklist (chips + stepper) ───────────────────────────────
-  _renderQtyOrColorSection() {
-    const qtyWrap = document.getElementById('lot-qty-wrap');
-    const colorWrap = document.getElementById('lot-color-wrap');
-    if (!qtyWrap || !colorWrap) return;
+  // ── Quantity / colours ──────────────────────────────────────────────
+  _renderLotSections() {
+    this._renderQtySection();
+    this._renderAllocation();
+    this._renderMaterials();
+    this._paintRateHint();
+  },
 
-    if (!this.flatColors || this.flatColors.length === 0) {
-      colorWrap.classList.add('mb-hidden');
-      colorWrap.innerHTML = '';
-      qtyWrap.classList.remove('mb-hidden');
+  _renderQtySection() {
+    const el = document.getElementById('lot-qty-section');
+    if (!el) return;
+    const m = this.model;
+    if (!m) { el.innerHTML = ''; return; }
+    const e = MApp.Util.escapeHtml;
+
+    if (m.mode === 'qty') {
+      el.innerHTML = `
+        <div class="mb-field mapp-lot-qty-field">
+          <label for="lot-qty">Quantity</label>
+          <input type="number" id="lot-qty" inputmode="decimal" step="any" placeholder="0" value="${e(m.plainQty)}">
+          <button type="button" class="mb-btn-text mapp-lot-link" data-enable-colors>+ Record colours for this lot</button>
+        </div>`;
+      const input = el.querySelector('#lot-qty');
+      input.addEventListener('input', () => { m.plainQty = input.value; this._refreshDerived(input); });
+      el.querySelector('[data-enable-colors]').addEventListener('click', () => this.enableManualColors());
       return;
     }
 
-    qtyWrap.classList.add('mb-hidden');
-    colorWrap.classList.remove('mb-hidden');
-
-    const isMultiAxis = this.axes.length >= 2;
-
-    // The "pick which group is Primary" step primaryIsDefault has always
-    // documented but never actually had. Without it, primaryAxisKey fell
-    // back to whatever axis sits first in recipe order, the lot's
-    // quantities were attributed to it, AND saveLot sent it as
-    // formData.primaryColorAxis -- which save_production persists as this
-    // process's default from then on (_set_process_primary_color_axis).
-    // So a choice nobody made got silently locked in from mobile, the
-    // exact outcome the desktop form refuses to allow (see
-    // renderGroupedColorChecklist, which leaves its Primary radio
-    // unchecked for the same reason). The colour chips are withheld until
-    // the choice is made because which axis is Primary decides which
-    // colours carry the lot's quantity at all.
-    if (isMultiAxis && this.primaryIsDefault) {
-      colorWrap.innerHTML = `
+    const radioGroups = m.groups.filter(g => g.radio);
+    let html = '';
+    if (radioGroups.length) {
+      html += `
         <div class="mapp-section-label">Which group is Primary?</div>
-        <div class="mb-field-hint">This process has more than one independent colour group. The Primary group's quantities become this lot's total — the others are recorded per colour but don't add to it.</div>
-        <div class="mb-color-chip-list mb-mt-2" id="lot-primary-axis-pick">
-          ${this.axes.map(a => `
-            <button type="button" class="mb-color-chip" style="min-width:auto;padding:10px 16px;" data-primary-axis-key="${MApp.Util.escapeHtml(a.key)}">
-              ${MApp.Util.escapeHtml(a.label)}
+        <div class="mb-field-hint">Its quantities become this lot's total. The others are recorded per colour but don't add to it.</div>
+        <div class="mapp-lot-primary" role="radiogroup" aria-label="Primary group">
+          ${radioGroups.map(g => `
+            <button type="button" role="radio" class="mapp-lot-primary-opt" aria-checked="${g.key === m.primaryKey}" data-primary-key="${e(g.key)}">
+              <span class="mapp-lot-radio" aria-hidden="true"></span><span>${e(g.label)}</span>
             </button>`).join('')}
         </div>`;
-      colorWrap.querySelectorAll('[data-primary-axis-key]').forEach(el => {
-        el.addEventListener('click', () => this.pickPrimaryAxis(el.dataset.primaryAxisKey));
-      });
-      return;
     }
 
-    const primaryAxis = isMultiAxis ? (this.axes.find(a => a.key === this.primaryAxisKey) || this.axes[0]) : null;
-    const primaryColors = isMultiAxis ? primaryAxis.colors : this.flatColors;
-    const secondaryAxes = isMultiAxis ? this.axes.filter(a => a !== primaryAxis) : [];
-    const total = this.currentTotalQty();
-
-    let html = `<div class="mapp-section-label">${MApp.Util.escapeHtml(isMultiAxis ? primaryAxis.label : 'Colors produced')}</div>`;
-    html += `<div class="mb-color-chip-list" id="lot-primary-chips">`;
-    primaryColors.forEach(color => { html += this._colorChipHtml(color); });
-    html += `</div><div class="mb-text-sm mb-text-steel mb-mt-2" id="lot-total-qty-display">Total: ${total} unit(s)</div>`;
-
-    secondaryAxes.forEach(axis => {
-      html += `<div class="mapp-section-label mb-mt-4">${MApp.Util.escapeHtml(axis.label)}</div><div class="mb-color-chip-list">`;
-      axis.colors.forEach(color => { html += this._secondaryChipHtml(axis.key, color); });
-      html += '</div>';
+    m.groups.forEach(g => {
+      const rows = m.rowsIn(g.key);
+      if (rows.length === 0) return;
+      const allChecked = rows.every(r => r.checked);
+      const roles = new Set(rows.map(r => r.isPrimary));
+      let role = '';
+      if (roles.size === 1 && !(g.radio && !m.primaryKey)) {
+        const v = rows[0].isPrimary;
+        if (v === true) role = 'Adds to the lot total';
+        else if (v === false) role = 'Recorded per colour';
+      }
+      html += `
+        <section class="mapp-lot-group" data-group="${e(g.key)}">
+          <div class="mapp-lot-group-head">
+            <div>
+              <div class="mapp-lot-group-title">${e(g.key === '' ? 'Colours produced' : m.groupHeading(g))}</div>
+              ${role ? `<div class="mapp-lot-group-role">${role}</div>` : ''}
+            </div>
+            ${rows.length > 1 ? `<button type="button" class="mb-btn-text mapp-lot-link" data-group-all="${e(g.key)}" data-check="${allChecked ? 'false' : 'true'}">${allChecked ? 'Clear all' : 'Select all'}</button>` : ''}
+          </div>
+          <div class="mapp-lot-color-list">
+            ${rows.map(r => this._colorRowHtml(r)).join('')}
+          </div>
+        </section>`;
     });
 
-    colorWrap.innerHTML = html;
-    this._wireColorSectionEvents();
-  },
-
-  // Records THIS lot's Primary Axis choice (see _renderQtyOrColorSection's
-  // picker). Any colour quantities already entered are dropped: they were
-  // entered against a different axis's colour list, so carrying them over
-  // would attribute one axis's quantities to another.
-  pickPrimaryAxis(axisKey) {
-    if (!axisKey || !this.axes.some(a => a.key === axisKey)) return;
-    this.primaryAxisKey = axisKey;
-    this.primaryIsDefault = false;
-    this.colorQtyByColor = {};
-    this.secondaryChoice = {};
-    this._renderQtyOrColorSection();
-  },
-
-  _wireColorSectionEvents() {
-    const colorWrap = document.getElementById('lot-color-wrap');
-    if (!colorWrap) return;
-
-    colorWrap.querySelectorAll('[data-chip-color]').forEach(el => {
-      const color = el.dataset.chipColor;
-      const toggleBtn = el.querySelector('[data-chip-toggle]');
-      if (toggleBtn) toggleBtn.addEventListener('click', () => this.toggleColorChip(color));
-      const minus = el.querySelector('[data-step="-1"]');
-      const plus = el.querySelector('[data-step="1"]');
-      if (minus) minus.addEventListener('click', () => this.stepColor(color, -1));
-      if (plus) plus.addEventListener('click', () => this.stepColor(color, 1));
-    });
-
-    colorWrap.querySelectorAll('[data-secondary-chip]').forEach(el => {
-      el.addEventListener('click', () => this.pickSecondaryColor(el.dataset.axisKey, el.dataset.color));
-    });
-  },
-
-  _colorChipHtml(color) {
-    const qty = this.colorQtyByColor[color] || 0;
-    const checked = qty > 0;
-    return `
-      <div class="mb-color-chip${checked ? ' checked' : ''}" data-chip-color="${MApp.Util.escapeHtml(color)}">
-        <button type="button" class="mb-color-chip-toggle" data-chip-toggle>
-          <span class="mb-flex-row"><span class="mb-color-chip-swatch" style="background:${this._swatchColor(color)};"></span>${MApp.Util.escapeHtml(color)}</span>
-        </button>
-        ${checked ? `
-          <div class="mb-stepper">
-            <button type="button" class="mb-stepper-btn" data-step="-1">−</button>
-            <span class="mb-stepper-value">${qty}</span>
-            <button type="button" class="mb-stepper-btn" data-step="1">+</button>
-          </div>` : ''}
+    const total = m.lotTotal();
+    html += `
+      <div class="mapp-lot-total" aria-live="polite">
+        <span>Lot total</span><strong id="lot-total-qty">${e(MApp.LotModel.formatQty(total))}</strong>
+      </div>
+      <div class="mb-field-hint" id="lot-combo-preview">${e(m.combinationPreview())}</div>
+      <div class="mapp-lot-color-tools">
+        <button type="button" class="mb-btn-text mapp-lot-link" data-add-color>+ Add another colour</button>
+        ${m.manual ? '<button type="button" class="mb-btn-text mapp-lot-link" data-revert-qty>Back to a single quantity</button>' : ''}
       </div>`;
+    el.innerHTML = html;
+
+    el.querySelectorAll('[data-primary-key]').forEach(btn => btn.addEventListener('click', () => {
+      m.setPrimary(btn.dataset.primaryKey);
+      this._renderLotSections();
+    }));
+    el.querySelectorAll('[data-group-all]').forEach(btn => btn.addEventListener('click', () => {
+      m.toggleGroup(btn.dataset.groupAll, btn.dataset.check === 'true');
+      this._renderLotSections();
+    }));
+    el.querySelectorAll('[data-row-toggle]').forEach(btn => btn.addEventListener('click', () => {
+      const row = m.rowById(btn.dataset.rowToggle);
+      if (!row) return;
+      m.toggle(row, !row.checked);
+      this._renderLotSections();
+      // Checking a colour is nearly always followed by its quantity.
+      if (row.checked && !m.rowQtyText(row)) {
+        const input = document.querySelector(`[data-row-qty="${row.id}"]`);
+        if (input) input.focus();
+      }
+    }));
+    el.querySelectorAll('[data-row-qty]').forEach(input => input.addEventListener('input', () => {
+      m.setQty(m.rowById(input.dataset.rowQty), input.value);
+      this._refreshDerived(input);
+    }));
+    const add = el.querySelector('[data-add-color]');
+    if (add) add.addEventListener('click', () => this.addCustomColor());
+    const revert = el.querySelector('[data-revert-qty]');
+    if (revert) revert.addEventListener('click', () => this.revertToSingleQty());
   },
 
-  _secondaryChipHtml(axisKey, color) {
-    const selected = this.secondaryChoice[axisKey] === color;
+  _colorRowHtml(r) {
+    const m = this.model;
+    const e = MApp.Util.escapeHtml;
+    const avail = m.rowAvailability(r);
+    const availHtml = avail
+      ? `<span class="mapp-lot-color-avail${avail.qty <= 0 ? ' is-empty' : ''}" title="${e(avail.parts.map(p => `${p.label}: ${MApp.LotModel.formatQty(p.qty)}`).join(' • '))}">${e(MApp.LotModel.formatQty(avail.qty))} avail.</span>`
+      : '';
+    const following = r.checked && r.isPrimary === false && r.autoSynced;
     return `
-      <button type="button" class="mb-color-chip${selected ? ' checked' : ''}" style="min-width:auto;padding:10px 16px;" data-secondary-chip data-axis-key="${MApp.Util.escapeHtml(axisKey)}" data-color="${MApp.Util.escapeHtml(color)}">
-        <span class="mb-flex-row"><span class="mb-color-chip-swatch" style="background:${this._swatchColor(color)};"></span>${MApp.Util.escapeHtml(color)}</span>
-      </button>`;
+      <div class="mapp-lot-color${r.checked ? ' is-checked' : ''}">
+        <button type="button" class="mapp-lot-color-toggle" aria-pressed="${r.checked}" data-row-toggle="${r.id}">
+          <span class="mapp-lot-check" aria-hidden="true"></span>
+          <span class="mb-color-chip-swatch" style="background:${this._swatchColor(r.color)};"></span>
+          <span class="mapp-lot-color-name">${e(r.color)}</span>
+          ${availHtml}
+        </button>
+        ${r.checked ? `
+          <input type="number" class="mapp-lot-color-qty" inputmode="decimal" step="any" placeholder="Qty"
+            aria-label="${e(r.color)} quantity" data-row-qty="${r.id}" value="${e(m.rowQtyText(r))}">` : ''}
+        ${following ? '<div class="mapp-lot-color-note">Follows the lot — type to set it yourself</div>' : ''}
+      </div>`;
   },
 
   // Best-effort CSS swatch for a Color Master name — recognizes common
@@ -4830,86 +6033,332 @@ MApp.Production = {
     return `hsl(${hash % 360}, 55%, 45%)`;
   },
 
-  toggleColorChip(color) {
-    const current = this.colorQtyByColor[color] || 0;
-    this.colorQtyByColor[color] = current > 0 ? 0 : 1;
-    this._renderQtyOrColorSection();
+  // After a typed quantity: everything that follows from it, without
+  // re-rendering the box being typed in.
+  _refreshDerived(activeInput) {
+    const m = this.model;
+    if (!m) return;
+    document.querySelectorAll('[data-row-qty]').forEach(input => {
+      if (input === activeInput) return;
+      const row = m.rowById(input.dataset.rowQty);
+      if (row) input.value = m.rowQtyText(row);
+    });
+    const total = document.getElementById('lot-total-qty');
+    if (total) total.textContent = MApp.LotModel.formatQty(m.lotTotal());
+    const preview = document.getElementById('lot-combo-preview');
+    if (preview) preview.textContent = m.combinationPreview();
+    this._renderAllocation();
+    this._renderMaterials();
+    this._paintRateHint();
   },
 
-  stepColor(color, delta) {
-    const next = Math.max(0, (this.colorQtyByColor[color] || 0) + delta);
-    this.colorQtyByColor[color] = next;
-    this._renderQtyOrColorSection();
-  },
-
-  pickSecondaryColor(axisKey, color) {
-    this.secondaryChoice[axisKey] = color;
-    this._renderQtyOrColorSection();
-  },
-
-  currentTotalQty() {
-    if (!this.flatColors || this.flatColors.length === 0) {
-      return MApp.Util.toNumber(document.getElementById('lot-qty')?.value);
+  // production.js#addCustomColorRow -- a one-off colour for this lot. With
+  // two or more groups, the operator says which one it belongs to; left
+  // unfiled it is recorded separately and does not add to the total.
+  async addCustomColor() {
+    const m = this.model;
+    if (!m) return;
+    const have = new Set(m.rows.map(r => String(r.color || '').toLowerCase()));
+    const items = (this.colorMaster || []).map(c => c.name).filter(n => n && !have.has(n.toLowerCase()))
+      .map(n => ({ value: n, label: n }));
+    const picked = await MApp.Picker.open({ title: 'Add a colour', items, allowCustom: true });
+    if (!picked) return;
+    let groupKey = '';
+    if (m.options.length >= 2) {
+      const choice = await MApp.Picker.open({
+        title: `Which group is "${picked.value}" in?`,
+        searchable: false,
+        items: [
+          { value: '', label: 'Not in any group', sublabel: 'Recorded separately — does not add to the lot total' },
+          ...m.options.map(o => {
+            const sibling = m.rowsIn(o.key)[0];
+            const counts = sibling ? sibling.isPrimary === true : o.isPrimary;
+            return { value: o.key, label: o.label, sublabel: counts ? 'Primary — adds to the lot total' : 'Recorded per colour' };
+          })
+        ]
+      });
+      if (!choice) return;
+      groupKey = choice.value;
     }
-    return Object.values(this.colorQtyByColor).reduce((s, q) => s + (q || 0), 0);
+    const error = m.addCustomColor(picked.value, groupKey);
+    if (error) { MApp.Toast.error(error); return; }
+    this._renderLotSections();
   },
 
-  // Scales this process's recipe (qtyPerUnit) by the lot's total qty for
-  // COMMON components, or by that color's own qty for color-scoped ones —
-  // the recipe's qtyPerUnit is defined as exactly this ("qty needed per
-  // unit of process output"), so this is the recipe's own default, not a
-  // guess. Desktop additionally lets an operator hand-override individual
-  // component quantities on a per-lot basis; that power-user editing step
-  // is out of scope for the mobile "log it and move on" flow.
-  buildComponentsConsumed(totalQty, colorBreakdown) {
-    const components = [];
-    (this.recipeComponents || []).forEach(r => {
-      if (!r.itemName) return;
-      const isCommon = !r.colorGroup || r.colorGroup.toUpperCase() === 'COMMON';
-      let qty;
-      let color = '';
+  // production.js#enableManualColors -- a process with no colour groups of
+  // its own can still record this one lot per colour, from Color Master.
+  enableManualColors() {
+    const m = this.model;
+    if (!m) return;
+    if (!(this.colorMaster || []).length) {
+      MApp.Toast.error('No colours configured yet — add one in Color Master first.');
+      return;
+    }
+    this.model = MApp.LotModel.using({ ...m.ctx, colorMaster: this.colorMaster, manualColors: true });
+    this._carryLotEdits(m, this.model);
+    this._renderLotSections();
+  },
 
-      if (isCommon) {
-        qty = r.qtyPerUnit * totalQty;
-      } else if (colorBreakdown && colorBreakdown.length) {
-        const match = colorBreakdown.find(c => c.color.toLowerCase() === r.colorGroup.toLowerCase());
-        if (!match) return;
-        qty = r.qtyPerUnit * match.qty;
-        color = match.color;
-      } else {
-        return;
-      }
+  revertToSingleQty() {
+    const m = this.model;
+    if (!m) return;
+    this.model = MApp.LotModel.using({ ...m.ctx, manualColors: false });
+    this._carryLotEdits(m, this.model);
+    this._renderLotSections();
+  },
 
-      if (qty <= 0) return;
-      components.push({
-        itemName: r.itemName,
-        size: r.size || '',
-        color: color,
-        sourceType: r.sourceType,
-        qty: Math.round(qty * 1000) / 1000,
-        colorGroup: isCommon ? 'COMMON' : r.colorGroup,
-        // The recipe row's own Unit must ride along, exactly as the desktop
-        // form carries it (production.js addComponentRow/_readProdComponentRow).
-        // qtyPerUnit is expressed IN that unit, and both consumption paths
-        // convert a non-blank unit to the item's Base Unit before debiting
-        // (stock_service for ITEM rows, warehouse_service Pass 2 for POOL
-        // rows) -- a blank unit means "already in Base Unit". Omitting it
-        // therefore did not merely lose a label: a recipe row measured in
-        // e.g. Dozen was debited as if its number were Pcs, so a
-        // mobile-logged lot silently under-consumed Stock/Warehouse Pool by
-        // that item's whole conversion factor, while the identical lot
-        // logged on desktop consumed the right amount.
-        unit: r.unit || ''
+  // An existing lot's recorded consumption survives a switch between a
+  // single quantity and colours, as desktop's does.
+  _carryLotEdits(from, to) {
+    if (from.saved) {
+      to.saved = from.saved;
+      to.restoredSignature = from.restoredSignature;
+      to.restoredLines = from.restoredLines;
+    }
+  },
+
+  // ── Allocation grid ────────────────────────────────────────────────
+  _axisQualifierLabel(axisKey) {
+    const key = String(axisKey || '').trim();
+    if (!key) return '';
+    const m = key.match(/^(pool|tag):(.+)$/i);
+    return m ? m[2] : key;
+  },
+
+  _renderAllocation() {
+    const el = document.getElementById('lot-alloc-section');
+    if (!el) return;
+    const m = this.model;
+    const shape = m && m.mode === 'colors' ? m.allocationShape() : null;
+    if (!shape) { el.innerHTML = ''; return; }
+    const e = MApp.Util.escapeHtml;
+    const fq = v => MApp.LotModel.formatQty(v);
+
+    if (shape.tooMany) {
+      el.innerHTML = `
+        <div class="mapp-lot-alloc">
+          <div class="mapp-lot-alloc-status is-bad">Two separate sub-groups each have several colours checked.</div>
+          <div class="mb-field-hint">This lot cannot be recorded as one combination — split it into separate lots, one per colour of the second sub-group, or the Warehouse Pool will credit each colour on its own.</div>
+        </div>`;
+      return;
+    }
+
+    // Typing into the grid re-renders only its totals, so a half-typed
+    // cell keeps its focus; a checklist change rebuilds it.
+    const focused = document.activeElement && document.activeElement.dataset
+      ? document.activeElement.dataset.allocCell : null;
+    const axisLabel = this._axisQualifierLabel(shape.axisKey) || 'the second sub-group';
+    el.innerHTML = `
+      <div class="mapp-lot-alloc">
+        <div class="mapp-section-label">Which went with which</div>
+        <div class="mb-field-hint">This batch has ${shape.columns.length} ${e(axisLabel)} colours checked, so the quantities alone can't say which went with which. Enter how many of each colour used each one.</div>
+        <div class="mapp-lot-alloc-scroll">
+          <table class="mapp-lot-alloc-table">
+            <thead><tr><th scope="col">Colour</th><th scope="col">Made</th>${shape.columns.map(c => `<th scope="col">${e(c.color)}</th>`).join('')}<th scope="col">Allocated</th></tr></thead>
+            <tbody>
+              ${shape.primaries.map(p => `
+                <tr>
+                  <th scope="row">${e(p.color)}</th>
+                  <td>${e(fq(p.qty))}</td>
+                  ${shape.columns.map(c => `<td><input type="number" inputmode="decimal" step="any" aria-label="${e(p.color)} with ${e(c.color)}"
+                    data-alloc-cell="${e(m.cellKey(p.color, c.color))}" data-alloc-p="${e(p.color)}" data-alloc-c="${e(c.color)}"
+                    value="${e(m.allocationValues[m.cellKey(p.color, c.color)] ?? '')}"></td>`).join('')}
+                  <td data-alloc-total="${e(p.color)}"></td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+        <div class="mapp-lot-alloc-status" id="lot-alloc-status"></div>
+      </div>`;
+    el.querySelectorAll('[data-alloc-cell]').forEach(input => {
+      input.addEventListener('input', () => {
+        m.setAllocation(input.dataset.allocP, input.dataset.allocC, input.value);
+        this._paintAllocationTotals(shape);
+      });
+      if (focused && input.dataset.allocCell === focused) input.focus();
+    });
+    this._paintAllocationTotals(shape);
+  },
+
+  _paintAllocationTotals(shape) {
+    const m = this.model;
+    const problems = [];
+    document.querySelectorAll('[data-alloc-total]').forEach(td => {
+      const p = shape.primaries.find(x => x.color === td.dataset.allocTotal);
+      if (!p) return;
+      const total = m.allocationRowTotal(shape, p.color);
+      const ok = Math.abs(total - p.qty) < 0.0001;
+      if (!ok) problems.push(`${p.color}: ${MApp.LotModel.formatQty(total)} of ${MApp.LotModel.formatQty(p.qty)}`);
+      td.textContent = MApp.LotModel.formatQty(total);
+      td.className = ok ? 'is-ok' : 'is-bad';
+    });
+    const status = document.getElementById('lot-alloc-status');
+    if (!status) return;
+    status.className = `mapp-lot-alloc-status ${problems.length ? 'is-bad' : 'is-ok'}`;
+    status.textContent = problems.length
+      ? `Each row must add up to that colour's own quantity — ${problems.join('; ')}.`
+      : '✓ Allocation complete.';
+  },
+
+  // ── Materials consumed ─────────────────────────────────────────────
+  // The recipe, scaled to the lot, one line per thing consumed -- grouped
+  // the way desktop's three tables group it: the whole lot, then each
+  // colour. Every quantity can be corrected here, and a corrected one
+  // stays as typed while the colours and quantities above change.
+  _renderMaterials() {
+    const el = document.getElementById('lot-materials-section');
+    if (!el) return;
+    const m = this.model;
+    if (!m) { el.innerHTML = ''; return; }
+    const e = MApp.Util.escapeHtml;
+    const fq = v => MApp.LotModel.formatQty(v);
+    const lines = m.lines();
+    const edited = lines.filter(l => l.edited).length;
+    const noQtyYet = m.mode === 'colors' ? m.rawCheckedColorQtys().length === 0 : String(m.plainQty).trim() === '';
+
+    const sections = new Map();
+    lines.forEach(l => {
+      const key = MApp.LotModel.isCommon(l.colorGroup) ? '' : l.colorGroup;
+      if (!sections.has(key)) sections.set(key, []);
+      sections.get(key).push(l);
+    });
+    const order = [...sections.keys()].sort((a, b) => (a === '' ? -1 : b === '' ? 1 : 0));
+
+    const lineHtml = l => {
+      const avail = m.lineAvailability(l);
+      const short = avail !== null && Number(l.qty) > avail;
+      const unit = l.unit || m.G._resolveDisplayUnit(l.itemName, l.size) || '';
+      const sub = [
+        l.sourceType === 'POOL' ? `Warehouse Pool${l.poolColor ? ` · ${l.poolColor}` : ''}` : 'Stock',
+        avail !== null ? `${fq(avail)} avail.` : '',
+        l.addedByHand ? 'Added by hand' : (l.edited ? 'Entered by hand' : '')
+      ].filter(Boolean).join(' · ');
+      return `
+        <div class="mapp-mat${l.edited ? ' is-edited' : ''}${short ? ' is-short' : ''}">
+          <div class="mapp-mat-main">
+            <div class="mapp-mat-name">${e(l.itemName)}${l.size ? ` <span class="mapp-mat-size">${e(l.size)}</span>` : ''}</div>
+            <div class="mapp-mat-sub">${e(sub)}</div>
+          </div>
+          <div class="mapp-mat-qty">
+            <input type="number" inputmode="decimal" step="any" aria-label="${e(l.itemName)} quantity" data-mat-qty="${e(l.id)}" value="${e(fq(l.qty))}">
+            <span class="mapp-mat-unit">${e(unit)}</span>
+          </div>
+          <div class="mapp-mat-actions">
+            ${l.edited && !l.addedByHand ? `<button type="button" class="mb-btn-text mapp-lot-link" data-mat-reset="${e(l.id)}">Use recipe</button>` : ''}
+            <button type="button" class="mb-btn-text mapp-lot-link mapp-mat-remove" data-mat-remove="${e(l.id)}">Remove</button>
+          </div>
+        </div>`;
+    };
+
+    const body = lines.length === 0
+      ? `<div class="mb-field-hint">${noQtyYet ? 'Enter the quantity to see what this lot consumes.' : 'This process has no recipe — add what the lot consumed below.'}</div>`
+      : order.map(key => `
+          <div class="mapp-mat-section">
+            <div class="mapp-section-label">${e(key === '' ? 'Whole lot' : key)}</div>
+            ${sections.get(key).map(lineHtml).join('')}
+          </div>`).join('');
+
+    const open = this._materialsOpen || edited > 0;
+    el.innerHTML = `
+      <details class="mapp-lot-mats"${open ? ' open' : ''}>
+        <summary>
+          <span class="mapp-lot-mats-title">Materials consumed</span>
+          <span class="mapp-lot-mats-count">${lines.length} line${lines.length === 1 ? '' : 's'}${edited ? ` · ${edited} by hand` : ''}</span>
+        </summary>
+        <div class="mb-field-hint">From the process recipe, scaled to this lot. Change any quantity to what was actually used — it stays as you enter it.</div>
+        ${body}
+        <button type="button" class="mb-btn-text mapp-lot-link" data-mat-add>+ Add material</button>
+      </details>`;
+
+    const details = el.querySelector('details');
+    details.addEventListener('toggle', () => { this._materialsOpen = details.open; });
+    el.querySelectorAll('[data-mat-qty]').forEach(input => {
+      input.addEventListener('change', () => {
+        if (String(input.value).trim() === '' || !Number.isFinite(Number(input.value))) {
+          MApp.Toast.error('Enter a number — or Remove the line.');
+          this._renderMaterials();
+          return;
+        }
+        m.pinQty(input.dataset.matQty, Number(input.value));
+        this._materialsOpen = true;
+        this._renderMaterials();
       });
     });
-    return components;
+    el.querySelectorAll('[data-mat-reset]').forEach(btn => btn.addEventListener('click', () => {
+      m.unpin(btn.dataset.matReset);
+      this._renderMaterials();
+    }));
+    el.querySelectorAll('[data-mat-remove]').forEach(btn => btn.addEventListener('click', () => {
+      m.removeLine(btn.dataset.matRemove);
+      this._materialsOpen = true;
+      this._renderMaterials();
+    }));
+    el.querySelector('[data-mat-add]').addEventListener('click', () => this.addMaterial());
   },
 
+  // Desktop's "+ Add Component": any Items Master item, or a Warehouse
+  // Pool bucket (item and colour), for the whole lot or one colour. It
+  // starts at one per unit of what it is for.
+  async addMaterial() {
+    const m = this.model;
+    if (!m) return;
+    const items = (this.items || []).map((it, i) => ({
+      value: `item:${i}`, label: it.size ? `${it.name} [${it.size}]` : it.name, sublabel: 'Stock', src: 'ITEM', name: it.name, size: it.size || '', unit: ''
+    }));
+    const avail = m.poolAvailByItemColor();
+    const pool = [];
+    avail.forEach((colors, itemLower) => {
+      const name = ((m.ctx.poolRows || []).find(r => String(r.outputItemName || '').trim().toLowerCase() === itemLower) || {}).outputItemName || itemLower;
+      colors.forEach((qty, colorLower) => {
+        const color = ((m.ctx.poolRows || []).find(r => String(r.outputItemName || '').trim().toLowerCase() === itemLower
+          && String(r.color || '').trim().toLowerCase() === colorLower) || {}).color || '';
+        pool.push({ value: `pool:${pool.length}`, label: color ? `${name} · ${color}` : name, sublabel: `Warehouse Pool · ${MApp.LotModel.formatQty(qty)} avail.`, src: 'POOL', name, size: '', poolColor: color });
+      });
+    });
+    const picked = await MApp.Picker.open({ title: 'Add material', items: pool.concat(items), allowCustom: true });
+    if (!picked) return;
+
+    let scope = 'COMMON';
+    let perUnitOf = m.lotTotal();
+    if (m.mode === 'colors') {
+      const colors = [];
+      m.rawCheckedColorQtys().forEach(c => { if (!colors.some(x => m.sameText(x.color, c.color))) colors.push(c); });
+      if (colors.length) {
+        const choice = await MApp.Picker.open({
+          title: 'Used for',
+          searchable: false,
+          items: [{ value: 'COMMON', label: 'The whole lot' }, ...colors.map(c => ({ value: c.color, label: c.color, sublabel: `${MApp.LotModel.formatQty(m.totalQtyForColorName(c.color))} units` }))]
+        });
+        if (!choice) return;
+        scope = choice.value;
+        if (scope !== 'COMMON') perUnitOf = m.totalQtyForColorName(scope);
+      }
+    }
+    const isPool = picked.src === 'POOL';
+    const name = picked.isCustom ? picked.value : picked.name;
+    m.addLine({
+      itemName: name,
+      size: picked.size || '',
+      narration: isPool ? '' : m.G._resolveDisplayNarration(name, picked.size || '', ''),
+      color: isPool ? (picked.poolColor || '') : '',
+      sourceType: isPool ? 'POOL' : 'ITEM',
+      qty: MApp.LotModel.fq(perUnitOf > 0 ? perUnitOf : 1),
+      colorGroup: scope,
+      poolColor: isPool ? (picked.poolColor || '') : '',
+      unit: ''
+    });
+    this._materialsOpen = true;
+    this._renderMaterials();
+  },
+
+  // ── Save ───────────────────────────────────────────────────────────
   // Note: source's own single-verb _apiCall handled both reads and
   // writes -- saveProduction is mutation=True server-side (registry.py),
   // so this call uses Api.mutateWithId, not .call, unlike source.
   async saveLot() {
-    if (!this.selection.process) {
+    const process = this.selection.process;
+    const m = this.model;
+    if (!process || !m) {
       MApp.Toast.error('Choose a process first.');
       return;
     }
@@ -4917,86 +6366,52 @@ MApp.Production = {
       MApp.Toast.error('Choose or add who this lot is assigned to.');
       return;
     }
-    // Mirrors save_production's own "Pick which group is Primary" refusal,
-    // caught here so the operator is sent back to the picker instead of to
-    // a server error (see _renderQtyOrColorSection).
-    if (this.axes.length >= 2 && this.primaryIsDefault) {
-      MApp.Toast.error('Pick which colour group is Primary before saving.');
+    const invalid = m.validate();
+    if (invalid) {
+      MApp.Toast.error(invalid);
       return;
     }
+    const total = m.lotTotal();
+    // Zero and negative lots are allowed -- a correction or reversal is
+    // logged as one rather than by editing history -- but never by a slip.
+    if (total <= 0 && !window.confirm(`This lot's total is ${MApp.LotModel.formatQty(total)}. Save it as a correction lot?`)) return;
 
-    const totalQty = this.currentTotalQty();
-    if (!totalQty || totalQty <= 0) {
-      MApp.Toast.error(this.flatColors.length > 0
-        ? 'Select at least one color and set its quantity.'
-        : 'Enter a quantity greater than zero.');
-      return;
-    }
-
-    let colorBreakdown = null;
-    if (this.flatColors.length > 0) {
-      colorBreakdown = [];
-      Object.keys(this.colorQtyByColor).forEach(color => {
-        const qty = this.colorQtyByColor[color];
-        if (qty > 0) colorBreakdown.push({ color, qty, isCustom: false, countsTowardTotal: true, axisKey: this.primaryAxisKey || '' });
-      });
-      Object.keys(this.secondaryChoice).forEach(axisKey => {
-        const color = this.secondaryChoice[axisKey];
-        if (color) colorBreakdown.push({ color, qty: totalQty, isCustom: false, countsTowardTotal: false, axisKey });
-      });
-    }
-
-    const componentsConsumed = this.buildComponentsConsumed(totalQty, colorBreakdown);
+    const componentsConsumed = m.payloadLines();
     if (componentsConsumed.length === 0) {
-      MApp.Toast.error('This process has no recipe configured yet — add its components on the desktop Products & Processes tab first.');
+      MApp.Toast.error('Add what this lot consumed — a lot needs at least one material.');
       return;
     }
 
     const formData = {
       date: document.getElementById('lot-date')?.value || MApp.Util.todayInputValue(),
-      processId: this.selection.process.processId,
+      processId: process.processId,
       assignedBy: (document.getElementById('lot-assignedby')?.value || '').trim(),
       assignedTo: this.selectedAssignedTo,
       extraChargeType: this.selectedExtraChargeType || '',
       status: this.selectedStatus || 'Pending',
       remarks: (document.getElementById('lot-remarks')?.value || '').trim(),
+      // Always sent, as desktop's form always sends it: save_production
+      // falls back to the process default only when this is blank, so a
+      // customised lot keeps its own bucket and a new one gets the default.
+      outputItemName: String(this.outputItemName || '').trim() || (process.outputItemName || ''),
       componentsConsumed: JSON.stringify(componentsConsumed)
     };
 
-    if (!colorBreakdown) {
-      formData.qty = totalQty;
+    if (m.mode === 'qty') {
+      formData.qty = total;
     } else {
-      formData.colorBreakdown = JSON.stringify(colorBreakdown);
-      if (this.axes.length >= 2) {
-        const primaryAxis = this.axes.find(a => a.key === this.primaryAxisKey);
-        if (primaryAxis) formData.primaryColorAxis = primaryAxis.label;
-      }
+      formData.colorBreakdown = JSON.stringify(m.checkedColorQtys());
+      const primary = m.primaryLabel();
+      if (primary) formData.primaryColorAxis = primary;
     }
 
-    if (this.selection.process.isFinalStage && this.selection.productId) {
-      formData.productId = this.selection.productId;
-      formData.productName = this.selection.productName;
+    if (process.isFinalStage || this.selection.productId) {
+      formData.productId = this.selection.productId || '';
+      formData.productName = this.selection.productName || '';
     }
 
-    if (this.editingLot) {
-      formData.rowIdx = this.editingLot.rowIdx;
-      // A lot's Output Item Name is editable per lot on desktop (a
-      // rework/variant run credits its own Warehouse Pool bucket), and
-      // save_production falls back to the PROCESS's default whenever this
-      // field arrives blank. Omitting it therefore didn't leave the saved
-      // value alone -- it silently reset a customised lot back to the
-      // process default, moving that lot's pool credit into a different
-      // bucket, just from opening it on mobile and pressing Save.
-      if (this.editingLot.outputItemName) formData.outputItemName = this.editingLot.outputItemName;
-    }
+    if (this.editingLot) formData.rowIdx = this.editingLot.rowIdx;
 
-    // Note: re-enabling after this point is NOT a single blanket
-    // setSheetBusy(false) in a finally block — on success, resetLogLotForm()
-    // replaces the body with fresh HTML that already bakes in the correct
-    // "nothing chosen yet" disabled states (Model/Type/Process locked
-    // again); a blanket re-enable afterwards would incorrectly unlock them.
-    // Only the failure path restores the still-populated form via
-    // setSheetBusy, since nothing was reset there.
     // Phase 6: mutation-id generated once, reused for both this live
     // attempt and any later outbox replay (see MApp.Stock.submitAdjust's
     // own comment for why -- same reasoning applies to every mutation).
@@ -5012,9 +6427,12 @@ MApp.Production = {
       if (!res || !res.success) {
         MApp.Toast.error((res && res.message) || 'Could not save this lot.');
         MApp.Util.setSheetBusy('log-lot-body', 'log-lot-save-btn', false, null, idleLabel);
+        this._applyCascadeEnabledStates();
         return;
       }
-      await this._onLotSaved(isEdit ? 'Lot updated.' : `Lot logged${res.data && res.data.lotNumber ? ' — ' + res.data.lotNumber : ''}.`);
+      // The server's own message: it names the lot, and says when a
+      // component was dropped or a pool bucket will go negative.
+      await this._onLotSaved(res.message || (isEdit ? 'Lot updated.' : `Lot logged${res.data && res.data.lotNumber ? ' — ' + res.data.lotNumber : ''}.`));
     } catch (err) {
       if (err && err.isNetworkError) {
         // The fetch itself never reached the server -- queue under the
@@ -5034,40 +6452,40 @@ MApp.Production = {
       // to queue for blind retry.
       MApp.Toast.error(err.message || 'Could not save this lot. Please try again.');
       MApp.Util.setSheetBusy('log-lot-body', 'log-lot-save-btn', false, null, idleLabel);
+      this._applyCascadeEnabledStates();
     }
   },
 
-  // Create keeps the sheet OPEN and resets to a blank form so an operator
-  // can log several lots back-to-back without re-opening the sheet each
-  // time; an edit closes it instead -- "reset to a blank create form"
-  // makes no sense as the result of editing one specific existing lot.
+  // An edit closes the sheet. A new lot keeps it open on the same process,
+  // date and supervisor, with the quantities, contractor and remarks
+  // cleared -- the next lot is nearly always the same process for someone
+  // else, and re-picking the process four levels deep for every one of
+  // them was the slowest part of logging a run of lots.
   async _onLotSaved(message) {
-    MApp.Toast.success(message);
+    const toast = String(message || '').includes('Warning') ? MApp.Toast.error : MApp.Toast.success;
+    toast.call(MApp.Toast, message);
     const saveBtn = document.getElementById('log-lot-save-btn');
     if (this.editingLot) {
       this.editingLot = null;
       this.closeLogLotSheet();
       if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Log Lot'; }
     } else {
-      await this.resetLogLotForm();
+      await this.resetLogLotForm({ keepProcess: true });
       if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Log Lot'; }
     }
     this.load();
   },
 
-  async resetLogLotForm() {
-    this.selection = { size: '', model: '', type: '', processId: '', process: null, productId: '', productName: '' };
-    this.flatColors = [];
-    this.axes = [];
-    this.primaryAxisKey = '';
-    this.primaryIsDefault = false;
-    this.recipeComponents = [];
-    this.colorQtyByColor = {};
-    this.secondaryChoice = {};
-    this.selectedStatus = 'Pending';
-    this.selectedAssignedTo = '';
-    this.selectedExtraChargeType = '';
-    document.getElementById('log-lot-body').innerHTML = this._formHtml();
+  async resetLogLotForm(opts = {}) {
+    const keep = opts.keepProcess ? this.selection.process : null;
+    this._keepDate = keep ? (document.getElementById('lot-date')?.value || '') : '';
+    this._keepAssignedBy = keep ? (document.getElementById('lot-assignedby')?.value || '') : '';
+    this._resetFormState();
+    document.getElementById('log-lot-body').innerHTML = this._formHtml(null);
+    this._wireForm();
+    this._keepDate = '';
+    this._keepAssignedBy = '';
+    if (keep) await this.onProcessSelected(keep.processId);
   }
 };
 // ================================================================

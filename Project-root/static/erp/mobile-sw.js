@@ -85,7 +85,14 @@
 // document rules desktop applies on screen are now live on screen here
 // too, inside print containers, so the sheet measures itself as desktop's
 // does.
-const CACHE_NAME = 'erp-mobile-shell-v65';
+// v66: logging a lot records what desktop records. mobile.js carries
+// desktop's lot model (MApp.LotModel): the colour checklist grouped and
+// counted as desktop groups it, secondary colours that follow the lot,
+// the allocation grid, and the components consumed built by desktop's own
+// rules. The Log Lot sheet finds a process in one search, takes typed
+// colour quantities, shows and lets the operator correct what the lot
+// consumes, shows the payable, and stays on the process after logging.
+const CACHE_NAME = 'erp-mobile-shell-v66';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

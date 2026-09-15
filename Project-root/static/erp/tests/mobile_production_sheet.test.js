@@ -30,7 +30,7 @@ function loadAsGlobal(relPath, exportName) {
 }
 
 // A recorded-consumption row: qty + colorGroup, 'COMMON' for the shared
-// ones. This is what MApp.Production.buildComponentsConsumed writes.
+// ones. This is what the Log Lot form writes (MApp.LotModel.payloadLines).
 const CONSUMED = [
   { itemName: 'Rim 26', size: '26 inch', color: '', colorGroup: 'COMMON', qty: 100, unit: 'Pcs' },
   { itemName: 'Frame Sticker', size: '', color: 'Purple-Wine', colorGroup: 'Purple-Wine', qty: 40, unit: '' },
