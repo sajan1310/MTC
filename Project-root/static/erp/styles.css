@@ -4077,6 +4077,28 @@
   }
 
   /* ─────────────────────────────────────────────────────────────────────
+     CONTENT-SIZED MODAL — .modal-dialog-fit grows with its table up to the
+     viewport instead of stopping at a fixed width and scrolling sideways.
+     The dialog's own size class (e.g. modal-lg) stays the floor, so a
+     narrow table never shrinks it; below 576px modal-fullscreen-sm-down
+     owns the layout, so this only applies above it. Badges are nowrap by
+     default, which made one long Color / Output Item name force the table
+     past the cap on its own -- they wrap here instead.
+     ───────────────────────────────────────────────────────────────────── */
+  @media (min-width: 576px) {
+    .modal-dialog.modal-dialog-fit {
+      width: fit-content;
+      min-width: min(var(--bs-modal-width), 95vw);
+      max-width: 95vw;
+    }
+  }
+
+  .modal-dialog-fit .table .badge {
+    white-space: normal;
+    text-align: left;
+  }
+
+  /* ─────────────────────────────────────────────────────────────────────
      PRODUCTION SHEET MODAL — keep editable columns readable at any width
      ───────────────────────────────────────────────────────────────────── */
   #productionSheetModal .prod-sheet-item-name {

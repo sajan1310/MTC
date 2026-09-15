@@ -348,7 +348,10 @@
 // whole query as one string, so "jungle king 16" found nothing: name and
 // size are separate fields. Each word now has to appear somewhere, in any
 // order, like every other search in the app.
-const CACHE_NAME = 'erp-shell-v73';
+// v74: the Warehouse Pool breakdown dialog sizes to its table, up to 95% of
+// the screen, instead of stopping at modal-lg's 800px and scrolling
+// sideways. styles.css is precached; the markup half arrives fresh.
+const CACHE_NAME = 'erp-shell-v74';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
