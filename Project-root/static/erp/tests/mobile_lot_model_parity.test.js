@@ -170,6 +170,40 @@ const PROCESSES = {
     pool: [pool('Mudguard Rib', 'Black', 25)]
   },
 
+  // The frame colour is a composite that already names the rim, so what
+  // the recipe tags to the rim is recorded under the frame, once.
+  'PRC-CMP': {
+    process: { processId: 'PRC-CMP', processName: 'Rim Fitting BCP', processType: 'Fitting', outputItemName: 'Fitted Frame 26 inch', sequence: 3, active: true, isFinalStage: false },
+    colors: ['Blue-White / BCP', 'Pink-White / BCP', 'BCP', 'Black'],
+    axes: {
+      axes: [
+        { key: 'pool:painted frame 26', label: 'Painted Frame 26', colors: ['Blue-White / BCP', 'Pink-White / BCP'], source: 'pool' },
+        { key: 'tag:rim color', label: 'Rim Color', colors: ['BCP', 'Black'], source: 'tag' }
+      ],
+      primaryAxisKey: 'pool:painted frame 26', primaryIsDefault: false
+    },
+    recipe: [
+      comp('Painted Frame 26', 'COMMON', 1, { sourceType: 'POOL', size: '26 inch' }),
+      comp('Rim BCP', 'BCP', 2, { size: '26 inch', colorAxis: 'Rim Color' }),
+      comp('Rim Black', 'Black', 2, { size: '26 inch', colorAxis: 'Rim Color' })
+    ],
+    pool: [pool('Painted Frame 26', 'Blue-White / BCP', 30), pool('Painted Frame 26', 'Pink-White / BCP', 12)]
+  },
+
+  // One frame axis and a packing sub-group, with a common part that has a
+  // per-colour sibling.
+  'PRC-KIT': {
+    process: { processId: 'PRC-KIT', processName: 'Packing Kit 20', processType: 'Packing', outputItemName: 'Packed Kit 20 inch', sequence: 6, active: true, isFinalStage: false },
+    colors: ['Red', 'Blue', 'KIT BAG 20"'],
+    axes: { axes: [{ key: 'tag:frame color', label: 'Frame Color', colors: ['Red', 'Blue'], source: 'tag' }], primaryAxisKey: 'tag:frame color', primaryIsDefault: false },
+    recipe: [
+      comp('Chain Cover', 'COMMON', 1),
+      comp('Chain Cover Red', 'Red', 1),
+      comp('Poly Bag', 'KIT BAG 20"', 1)
+    ],
+    pool: []
+  },
+
   // No colours at all: one quantity.
   'PRC-CUT': {
     process: { processId: 'PRC-CUT', processName: 'Tube Cutting', processType: 'Cutting', outputItemName: 'Cut Tube Set 20 inch', sequence: 1, active: true, isFinalStage: false },
@@ -457,6 +491,15 @@ const FLOWS = {
   'a single quantity': ['PRC-CUT', [
     s => s.qty(40)
   ]],
+  'a composite frame colour that already names the rim': ['PRC-CMP', [
+    s => s.check('Blue-White / BCP'), s => s.type('Blue-White / BCP', 10),
+    s => s.check('Pink-White / BCP'), s => s.type('Pink-White / BCP', 4)
+  ]],
+  'a packing sub-group beside a common part with a per-colour sibling': ['PRC-KIT', [
+    s => s.check('Red'), s => s.type('Red', 10),
+    s => s.check('Blue'), s => s.type('Blue', 5),
+    s => s.check('KIT BAG 20"')
+  ]],
   'colours added by hand to a process that has none': ['PRC-CUT', [
     s => s.manualColors(),
     s => s.check('Red'), s => s.type('Red', 5),
@@ -480,6 +523,38 @@ describe.each(Object.entries(FLOWS))('%s', (_label, [processId, steps]) => {
     const { desktop, phone } = await both(processId, steps);
     expect(desktop.componentsConsumed.length).toBeGreaterThan(0);
     expect(comparable(phone.componentsConsumed)).toEqual(comparable(desktop.componentsConsumed));
+  });
+});
+
+describe('a secondary colour\'s own parts', () => {
+  // A "Red" mudguard beside a "Red-White" frame is its own part, which no
+  // frame column records. Desktop used to drop its column on the names
+  // alone and save the lot with no mudguard consumed; both now record it.
+  test('a mudguard that follows its frame is consumed, on both', async () => {
+    const [processId, steps] = FLOWS['two axes: mudguard colours follow the frame colours they name'];
+    const { desktop, phone } = await both(processId, steps);
+    const mudguards = r => r.componentsConsumed.filter(l => /^Mudguard/.test(l.itemName)).map(l => [l.itemName, l.colorGroup, l.qty]);
+    expect(mudguards(desktop)).toEqual([['Mudguard Red', 'Red', 24], ['Mudguard Blue', 'Blue', 16]]);
+    expect(mudguards(phone)).toEqual(mudguards(desktop));
+  });
+
+  test('a part a counting colour already records is recorded once', async () => {
+    const [processId, steps] = FLOWS['a composite frame colour that already names the rim'];
+    const { desktop, phone } = await both(processId, steps);
+    for (const r of [desktop, phone]) {
+      expect(r.componentsConsumed.filter(l => l.itemName === 'Rim BCP').map(l => [l.colorGroup, l.qty]))
+        .toEqual([['Blue-White / BCP', 20], ['Pink-White / BCP', 8]]);
+    }
+  });
+
+  test('a common part is consumed under counting colours only, never again under a sub-group', async () => {
+    const [processId, steps] = FLOWS['a packing sub-group beside a common part with a per-colour sibling'];
+    const { desktop, phone } = await both(processId, steps);
+    for (const r of [desktop, phone]) {
+      expect(r.componentsConsumed.filter(l => /^Chain Cover/.test(l.itemName)).map(l => [l.itemName, l.colorGroup, l.qty]))
+        .toEqual([['Chain Cover Red', 'Red', 10], ['Chain Cover', 'Blue', 5]]);
+      expect(r.componentsConsumed.find(l => l.itemName === 'Poly Bag')).toMatchObject({ colorGroup: 'KIT BAG 20"', qty: 15 });
+    }
   });
 });
 

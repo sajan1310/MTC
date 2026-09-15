@@ -351,7 +351,13 @@
 // v74: the Warehouse Pool breakdown dialog sizes to its table, up to 95% of
 // the screen, instead of stopping at modal-lg's 800px and scrolling
 // sideways. styles.css is precached; the markup half arrives fresh.
-const CACHE_NAME = 'erp-shell-v74';
+// v75: a secondary colour keeps the parts only it consumes. A "Red"
+// mudguard auto-checked beside a "Red-White" frame lost its Per-Color
+// column on the names alone, and with it "Mudguard Red" -- the lot saved
+// with no mudguard consumed. Now such a column gives up only what a
+// counting column already records (and any common part) and goes only if
+// that leaves it empty; a quantity typed into it stays.
+const CACHE_NAME = 'erp-shell-v75';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

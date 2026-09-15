@@ -4547,24 +4547,29 @@ MApp.LotModel = {
   },
 
   // Which colours get a Per-Color Components column, in the order they
-  // were checked -- production.js#addMatrixColorColumn, less whatever
-  // _pruneRedundantMatrixColumns takes away: a secondary colour naming the
-  // same units as a checked primary one would debit them twice.
+  // were checked -- production.js#addMatrixColorColumn. (Desktop also
+  // removes a secondary colour's column once it is left empty -- see
+  // _colorComps for what it keeps -- which an empty column cannot change.)
   matrixColumns() {
-    const checked = this.rows.filter(r => r.checked);
-    const ordered = checked.slice().sort((a, b) => a.seq - b.seq);
+    const ordered = this.rows.filter(r => r.checked).sort((a, b) => a.seq - b.seq);
     const columns = [];
     ordered.forEach(r => {
       if (columns.some(c => this.sameText(c.color, r.color))) return;
-      columns.push({ color: r.color, pruned: false });
-    });
-    columns.forEach(col => {
-      const nonPrimary = checked.some(r => r.isPrimary === false && this.sameText(r.color, col.color));
-      const ownedByPrimary = checked.some(r => r.isPrimary !== false && this.sameText(r.color, col.color));
-      col.pruned = nonPrimary && !ownedByPrimary && this.G._isColorGroupName(col.color)
-        && this.matchingPrimaryColorQty(col.color) !== null;
+      columns.push({ color: r.color });
     });
     return columns;
+  },
+
+  // production.js#_isSecondaryOnlyColor
+  _isSecondaryOnlyColor(color) {
+    const rows = this.rows.filter(r => r.checked && this.sameText(r.color, color));
+    return rows.length > 0 && rows.every(r => r.isPrimary === false);
+  },
+
+  // production.js#_recordedByCountingColor
+  _recordedByCountingColor(colorGroup) {
+    if (!colorGroup) return false;
+    return this.rows.some(r => r.checked && r.isPrimary !== false && this.matchedColorToken(colorGroup, r.color));
   },
 
   // One colour's recipe rows, each against the Per-Color Components row
@@ -4590,9 +4595,14 @@ MApp.LotModel = {
       return row;
     };
     const out = [];
+    // A colour only secondary rows carry names units already counted under
+    // the Primary colours: its column takes the parts tagged to it that no
+    // counting column already takes, and no common parts.
+    const secondaryOnly = this._isSecondaryOnlyColor(color);
     const colorComps = recipe
       .map(c => ({ comp: c, token: this.matchedColorToken(c.colorGroup, color) }))
       .filter(x => x.token)
+      .filter(x => !(secondaryOnly && this._recordedByCountingColor(x.comp.colorGroup)))
       .map(({ comp, token }) => ({
         comp,
         displayName: this._sharedKeys.has(G._itemSlotKey(comp.itemName, comp.size))
@@ -4603,7 +4613,7 @@ MApp.LotModel = {
       out.push({ comp, row: ensureRow(displayName, comp.size, comp.sourceType, G._resolveDisplayNarration(comp.itemName, comp.size, comp.narration)) });
     });
     const overridden = new Set(colorComps.map(c => G._itemSlotKey(c.displayName, c.comp.size)));
-    this._overrides.forEach(c => {
+    (secondaryOnly ? [] : this._overrides).forEach(c => {
       if (overridden.has(G._itemSlotKey(c.itemName, c.size))) return;
       out.push({ comp: c, row: ensureRow(c.itemName, c.size, c.sourceType, G._resolveDisplayNarration(c.itemName, c.size, c.narration)) });
     });
@@ -4670,9 +4680,8 @@ MApp.LotModel = {
         });
       });
     });
-    const liveColumns = columns.filter(c => !c.pruned);
     this.matrixRows.forEach(row => {
-      liveColumns.forEach(col => {
+      columns.forEach(col => {
         const cell = cells.get(`${row.key}\u0000${col.color.toLowerCase()}`);
         if (!cell || !cell.itemName || !(cell.qty > 0)) return;
         lines.push({

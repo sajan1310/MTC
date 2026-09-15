@@ -453,9 +453,26 @@ describe('Per-Color Components: redundant colour columns on a reopened lot', () 
       expect.arrayContaining([expect.objectContaining({ colorGroup: 'Blue', qty: 4 })]));
   });
 
-  test('the operator toggling colours still prunes a populated duplicate', () => {
-    // Unchanged behaviour: mid-edit, a redundant column double-debits, so
-    // it goes whatever is in it.
+  test('mid-edit, a duplicate column loses what the recipe put there and then goes', () => {
+    // The recipe filled "Blue" with a part the composite column also
+    // records: that copy is cleared, and the column, left empty, goes.
+    checkColour('BLUE-WHITE / BLACK', { primary: true });
+    checkColour('Blue', { primary: false });
+    const row = App.Production.addMatrixItemRow({ itemName: 'Sticker', size: 'L', sourceType: 'ITEM' });
+    const cell = row.children[App.Production.getMatrixColumnIndex('Blue')];
+    cell.querySelector('.matrix-qty').value = '4';
+    cell.dataset.recipeCell = 'color';
+    cell.dataset.recipeColorGroup = 'BLUE-WHITE';
+    App.Production._refreshMatrixColumns();
+
+    App.Production._pruneRedundantMatrixColumns();
+
+    expect(App.Production.getMatrixColumnIndex('Blue')).toBe(-1);
+  });
+
+  test('mid-edit, a quantity the operator typed into it keeps the column', () => {
+    // Was: the column went "whatever is in it". A hand-entered quantity is
+    // the operator's record of what was used, and outranks the recipe.
     checkColour('BLUE-WHITE / BLACK', { primary: true });
     checkColour('Blue', { primary: false });
     const row = App.Production.addMatrixItemRow({ itemName: 'Sticker', size: 'L', sourceType: 'ITEM' });
@@ -464,7 +481,9 @@ describe('Per-Color Components: redundant colour columns on a reopened lot', () 
 
     App.Production._pruneRedundantMatrixColumns();
 
-    expect(App.Production.getMatrixColumnIndex('Blue')).toBe(-1);
+    expect(App.Production.getMatrixColumnIndex('Blue')).not.toBe(-1);
+    expect(App.Production.serializeColorMatrix()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ colorGroup: 'Blue', qty: 4 })]));
   });
 });
 

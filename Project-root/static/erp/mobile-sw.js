@@ -92,7 +92,10 @@
 // rules. The Log Lot sheet finds a process in one search, takes typed
 // colour quantities, shows and lets the operator correct what the lot
 // consumes, shows the payable, and stays on the process after logging.
-const CACHE_NAME = 'erp-mobile-shell-v66';
+// v67: the lot model follows desktop's fix to secondary colours -- their
+// own tagged parts are recorded, never a part a counting colour already
+// records, and never a common part.
+const CACHE_NAME = 'erp-mobile-shell-v67';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

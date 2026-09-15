@@ -232,27 +232,115 @@ describe('A sub-group bucket keeps its own matrix column', () => {
 
 });
 
-describe('A non-primary color AXIS is still pruned', () => {
-  // Unchanged by the above: a "Blue" rim auto-checked by a "Blue-White"
-  // frame describes the same physical units, and its real consumption lives
-  // in that axis's own Per-Process Pool Components table, so its duplicate
-  // matrix column has to go.
-  test('a color-named axis row matching a checked primary loses its column', async () => {
-    mount({
-      axes: [
-        { key: 'tag:frame color', label: 'Frame Color', colors: ['Blue-White'], source: 'tag' },
-        { key: 'pool:mudguard rib', label: 'Mudguard Rib', colors: ['Blue'], source: 'pool' },
-      ],
-      colors: ['Blue-White', 'Blue'],
-      components: [COMMON_COMPONENT, component('Frame Paint', 'Blue-White'), component('Rib Blue', 'Blue')],
-    });
-    await App.Production.handleProcessChange('P1');
+describe('A secondary colour keeps the parts only it consumes', () => {
+  // A "Blue" rib auto-checked by a "Blue-White" frame describes the same
+  // bikes, but not the same parts: "Rib Blue" is tagged Blue, and no
+  // "Blue-White" column records it. Its column used to be removed on the
+  // names alone -- on the grounds that a secondary axis is consumed through
+  // its Per-Process Pool Components table, which holds only pool items --
+  // and the lot saved with no rib consumed at all.
+  const AXES = frameColors => [
+    { key: 'tag:frame color', label: 'Frame Color', colors: frameColors, source: 'tag' },
+    { key: 'pool:mudguard rib', label: 'Mudguard Rib', colors: ['Blue'], source: 'pool' },
+  ];
 
-    const frame = await checkColor('Blue-White', 'tag:frame color');
+  async function frameThenRib(frameColor, components) {
+    mount({ axes: AXES([frameColor]), colors: [frameColor, 'Blue'], components });
+    await App.Production.handleProcessChange('P1');
+    const frame = await checkColor(frameColor, 'tag:frame color');
     frame.querySelector('.production-color-qty').value = '10';
     await App.Production.onColorQtyChanged(frame);
     await checkColor('Blue', 'pool:mudguard rib');
+  }
 
-    expect(matrixColumns()).toEqual(['Blue-White']);
+  test('a part tagged to the secondary colour is recorded under it', async () => {
+    await frameThenRib('Blue-White', [COMMON_COMPONENT, component('Frame Paint', 'Blue-White'), component('Rib Blue', 'Blue')]);
+
+    expect(matrixColumns()).toEqual(['Blue-White', 'Blue']);
+    expect(cellQty('Rib', 'Blue')).toBe('10');
+    expect(App.Production.serializeColorMatrix().map(c => [c.itemName, c.colorGroup, c.qty]))
+      .toEqual([['Frame Paint', 'Blue-White', 10], ['Rib Blue', 'Blue', 10]]);
+  });
+
+  test('a part a counting column already records is not recorded twice; the empty column goes', async () => {
+    // "Blue-White / Blue" is the frame AND the rib: the frame column
+    // already takes what is tagged Blue.
+    await frameThenRib('Blue-White / Blue', [COMMON_COMPONENT, component('Rib Blue', 'Blue')]);
+
+    expect(matrixColumns()).toEqual(['Blue-White / Blue']);
+    expect(App.Production.serializeColorMatrix().map(c => [c.itemName, c.colorGroup, c.qty]))
+      .toEqual([['Rib Blue', 'Blue-White / Blue', 10]]);
+  });
+
+  test('a common part with a per-colour sibling is consumed under counting colours only', async () => {
+    // "Chain Cover" falls to every colour without its own variant -- once
+    // per bike, under the colour that counts the bike, never again under a
+    // secondary colour describing the same bike.
+    await frameThenRib('Blue-White', [
+      component('Chain Cover', 'COMMON'), component('Chain Cover Red-White', 'Red-White'), component('Rib Blue', 'Blue'),
+    ]);
+
+    const covers = App.Production.serializeColorMatrix().filter(c => c.itemName === 'Chain Cover');
+    expect(covers.map(c => [c.colorGroup, c.qty])).toEqual([['Blue-White', 10]]);
+  });
+
+  test('a quantity typed into the secondary column by hand stays', async () => {
+    await frameThenRib('Blue-White / Blue', [COMMON_COMPONENT, component('Rib Blue', 'Blue')]);
+    await checkColor('Blue', 'pool:mudguard rib');
+    const row = App.Production.addMatrixItemRow({ itemName: 'Grease', size: '', sourceType: 'ITEM' });
+    App.Production.addMatrixColorColumn('Blue');
+    row.children[App.Production.getMatrixColumnIndex('Blue')].querySelector('.matrix-qty').value = '3';
+
+    App.Production._pruneRedundantMatrixColumns();
+
+    expect(App.Production.serializeColorMatrix()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ itemName: 'Grease', colorGroup: 'Blue', qty: 3 })]));
+  });
+});
+
+describe('Moving the Primary pick re-derives the columns', () => {
+  // Colours can be ticked before anyone says which group counts. Whatever
+  // the pick then makes secondary gives up the common parts; whatever it
+  // makes Primary takes them.
+  test('the colours picked as Primary take the common parts', async () => {
+    mount({
+      axes: [
+        { key: 'tag:frame color', label: 'Frame Color', colors: ['Blue-White', 'Red-White'], source: 'tag' },
+        { key: 'tag:seat', label: 'Seat', colors: ['Black'], source: 'tag' },
+      ],
+      colors: ['Blue-White', 'Red-White', 'Black'],
+      components: [component('Chain Cover', 'COMMON'), component('Chain Cover Red-White', 'Red-White'), component('Seat Black', 'Black')],
+    });
+    Api.call.mockImplementation(method => {
+      if (method === 'getProcessColorAxes') {
+        return Promise.resolve({ success: true, data: { axes: [
+          { key: 'tag:frame color', label: 'Frame Color', colors: ['Blue-White', 'Red-White'], source: 'tag' },
+          { key: 'tag:seat', label: 'Seat', colors: ['Black'], source: 'tag' },
+        ], primaryAxisKey: 'tag:frame color', primaryIsDefault: true } });
+      }
+      if (method === 'getProcessComponentsData') {
+        return Promise.resolve({ success: true, data: [component('Chain Cover', 'COMMON'), component('Chain Cover Red-White', 'Red-White'), component('Seat Black', 'Black')] });
+      }
+      if (method === 'getProcessColorGroups') return Promise.resolve({ success: true, data: ['Blue-White', 'Red-White', 'Black'] });
+      return Promise.resolve({ success: true, data: [] });
+    });
+    await App.Production.handleProcessChange('P1');
+
+    const blue = await checkColor('Blue-White');
+    blue.querySelector('.production-color-qty').value = '6';
+    await App.Production.onColorQtyChanged(blue);
+    const seat = await checkColor('Black');
+    seat.querySelector('.production-color-qty').value = '6';
+    await App.Production.onColorQtyChanged(seat);
+    // Nothing counts yet, so nothing has taken the common part.
+    expect(App.Production.serializeColorMatrix().some(c => c.itemName === 'Chain Cover')).toBe(false);
+
+    const radio = document.querySelector('input[name="productionPrimaryAxisPick"][value="tag:frame color"]');
+    radio.checked = true;
+    await App.Production.setPrimaryColorAxisChoice(radio);
+
+    const lines = App.Production.serializeColorMatrix().map(c => [c.itemName, c.colorGroup, c.qty]);
+    expect(lines).toHaveLength(2);
+    expect(lines).toEqual(expect.arrayContaining([['Chain Cover', 'Blue-White', 6], ['Seat Black', 'Black', 6]]));
   });
 });

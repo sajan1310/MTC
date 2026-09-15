@@ -2446,6 +2446,9 @@ App.Production = {
     for (const primaryColor of toggledPrimaryColors) {
       await this._syncMatchingNonPrimaryRows(primaryColor, checked);
     }
+    if (!checked && toggledPrimaryColors.length > 0) {
+      await this._repopulateMatrixColumns(this._secondaryColorsSharingToken(toggledPrimaryColors), seq);
+    }
     if (toggledPrimaryColors.length > 0) this._refreshAutoSyncedFallbackRows();
 
     this._pruneRedundantMatrixColumns();
@@ -2810,6 +2813,18 @@ App.Production = {
     this.refreshCommonSuggestedQty();
     this.refreshPayableHint();
 
+    // Which colours count just changed, and with it what every checked
+    // colour's column carries: a colour that now counts takes the common
+    // parts, one that no longer does gives them up and keeps only what no
+    // counting column records (see populateColorMatrixForColors).
+    const seq = this._compLoadSeq;
+    const checkedColors = [];
+    $$('#productionColorChecklist .production-color-row')
+      .filter(r => r.querySelector('.production-color-check')?.checked)
+      .forEach(r => { if (!checkedColors.some(c => App.Utils.sameColor(c, r.dataset.color))) checkedColors.push(r.dataset.color); });
+    await this._repopulateMatrixColumns(checkedColors, seq);
+    if (seq !== this._compLoadSeq) return;
+
     // A column that was exempt from pruning while its own axis was Primary
     // (see _pruneRedundantMatrixColumns) doesn't get re-evaluated on its
     // own -- nothing else re-checks existing columns once the Primary
@@ -2949,6 +2964,9 @@ App.Production = {
 
     if (row?.dataset.primary === 'true') {
       await this._syncMatchingNonPrimaryRows(color, checkboxEl.checked);
+      // A secondary colour left checked had its parts recorded under this
+      // colour's column; with that column gone they go back into its own.
+      if (!checkboxEl.checked) await this._repopulateMatrixColumns(this._secondaryColorsSharingToken([color]), seq);
     }
 
     // Same top-level-only gate as refreshPoolAvailability: this must see
@@ -5258,29 +5276,140 @@ App.Production = {
     this._refreshMatrixColumns();
   },
 
+  // A colour that only non-counting rows carry: a secondary axis's colour
+  // (a "Red" mudguard beside a "Red-White" frame) or a sub-group's. Its
+  // units are already counted under the Primary colours, so its column
+  // holds only what is genuinely its own -- see populateColorMatrixForColors.
+  _isSecondaryOnlyColor(color) {
+    const rows = $$('#productionColorChecklist .production-color-row')
+      .filter(r => r.querySelector('.production-color-check')?.checked && App.Utils.sameColor(r.dataset.color, color));
+    return rows.length > 0 && rows.every(r => r.dataset.primary === 'false');
+  },
+
+  // Is a recipe row tagged `colorGroup` already consumed under a checked
+  // COUNTING colour? Same token match populateColorMatrixForColors fills a
+  // column with, so "BCP" is recorded under a "Blue-White / BCP" frame
+  // column -- and must not be recorded again under the "BCP" rim column.
+  _recordedByCountingColor(colorGroup) {
+    if (!colorGroup) return false;
+    return $$('#productionColorChecklist .production-color-row')
+      .filter(r => r.querySelector('.production-color-check')?.checked && r.dataset.primary !== 'false')
+      .some(r => this._matchedColorToken(colorGroup, r.dataset.color));
+  },
+
+  // Empties one recipe-filled matrix cell (populateColorMatrixForColors
+  // stamps the cells it fills with data-recipe-cell). A cell the operator
+  // filled in by hand carries no stamp and is never touched here.
+  _clearRecipeCell(cell) {
+    const selectEl = cell.querySelector('.prod-comp-item-select');
+    if (selectEl) {
+      selectEl.innerHTML = '<option value=""></option>';
+      if (window.jQuery?.fn?.select2 && window.jQuery(selectEl).data('select2')) {
+        window.jQuery(selectEl).trigger('change.select2');
+      }
+    }
+    const qtyInput = cell.querySelector('.matrix-qty');
+    if (qtyInput) {
+      qtyInput.value = '';
+      delete qtyInput.dataset.qtyPerUnit;
+    }
+    delete cell.dataset.recipeCell;
+    delete cell.dataset.recipeColorGroup;
+  },
+
+  // The checked secondary-only colours that share a colour token with any
+  // of `colors` -- the ones whose parts a counting column of those colours
+  // could have been recording (see _recordedByCountingColor).
+  _secondaryColorsSharingToken(colors) {
+    const tokens = c => {
+      const whole = String(c || '').trim().toLowerCase();
+      return new Set([whole, ...whole.split(' / ').map(t => t.trim()).filter(Boolean)]);
+    };
+    const wanted = (colors || []).map(tokens);
+    const out = [];
+    $$('#productionColorChecklist .production-color-row')
+      .filter(r => r.querySelector('.production-color-check')?.checked)
+      .forEach(r => {
+        const color = r.dataset.color;
+        if (out.some(c => App.Utils.sameColor(c, color)) || !this._isSecondaryOnlyColor(color)) return;
+        const mine = tokens(color);
+        if (wanted.some(set => [...set].some(t => mine.has(t)))) out.push(color);
+      });
+    return out;
+  },
+
+  // Re-derives the given colours' columns from the recipe: their recipe
+  // cells are emptied and filled again for the checklist as it now stands.
+  // Needed whenever which colours COUNT changes under a column that is
+  // already there -- the Primary pick moved, or a counting colour went
+  // that a secondary colour's parts had been recorded under.
+  async _repopulateMatrixColumns(colors, seq) {
+    const processId = document.getElementById('productionProcessId')?.value;
+    if (!processId || !colors || colors.length === 0) return;
+    const rows = $$('#productionColorMatrixBody tr');
+    for (const color of colors) {
+      this.addMatrixColorColumn(color);
+      const idx = this.getMatrixColumnIndex(color);
+      rows.forEach(row => {
+        const cell = row.children[idx];
+        if (cell && cell.dataset.recipeCell) this._clearRecipeCell(cell);
+      });
+    }
+    for (const color of colors) {
+      const groupRow = $$('#productionColorChecklist .production-color-row')
+        .find(r => r.querySelector('.production-color-check')?.checked && App.Utils.sameColor(r.dataset.color, color));
+      await this.populateColorMatrixForColors(processId, [color], seq, groupRow?.dataset.group);
+      if (seq !== undefined && seq !== this._compLoadSeq) return;
+    }
+  },
+
   // A non-primary Color Axis row that segment-matches a checked primary
-  // row (e.g. a "Blue" mudguard auto-checked by a "Blue-White / BCP"
-  // frame) describes the SAME physical units as its primary counterpart.
-  // It must not also get its own Per-Color Components column: the
-  // operator is left staring at one duplicate column per matched color,
-  // and anything typed into one debits stock a second time for units the
-  // primary column already accounts for. Their real consumption lives in
-  // that axis's own Per-Process Pool Components table instead -- so this
-  // unconditionally prunes the redundant column, even one the operator
-  // already typed into (strict checked-only columns; direct manual
-  // unchecking of a color already clears its own column the same way via
-  // removeMatrixColorColumn).
-  // `emptyOnly` is for the load paths. Pruning is unconditional when the
-  // operator is the one toggling colors -- a redundant column they type
-  // into debits stock twice, so it has to go even mid-edit. On load the
-  // numbers in the form are the numbers that were SAVED, and silently
-  // dropping a column that holds some would silently change the lot. So a
-  // populated redundant column is left standing there to be seen and
-  // cleared, and only the empty ones -- the vertical strips an edited lot
-  // opened covered in -- are taken away.
+  // row (e.g. a "Blue" rim auto-checked by a "Blue-White / Blue" frame)
+  // can describe the SAME physical units as its primary counterpart:
+  // whatever the recipe tags "Blue" is already consumed under the
+  // composite frame column, and a second copy under a "Blue" column would
+  // debit stock twice. Such a duplicate column is removed.
+  //
+  // What is removed is the duplicate, never the consumption. This used to
+  // take the whole column whenever the NAMES matched, on the grounds that a
+  // secondary axis's real consumption lives in its own Per-Process Pool
+  // Components table -- true of a pool item, not of recipe rows tagged to
+  // that colour. A "Red" mudguard beside a "Red-White" frame is its own
+  // part ("Mudguard Red"), which no frame column records; taking the "Red"
+  // column took the only place it could go, and the lot saved with no
+  // mudguard consumed at all. So a secondary colour's column first loses
+  // only what a counting column already records (and any common part,
+  // which belongs to counting colours alone -- see
+  // populateColorMatrixForColors), and is removed only if that leaves it
+  // empty. A quantity typed into it by hand is the operator's and stays.
+  //
+  // `emptyOnly` is for the load paths: the numbers in the form are the
+  // numbers that were SAVED, so nothing is cleared, and only a column that
+  // is already empty -- the vertical strips an edited lot opened covered in
+  // -- is taken away.
   _pruneRedundantMatrixColumns({ emptyOnly = false } = {}) {
     const checked = $$('#productionColorChecklist .production-color-row')
       .filter(row => row.querySelector('.production-color-check')?.checked);
+
+    if (!emptyOnly) {
+      const rows = $$('#productionColorMatrixBody tr');
+      const seen = new Set();
+      checked.forEach(r => {
+        const color = r.dataset.color;
+        const key = String(color || '').trim().toLowerCase();
+        if (seen.has(key) || !this._isSecondaryOnlyColor(color)) return;
+        seen.add(key);
+        const idx = this.getMatrixColumnIndex(color);
+        if (idx === -1) return;
+        rows.forEach(row => {
+          const cell = row.children[idx];
+          if (!cell || !cell.dataset.recipeCell) return;
+          if (cell.dataset.recipeCell === 'common' || this._recordedByCountingColor(cell.dataset.recipeColorGroup)) {
+            this._clearRecipeCell(cell);
+          }
+        });
+      });
+    }
 
     checked
       .filter(row => row.dataset.primary === 'false')
@@ -5294,17 +5423,13 @@ App.Production = {
       // ...and only for a row that names a real COLOR. A genuine sub-group
       // bucket ('BLUE KIT BAG', 'BLACK RIM SET') is not a second name for
       // the primary color's own units, however much of that color's name it
-      // happens to repeat -- it is its own line of consumption, and unlike a
-      // color axis it has no Per-Process Pool Components table to be
-      // recorded in instead. Pruning its column therefore deleted the only
-      // place its components could go: the recipe rows tagged to the
-      // sub-group still appeared, with no column left to carry a quantity.
+      // happens to repeat -- it is its own line of consumption.
       .filter(color => this._isColorGroupName(color))
       .filter(color => this._matchingPrimaryColorQty(color) !== null)
       .forEach(color => {
         const idx = this.getMatrixColumnIndex(color);
         if (idx === -1) return;
-        if (emptyOnly && !this._isMatrixColumnEmpty(idx, $$('#productionColorMatrixBody tr'))) return;
+        if (!this._isMatrixColumnEmpty(idx, $$('#productionColorMatrixBody tr'))) return;
         this._removeMatrixColumnAt(idx);
       });
   },
@@ -5674,12 +5799,21 @@ App.Production = {
         const thisColorQty = this._totalQtyForColorName(color);
 
         if (colIndex !== -1) {
+          // A colour only secondary rows carry names units already counted
+          // under the Primary colours. Its column takes the parts tagged to
+          // it that no counting column already takes (a "Blue-White / BCP"
+          // frame column records what the recipe tags "BCP"; a "Red-White"
+          // one does not record "Mudguard Red"), and none of the common
+          // parts below -- those are consumed once per unit, under the
+          // colour that counts it.
+          const secondaryOnly = this._isSecondaryOnlyColor(color);
           // Token match, not whole-string: a recipe row scoped to
           // "Blue-White" is genuinely consumed by a lot producing the
           // composite "Blue-White / BCP". See _matchedColorToken.
           const colorComps = all
             .map(c => ({ comp: c, token: this._matchedColorToken(c.colorGroup, color) }))
             .filter(x => x.token)
+            .filter(x => !(secondaryOnly && this._recordedByCountingColor(x.comp.colorGroup)))
             .map(({ comp, token }) => ({
               ...comp,
               displayName: sharedItemKeys.has(this._itemSlotKey(comp.itemName, comp.size))
@@ -5696,10 +5830,15 @@ App.Production = {
             const cell = row.children[colIndex];
             const qty = thisColorQty > 0 ? thisColorQty * c.qtyPerUnit : c.qtyPerUnit;
             this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType, poolColor: c.poolColor }, qty, c.qtyPerUnit);
+            // Filled from the recipe, not by hand -- see _clearRecipeCell.
+            if (cell) {
+              cell.dataset.recipeCell = 'color';
+              cell.dataset.recipeColorGroup = c.colorGroup || '';
+            }
           });
 
           const overriddenKeys = new Set(colorComps.map(c => this._itemSlotKey(c.displayName, c.size)));
-          commonOverrideComps.forEach(c => {
+          (secondaryOnly ? [] : commonOverrideComps).forEach(c => {
             if (overriddenKeys.has(this._itemSlotKey(c.itemName, c.size))) return;
             let row = this.findMatrixRowByDisplayName(c.itemName, c.size || '');
             // Live from Items Master -- see _resolveDisplayNarration.
@@ -5707,6 +5846,10 @@ App.Production = {
             const cell = row.children[colIndex];
             const qty = thisColorQty > 0 ? thisColorQty * c.qtyPerUnit : c.qtyPerUnit;
             this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType, poolColor: c.poolColor }, qty, c.qtyPerUnit);
+            if (cell) {
+              cell.dataset.recipeCell = 'common';
+              delete cell.dataset.recipeColorGroup;
+            }
           });
         }
 
