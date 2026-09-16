@@ -148,9 +148,10 @@ the load and then dies silently, so the server gets the same hard cut it
 would have got without one, several hours later. Sizing up only moves the
 failure later; there is always an outage longer than the battery you bought.
 
-What removes the failure is the server *hearing* "battery at 20%" over USB
-or serial, so it can shut down cleanly while power remains. A clean shutdown
-needs no WAL replay, no fsck, and no gamble.
+What removes the failure is the server *hearing* "five minutes of battery
+left" over USB or serial, so it can shut down cleanly while power remains. A
+clean shutdown needs no WAL replay, no fsck, and no gamble. Choosing that
+threshold is its own decision — see below; it is not a fixed 20%.
 
 Two ways to get there, and the second is the cheap retrofit:
 
@@ -181,13 +182,74 @@ upsc ups                      # should print battery.charge, ups.status
 sudo upsmon -c fsd            # rehearse the shutdown, on purpose, once
 ```
 
-Set the shutdown threshold generously — `upsmon.conf`'s `FINALDELAY` and the
-driver's low-battery point. Shutting down at 40% battery and coming back up
-ten minutes later costs a short outage; running the battery to zero costs a
-recovery and, eventually, a restore.
+#### Picking the low-battery threshold
 
-Rehearse it. A UPS integration nobody has tested is a UPS integration that
-does not work.
+There is no built-in "20%" — it is a number you choose, and 20% is the wrong
+one here. The UPS reports `battery.charge` (percent) and/or
+`battery.runtime` (seconds left) over the data link; NUT raises the
+low-battery flag (`LB`) when one crosses your threshold, and `upsmon` then
+runs `SHUTDOWNCMD`.
+
+**First find out what this UPS actually reports.** Cheap units expose only a
+binary `LB` set by firmware at a point you cannot change; better ones give
+charge and runtime. Design around what is present, not what is documented:
+
+```bash
+upsc ups                      # battery.charge, battery.runtime, ups.status
+```
+
+Set your own threshold with driver-level overrides in `/etc/nut/ups.conf`
+(`override.` always wins; `default.` applies only when the UPS reports
+nothing of its own). Whichever trips first raises `LB`:
+
+```ini
+override.battery.runtime.low = 300   # seconds remaining — prefer this
+override.battery.charge.low  = 40    # percent, as a backstop
+```
+
+**Prefer runtime over percentage.** On lead-acid the reported percentage is
+usually inferred from voltage — a crude estimate that degrades badly as the
+battery ages. Batteries that "fail on long outages" are already tired, and
+20% of a tired battery can be under a minute.
+
+**Budget the shutdown this server actually needs.** `mtc.service` allows
+`TimeoutStopSec=45` for gunicorn alone, then PostgreSQL shuts down with a
+final checkpoint, then the OS halts. Two minutes is a comfortable estimate,
+which is why 300 seconds is the starting point above — and why a percentage
+that might mean 40 seconds is not.
+
+**Then measure it instead of trusting the estimate.** `upsmon -c fsd` forces
+the real sequence; time it from trigger to power-off and set
+`battery.runtime.low` to roughly three times what you observe.
+
+The trade is deliberately lopsided. Going down too early costs a few minutes
+of availability during an outage in which the office desktops are dead
+anyway, so nobody is using the ERP. Going down too late costs the hard crash
+the UPS was bought to prevent. Err early, by a lot.
+
+#### Getting told about it
+
+If you want notification and not just protection, add to `upsmon.conf`:
+
+```ini
+NOTIFYCMD  /usr/local/bin/ups-notify.sh
+NOTIFYFLAG ONBATT   SYSLOG+WALL+EXEC
+NOTIFYFLAG LOWBATT  SYSLOG+WALL+EXEC
+NOTIFYFLAG ONLINE   SYSLOG+WALL+EXEC
+```
+
+The script reads `$NOTIFYTYPE` and sends whatever you like.
+
+One caveat that inverts the obvious priority: **the alert that matters most
+is the one least likely to arrive.** When the site loses power the router and
+ONT go with it unless they are on the same protected supply, so a LOWBATT
+message may never leave the building. Alert on **ONBATT** — sent in the first
+seconds, while the link is still up — and treat LOWBATT as a local log entry
+you read afterwards. Putting the network gear on the UPS fixes this properly,
+which is the plan anyway.
+
+Rehearse all of it. A UPS integration nobody has tested is a UPS integration
+that does not work.
 
 ### 2. Check that the disk is not lying about flushes
 
