@@ -304,11 +304,32 @@ sending failed, `2` no snapshot at all, `3` nothing configured to send to.
 Only `2` is genuinely bad. A `1` still leaves a verified snapshot on disk for
 `offsite-pull.sh` to collect.
 
-#### No UPS data link? Watch the modem instead
+#### No UPS data link? Watch the modem — but understand what it tells you
 
-The arrangement above needs a UPS that can talk over USB. This site has an
-inverter that says nothing, so the trigger has to be inferred — and the
-server's own journal shows how. From the last hard cut:
+The NUT arrangement above needs a UPS that can talk over USB. This site has an
+inverter that says nothing, so the trigger has to be inferred — and the point
+that matters is **which** event is the emergency.
+
+Losing mains is not. The server is on the inverter precisely so that work
+carries on through an outage, and shutting down then throws away the only
+reason to own one. The emergency is the **inverter giving out**, because the
+machine has minutes left at that point and a clean stop beats a hard cut.
+
+The modem answers that question by proxy, because it is on the same inverter:
+
+| Observation | Meaning | Action |
+| --- | --- | --- |
+| Mains out, modem answering | Running on inverter, as designed | **Nothing.** Carry on. |
+| Modem answering, WAN dead | The ISP has a problem | Log it. Nothing else. |
+| Modem not answering | The inverter is exhausted | Snapshot, then shut down |
+
+The middle row is why "no internet" must never be the trigger: the journal
+carries isolated `connectivity impacted` entries on days with no outage at
+all (Sep 15, Sep 17). Acting on those would power a factory's ERP off over an
+ISP blip — and nothing turns it back on, so the cost is a walk to the machine.
+
+**The budget, measured rather than guessed.** During the last hard cut this
+server recorded its own death:
 
 ```
 08:59:57  tailscaled: connectivity impacted
@@ -316,54 +337,45 @@ server's own journal shows how. From the last hard cut:
 09:01:57  <log ends; machine dead>
 ```
 
-The modem died about **two minutes** before the server, because the server is
-on the inverter and the modem effectively is not. That two-minute lead is the
-whole budget, and it is enough: a snapshot takes ~3 seconds and a clean
-shutdown well under a minute.
+The modem went quiet about two minutes before the server did.
+`deploy/inverter-watch.sh` spends those two minutes in two stages rather than
+one, because the two decisions have very different costs:
 
-`deploy/mains-watch.sh` (installed as `mains-watch.service`) pings the default
-gateway every 5s. Four consecutive misses plus a confirmation burst means the
-modem has lost power, so mains is out — at which point it takes an immediate
-snapshot and shuts the machine down cleanly.
+- **~10s of silence → take a snapshot.** About three seconds, entirely local,
+  and harmless if this turns out to be a blip — retention prunes a spare dump.
+  The data is banked before anything irreversible is considered.
+- **~45s of silence → shut down.** By now it is not a dropped packet. Because
+  the snapshot is already safe, this decision gets to be the slow one.
 
-**"Gateway down" is not "internet down", and the distinction is the whole
-design:**
-
-| Observation | Meaning | Action |
-| --- | --- | --- |
-| Gateway unreachable | The modem has no power | Mains is out — snapshot, then shut down |
-| Gateway answers, WAN dead | The ISP has a problem | Log it. Do nothing. |
-
-Conflating them powers a factory's ERP off over a transient ISP blip — and
-the journal has isolated `connectivity impacted` entries on days with no
-outage at all (Sep 15, Sep 17). Nothing then powers the machine back on, so
-a false positive costs a walk to the server.
-
-The snapshot runs with `--no-send`: the modem is already dead, so attempting
-SMTP would only burn the 45-second timeout against a draining battery. It is
-marked `.pending-send` instead and mailed once the network is back.
+The snapshot runs with `--no-send`: the modem is down, so SMTP would only burn
+its 45-second timeout against a draining battery. It is marked
+`.pending-send` instead.
 
 **It ships disarmed**, because a bug in something that can power off a
 production server should cost a journal line rather than a working day:
 
 ```bash
-sudo systemctl edit mains-watch     # [Service] / Environment=MAINS_WATCH_ENABLE=1
-sudo systemctl restart mains-watch
-journalctl -t mtc-mains -f
+sudo systemctl edit inverter-watch   # [Service] / Environment=INVERTER_WATCH_ENABLE=1
+sudo systemctl restart inverter-watch
+journalctl -t mtc-power -f
 ```
 
-Rehearse it against an address known to be dead, which is exactly how this
-was verified on the live server:
+Rehearse it against an address known to be dead — which is how this was
+verified against the live server:
 
 ```bash
-sudo MAINS_WATCH_GATEWAY=203.0.113.1 MAINS_WATCH_POLL=2      MAINS_WATCH_THRESHOLD=3 bash deploy/mains-watch.sh
+sudo INVERTER_WATCH_GATEWAY=203.0.113.1 INVERTER_WATCH_POLL=2      INVERTER_WATCH_SHUTDOWN_AFTER=3 bash deploy/inverter-watch.sh
 ```
 
-Two things to check on the host before arming it, or a clean shutdown becomes
-a permanent one: the desktop's BIOS should be set to **restore power state on
-AC loss**, and the VM should be set to **start automatically** with the
-VMware host. Without both, the machine shuts down correctly and then waits
-for a human.
+Two caveats worth knowing before arming it:
+
+- **A deliberate modem reboot looks exactly like a modem that lost power**,
+  and takes 30–90s to come back. Run `sudo systemctl stop inverter-watch`
+  before power-cycling the modem on purpose.
+- **Check the machine can come back by itself.** The desktop's BIOS wants
+  *restore power state on AC loss*, and the VM wants *start automatically*
+  with the VMware host. Without both, this shuts the server down correctly
+  and then waits for a human.
 
 #### Where the emergency copy goes, and why not Drive
 
