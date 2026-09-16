@@ -251,6 +251,245 @@ which is the plan anyway.
 Rehearse all of it. A UPS integration nobody has tested is a UPS integration
 that does not work.
 
+#### Setting it up
+
+`deploy/ups-setup.sh` does the whole data-link side: installs NUT, finds the
+UPS with `nut-scanner`, writes every config file (backing up what was there),
+sets the thresholds above, wires the handler, and enables the services.
+
+```bash
+sudo ./deploy/ups-setup.sh --detect   # just show what is on the USB bus
+sudo ./deploy/ups-setup.sh            # configure and enable
+```
+
+It refuses to write a configuration when `nut-scanner` finds nothing, because
+the most likely reason is the one that matters: the unit is an inverter with
+no data port at all, which is exactly the situation this section exists to
+fix. A socket the server is plugged into tells it nothing.
+
+#### The emergency snapshot: why it fires at ONBATT, not LOWBATT
+
+The obvious design — "when the battery is nearly gone, save everything" — is
+backwards, and worth spelling out because it is the instinct everyone has.
+
+At LOWBATT there are minutes of power left and exactly one correct action:
+shut down cleanly. Starting a database dump and an internet upload at that
+moment *delays* the shutdown, and can cause the hard crash the UPS was bought
+to prevent. Worse, by then the site's router is usually dark too, so the send
+blocks until its own timeout while the battery drains.
+
+So the snapshot fires the instant mains fails, when the battery is still full
+and the network is most likely still up:
+
+| Event | What `deploy/ups-notify.sh` does |
+| --- | --- |
+| `ONBATT` | Take a snapshot now and mail it — backgrounded, so upsmon is never blocked |
+| `LOWBATT` | **Kill** any run still in flight, and get out of the shutdown's way |
+| `ONLINE` | Let an in-flight run finish; mains is back, there is no hurry |
+| `COMMBAD` / `NOCOMM` | Warn that the data link is gone, which defeats the whole arrangement |
+
+The run is capped by `EMERGENCY_BACKUP_BUDGET` (180s) and started with
+`setsid`, so LOWBATT can signal the whole process group and be sure `pg_dump`
+dies with its parent rather than being orphaned holding the database open.
+
+Run it by hand any time — this is also the rehearsal:
+
+```bash
+sudo -u mtc /opt/mtc/venv/bin/python     /opt/mtc/src/Project-root/scripts/emergency_backup.py --dry-run
+journalctl -t mtc-ups -f          # watch it during a real event
+```
+
+Its exit codes are deliberately graded: `0` sent, `1` snapshot written but
+sending failed, `2` no snapshot at all, `3` nothing configured to send to.
+Only `2` is genuinely bad. A `1` still leaves a verified snapshot on disk for
+`offsite-pull.sh` to collect.
+
+#### No UPS data link? Watch the modem — but understand what it tells you
+
+The NUT arrangement above needs a UPS that can talk over USB. This site has an
+inverter that says nothing, so the trigger has to be inferred — and the point
+that matters is **which** event is the emergency.
+
+Losing mains is not. The server is on the inverter precisely so that work
+carries on through an outage, and shutting down then throws away the only
+reason to own one. The emergency is the **inverter giving out**, because the
+machine has minutes left at that point and a clean stop beats a hard cut.
+
+The modem answers that question by proxy, because it is on the same inverter:
+
+| Observation | Meaning | Action |
+| --- | --- | --- |
+| Mains out, modem answering | Running on inverter, as designed | **Nothing.** Carry on. |
+| Modem answering, WAN dead | The ISP has a problem | Log it. Nothing else. |
+| Modem not answering | The inverter is exhausted | Snapshot, then shut down |
+
+The middle row is why "no internet" must never be the trigger: the journal
+carries isolated `connectivity impacted` entries on days with no outage at
+all (Sep 15, Sep 17). Acting on those would power a factory's ERP off over an
+ISP blip — and nothing turns it back on, so the cost is a walk to the machine.
+
+**The budget, measured rather than guessed.** During the last hard cut this
+server recorded its own death:
+
+```
+08:59:57  tailscaled: connectivity impacted
+09:00:57  tailscaled: "Your Internet connection might be down"
+09:01:57  <log ends; machine dead>
+```
+
+The modem went quiet about two minutes before the server did.
+`deploy/inverter-watch.sh` spends those two minutes in two stages rather than
+one, because the two decisions have very different costs:
+
+- **~10s of silence → take a snapshot.** About three seconds, entirely local,
+  and harmless if this turns out to be a blip — retention prunes a spare dump.
+  The data is banked before anything irreversible is considered.
+- **~45s of silence → shut down.** By now it is not a dropped packet. Because
+  the snapshot is already safe, this decision gets to be the slow one.
+
+The snapshot runs with `--no-send`: the modem is down, so SMTP would only burn
+its 45-second timeout against a draining battery. It is marked
+`.pending-send` instead.
+
+**It ships disarmed**, because a bug in something that can power off a
+production server should cost a journal line rather than a working day:
+
+```bash
+sudo systemctl edit inverter-watch   # [Service] / Environment=INVERTER_WATCH_ENABLE=1
+sudo systemctl restart inverter-watch
+journalctl -t mtc-power -f
+```
+
+Rehearse it against an address known to be dead — which is how this was
+verified against the live server:
+
+```bash
+sudo INVERTER_WATCH_GATEWAY=203.0.113.1 INVERTER_WATCH_POLL=2      INVERTER_WATCH_SHUTDOWN_AFTER=3 bash deploy/inverter-watch.sh
+```
+
+Two caveats worth knowing before arming it:
+
+- **A deliberate modem reboot looks exactly like a modem that lost power**,
+  and takes 30–90s to come back. Run `sudo systemctl stop inverter-watch`
+  before power-cycling the modem on purpose.
+- **Check the machine can come back by itself.** The desktop's BIOS wants
+  *restore power state on AC loss*, and the VM wants *start automatically*
+  with the VMware host. Without both, this shuts the server down correctly
+  and then waits for a human.
+
+#### The three states, and what each one does
+
+| State | How it is detected | Action |
+| --- | --- | --- |
+| **Modem switched to inverter** (mains failed, link still up) | Mains reference stops answering while the modem still does | **Snapshot and EMAIL, now.** Keep running. |
+| ISP down, modem fine | Modem answers, WAN does not | Log only |
+| **Modem dead** (inverter exhausted) | Modem stops answering | **Snapshot, then shut down** |
+
+The first row is the one worth having, because it is the *only* moment in an
+outage when the copy can leave the building under its own steam. The modem is
+still on inverter power, so the link works and there is no hurry — a full
+snapshot and a 1.4 MB email both fit comfortably.
+
+It needs a **mains-only reference device**: something that dies when mains
+dies and is *not* on the inverter. Without one, mains failure is invisible —
+a modem answering pings looks identical on mains and on inverter — and the
+watchdog can only act at the end, when the email can no longer be sent.
+
+```ini
+# /etc/systemd/system/inverter-watch.service.d/override.conf
+[Service]
+Environment=INVERTER_WATCH_ENABLE=1
+Environment=INVERTER_WATCH_MAINS_REF=192.168.31.xxx
+```
+
+Choose it carefully. It must be **always-on as well as mains-only**: a phone,
+a laptop or a sleeping printer drops off the network by itself and would
+raise a false alarm every night. A desk PC left running, a non-inverter
+access point or a camera will not. Devices currently visible on the LAN are
+`192.168.31.140`, `.151`, `.152` and `.229` — pick whichever is on a plain
+wall socket.
+
+#### Delivering what the outage could not send
+
+When the inverter gives out, the snapshot is marked `.pending-send` rather
+than mailed — the modem is dead by then, so SMTP cannot succeed and trying
+would only burn the battery discovering that.
+
+`mtc-boot-backup.service` is the other half. At the next boot the network is
+back by definition, so it delivers whatever is owed:
+
+```bash
+sudo install -m 0644 deploy/mtc-boot-backup.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable mtc-boot-backup
+journalctl -u mtc-boot-backup -b
+```
+
+It also covers the case the watchdog cannot: an outage that gave no warning,
+or a boot where the watchdog was not armed. If the previous boot ended
+without a shutdown and nothing was pending, it takes a snapshot then and
+sends that — which loses nothing, because **the database cannot change while
+the machine is off**. A snapshot taken at the next boot holds exactly what one
+taken at the moment of the cut would have held.
+
+After a clean reboot it does nothing at all: nothing pending plus a clean
+previous boot means it exits having taken no action.
+
+A marker is cleared only once the relay has actually accepted the message, so
+a send that fails is retried at the next boot rather than lost. A marker
+whose snapshot has since been pruned is dropped, so it cannot be retried
+forever.
+
+#### Where the emergency copy goes, and why not Drive
+
+It goes out by **email**, as an attachment, over the relay the app already
+uses for password resets.
+
+**The recipient is the `super_admin` in the database** — the person who owns
+this system — so the address stays right when it changes there, rather than
+needing an env file edited on a server nobody wants to touch. Every active
+`super_admin` gets a copy if there is more than one. The order is:
+
+1. `--to` on the command line
+2. `EMERGENCY_BACKUP_TO`, so an operator can redirect it during a restore
+   drill without editing the user table
+3. every active `super_admin` in `public.users`
+4. `MAIL_DEFAULT_SENDER`, last resort — that is who mail comes *from*, and is
+   not necessarily a mailbox anyone reads
+
+The lookup connects with psycopg2 directly rather than through the app's
+pool, because this runs from a shell on a machine that may be losing power
+and no Flask app exists there. It never raises: a database that cannot be
+read falls back to the configured address rather than failing to send a
+backup.
+
+Google Drive was tried first and cannot work here. The credentials are a
+**service account**; a service account owns whatever it uploads, and service
+accounts have **zero bytes** of Drive storage. Only a Shared Drive bypasses
+that — storage belongs to the organisation instead — and Shared Drives are a
+Google Workspace feature that a consumer Gmail account does not have. The
+upload fails with `storageQuotaExceeded`.
+
+The trap is that the *spreadsheet* backup works fine, which looks like proof
+that Drive is configured correctly. It is not: Google Sheets/Docs files are
+exempt from storage quota and binary files are not.
+`app/erp/services/drive_backup.py` is written and correct, and turns that
+failure into these instructions rather than a stack trace — but it stays
+unwired until the credentials become OAuth user credentials (scope
+`drive.file`, consent screen set to **In production**, or Google expires the
+refresh token after 7 days and backups stop silently).
+
+Two things to know about the email route:
+
+- **Size.** A compressed dump of this database is about 1 MB; base64 makes it
+  ~1.4 MB against a Mailjet ceiling near 15 MB. `EMERGENCY_MAIL_MAX_BYTES`
+  (10 MB) is checked *before* connecting, because a relay rejects an
+  oversized message only after the whole attachment has gone up the wire —
+  the most expensive possible way to discover a limit on a dying battery.
+- **Exposure.** The attachment is the entire vendor, client, costing and
+  payment history, passing through a third-party relay and landing in a
+  mailbox. TLS covers it in transit. Keep that mailbox private, and consider
+  encrypting the attachment if that is not good enough.
+
 ### 2. Check that the disk is not lying about flushes
 
 `fsync=on` is only as good as the hardware's honesty. Consumer SSDs and USB
@@ -379,6 +618,51 @@ systemctl is-enabled mtc postgresql redis-server nginx
 ```
 
 ---
+
+## One command for "is everything working?"
+
+```bash
+curl -s http://127.0.0.1:8000/health | python3 -m json.tool
+```
+
+`/health` keeps its three documented keys for everyone — a load balancer and
+an uptime monitor read the status code and nothing else — and adds a
+`vitals` object for callers it recognises:
+
+| Section | Why it is in there |
+| --- | --- |
+| `app` | uptime, pid, env, debug flag |
+| `database` | version, size, connections used/max, query latency, migrations applied |
+| `database.durability` | `fsync`, `synchronous_commit`, `full_page_writes`. These three decide whether a power cut costs committed data. Turning one off to make the box "faster" would otherwise go unnoticed until the day it matters. |
+| `redis` | reachable or not — `create_app()` *raises* without it under `FLASK_ENV=production`, so a dead Redis turns the next restart into a crash loop |
+| `backups` | newest snapshot, its age and size, whether it has a checksum, how many are pending send, how many abandoned `.partial` files |
+| `disk` | free space where the backups live — a full disk stops PostgreSQL writing WAL |
+| `attention` | a list naming anything unhappy, or `null`. Read this line first. |
+
+`backups.pending_send` is the one to watch after an outage: non-zero for an
+hour is expected, non-zero for days means `mtc-boot-backup.service` is not
+delivering.
+
+**Who sees the vitals.** `HEALTH_VITALS_SCOPE` decides:
+
+- `local` — loopback only
+- `private` — loopback, RFC1918 and the Tailscale `100.64/10` range
+  (**default**), so the vitals are readable over the LAN and over the tailnet
+- `all` — anyone who can route to the app
+
+An admin session or the `METRICS_TOKEN` bearer always qualifies. The ranges
+are spelled out in `app/health.py` rather than left to
+`ipaddress.is_private`, which is not stable across the interpreters this runs
+on — Python 3.12 widened it, so the same request would be answered
+differently on 3.10 and 3.13.
+
+Worth knowing what `private` does and does not buy: it keeps a box that ends
+up with a public address from narrating its disk usage to the internet, and
+it does very little against someone already on the factory LAN, because
+`/health` is unauthenticated by necessity. Nothing in the payload is a
+credential either way — the DSN never appears, and a failing section reports
+its exception *type* only, never the message, which is where psycopg2 puts
+the host, user and password. `tests/test_smoke.py` asserts exactly that.
 
 ## After an outage: what to check
 

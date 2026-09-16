@@ -32,6 +32,11 @@ sudo /opt/mtc/src/Project-root/deploy/deploy.sh      # every release
 | `mtc.service` | `/etc/systemd/system/` | gunicorn under systemd |
 | `wait-for-deps.sh` | — | Startup gate: blocks until Postgres and Redis actually accept connections. |
 | `offsite-pull.sh` | — | Runs on the laptop/NAS, not the server: fetches and verifies snapshots over Tailscale or a LAN. |
+| `ups-setup.sh` | — | Gives the server a data link to its UPS (NUT), and wires the emergency snapshot to it. |
+| `ups-notify.sh` | — | NUT event handler: snapshot+mail on ONBATT, kill it on LOWBATT. |
+| `inverter-watch.sh` | — | No UPS data link: shuts down when the modem dies (inverter exhausted), not when mains fails. |
+| `inverter-watch.service` | `/etc/systemd/system/` | Runs the inverter watchdog. Ships disarmed. |
+| `mtc-boot-backup.service` | `/etc/systemd/system/` | At boot, mails any snapshot the outage could not send. |
 | `nginx-mtc.conf` | `/etc/nginx/sites-available/mtc` | Reverse proxy, static, `/health` |
 | `mtc.env.example` | `/etc/mtc/mtc.env` | Annotated config template |
 | `POWER_OUTAGE_RESILIENCE.md` | — | Sites with long outages: what survives a hard cut, and what to fix on the host. |

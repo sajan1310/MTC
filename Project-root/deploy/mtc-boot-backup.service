@@ -1,0 +1,64 @@
+# Deliver the outage snapshot once the machine is back.
+#
+# Install to /etc/systemd/system/mtc-boot-backup.service, then:
+#   sudo systemctl enable mtc-boot-backup
+#
+# What it is for
+# --------------
+# When the inverter gives out, deploy/inverter-watch.sh takes a snapshot and
+# marks it .pending-send rather than mailing it -- the modem is dead by then,
+# so SMTP cannot succeed and trying would only burn the battery discovering
+# that. This unit is the other half: at the next boot the network is back by
+# definition, so it delivers whatever is owed.
+#
+# It also covers the case the watchdog cannot: an outage that gave no warning
+# at all, or a boot where the watchdog was not armed. If the previous boot
+# ended without a shutdown and nothing was pending, it takes a snapshot now
+# and sends that. The database cannot change while the machine is off, so
+# that snapshot holds exactly what one taken at the moment of the cut would
+# have held.
+#
+# It stays quiet after a clean reboot: nothing pending plus a clean previous
+# boot means it exits 0 having done nothing.
+#
+#   journalctl -u mtc-boot-backup -b
+
+[Unit]
+Description=MTC: send any snapshot the last outage could not deliver
+Documentation=file:///opt/mtc/src/Project-root/deploy/POWER_OUTAGE_RESILIENCE.md
+# The database has to be up to take a snapshot, and the network has to be up
+# to send one. mtc.service is ordered before this so a boot storm does not
+# have both competing for the same pool.
+After=network-online.target postgresql.service mtc.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=mtc
+Group=mtc
+WorkingDirectory=/opt/mtc/src/Project-root
+
+EnvironmentFile=-/etc/mtc/mtc.env
+Environment=PYTHONUNBUFFERED=1
+Environment=LANG=C.UTF-8
+Environment=LC_ALL=C.UTF-8
+
+# Generous: this may be mailing a backlog of several snapshots over a link
+# that has just come back and is still settling.
+Environment=EMERGENCY_BACKUP_BUDGET=600
+TimeoutStartSec=900
+
+ExecStart=/opt/mtc/venv/bin/python scripts/emergency_backup.py --boot
+
+# A snapshot that still cannot be sent is not a reason to mark the boot
+# failed -- the marker survives and the next boot tries again. Exit 1 means
+# "still owed", which is information, not breakage.
+SuccessExitStatus=0 1
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mtc-boot-backup
+
+[Install]
+WantedBy=multi-user.target

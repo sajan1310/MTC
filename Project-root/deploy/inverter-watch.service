@@ -1,0 +1,71 @@
+# Inverter-exhaustion watchdog for the MTC ERP server.
+#
+# Install to /etc/systemd/system/inverter-watch.service.
+#
+# It does NOT react to mains failure. The server is on an inverter so that
+# work continues through an outage, and shutting down then would throw that
+# away. What it reacts to is the inverter GIVING OUT, detected by the modem --
+# which shares that inverter -- going silent. deploy/inverter-watch.sh has the
+# full reasoning and the measurements behind the timings.
+#
+#   mains out, modem answering  -> carry on, do nothing
+#   modem answering, WAN dead   -> the ISP's problem, log only
+#   modem NOT answering         -> inverter exhausted: snapshot, then poweroff
+#
+# ARMING IT IS A SEPARATE, DELIBERATE STEP. As shipped it only reports what it
+# would have done, because a bug in a service that can power off a production
+# server should cost a journal line, not a working day:
+#
+#   sudo systemctl edit inverter-watch       # add the override below
+#     [Service]
+#     Environment=INVERTER_WATCH_ENABLE=1
+#   sudo systemctl restart inverter-watch
+#
+# Power-cycling the modem on purpose looks identical to the modem losing
+# power, so stop this first when you do:
+#   sudo systemctl stop inverter-watch
+#
+# Watch it:  journalctl -t mtc-power -f
+
+[Unit]
+Description=MTC inverter-exhaustion watchdog (snapshot then clean shutdown)
+Documentation=file:///opt/mtc/src/Project-root/deploy/POWER_OUTAGE_RESILIENCE.md
+After=network-online.target mtc.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Root, and deliberately: it has to run `systemctl poweroff`. It drops to the
+# mtc user for the snapshot itself, so the dump is not left root-owned in
+# backups/ where the nightly job's retention could no longer delete it.
+User=root
+
+# Report-only until someone overrides it. See the header.
+Environment=INVERTER_WATCH_ENABLE=0
+
+# Budget comes from the last real outage, which this server recorded itself:
+# the modem went quiet at 08:59:57 and the machine died at 09:01:57. Inside
+# those ~2 minutes, bank the snapshot early (10s) and take the irreversible
+# decision slowly (45s), so a dropped packet cannot power off a factory.
+Environment=INVERTER_WATCH_POLL=5
+Environment=INVERTER_WATCH_SNAPSHOT_AFTER=2
+Environment=INVERTER_WATCH_SHUTDOWN_AFTER=9
+Environment=INVERTER_WATCH_CONFIRM=3
+
+Environment=PYTHONUNBUFFERED=1
+Environment=LANG=C.UTF-8
+Environment=LC_ALL=C.UTF-8
+
+ExecStart=/bin/bash /opt/mtc/src/Project-root/deploy/inverter-watch.sh
+
+# It exits 0 after acting, and systemd must not restart it during the
+# poweroff it just requested. on-failure covers a crash without fighting that.
+Restart=on-failure
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mtc-power
+
+[Install]
+WantedBy=multi-user.target
