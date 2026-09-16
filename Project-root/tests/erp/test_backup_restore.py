@@ -399,6 +399,12 @@ def test_snapshot_writes_a_checksum_sidecar(snapshot):
     assert len(snapshot.sha256) == 64
 
 
+def _age(path, seconds: float) -> None:
+    """Backdate `path`'s mtime by `seconds`, since the reaper reads mtime."""
+    when = os.stat(path).st_mtime - seconds
+    os.utime(path, (when, when))
+
+
 def test_retention_keeps_recent_snapshots_and_prunes_the_rest(tmp_path):
     """Nothing pruned backups/ at all, so it grew without bound -- on a
     machine whose disk filling up is itself a way to lose the database."""
@@ -428,3 +434,63 @@ def test_retention_never_removes_the_only_snapshot(tmp_path):
     only.write_bytes(b"x")
     db_backup.prune_snapshots(str(tmp_path))
     assert only.exists()
+
+
+# ── Abandoned .partial files (power-loss cleanup) ─────────────────────────
+#
+# create_snapshot writes to `<name>.dump.partial` and only renames it into
+# place once pg_restore has verified it. Its `except BaseException` handler
+# deletes the partial on any failure -- but a power cut runs no handler, so
+# the file is simply left behind. _SNAPSHOT_RE anchors on `.dump$`, so
+# retention could not see those orphans either: at a site losing power most
+# nights they accumulated one full dump per outage, on the same disk as the
+# database, until it filled.
+
+
+def test_reaping_removes_an_abandoned_partial(tmp_path):
+    orphan = tmp_path / "mtc_20260825_020000.dump.partial"
+    orphan.write_bytes(b"half a dump")
+    _age(orphan, db_backup.ORPHAN_PARTIAL_AGE_SECONDS + 60)
+
+    removed = db_backup.reap_orphaned_partials(str(tmp_path))
+
+    assert removed == [orphan.name]
+    assert not orphan.exists()
+
+
+def test_reaping_spares_a_partial_a_live_run_may_still_be_writing(tmp_path):
+    """The age floor is the only thing standing between this and deleting a
+    snapshot that is legitimately still being dumped."""
+    fresh = tmp_path / "mtc_20260825_020000.dump.partial"
+    fresh.write_bytes(b"still being written")
+
+    removed = db_backup.reap_orphaned_partials(str(tmp_path))
+
+    assert removed == []
+    assert fresh.exists()
+
+
+def test_reaping_never_touches_a_finished_snapshot(tmp_path):
+    keeper = tmp_path / "mtc_20260825_020000.dump"
+    keeper.write_bytes(b"a real backup")
+    _age(keeper, db_backup.ORPHAN_PARTIAL_AGE_SECONDS * 10)
+
+    assert db_backup.reap_orphaned_partials(str(tmp_path)) == []
+    assert keeper.exists()
+
+
+def test_retention_reaps_orphaned_partials_too(tmp_path):
+    """prune_snapshots runs after every successful backup, so it is the
+    routine sweep; create_snapshot reaps on the way in as well, for the site
+    where runs keep getting killed and none ever reaches the sweep."""
+    orphan = tmp_path / "mtc_20260825_020000.dump.partial"
+    orphan.write_bytes(b"half a dump")
+    _age(orphan, db_backup.ORPHAN_PARTIAL_AGE_SECONDS + 60)
+
+    keeper = tmp_path / "mtc_20260825_030000.dump"
+    keeper.write_bytes(b"a real backup")
+
+    removed = db_backup.prune_snapshots(str(tmp_path))
+
+    assert orphan.name in removed
+    assert keeper.exists(), "retention pruned the only real snapshot"

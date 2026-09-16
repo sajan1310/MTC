@@ -30,8 +30,11 @@ sudo /opt/mtc/src/Project-root/deploy/deploy.sh      # every release
 | `provision.sh` | — | Packages, timezone, PostgreSQL 17, Redis, nginx, unit. Idempotent. |
 | `deploy.sh` | — | Pull, sync venv, verify runtime, migrate, restart, health-check. |
 | `mtc.service` | `/etc/systemd/system/` | gunicorn under systemd |
+| `wait-for-deps.sh` | — | Startup gate: blocks until Postgres and Redis actually accept connections. |
+| `offsite-pull.sh` | — | Runs on the laptop/NAS, not the server: fetches and verifies snapshots over Tailscale or a LAN. |
 | `nginx-mtc.conf` | `/etc/nginx/sites-available/mtc` | Reverse proxy, static, `/health` |
 | `mtc.env.example` | `/etc/mtc/mtc.env` | Annotated config template |
+| `POWER_OUTAGE_RESILIENCE.md` | — | Sites with long outages: what survives a hard cut, and what to fix on the host. |
 
 Layout: `/opt/mtc/src` checkout · `/opt/mtc/venv` the one interpreter ·
 `/etc/mtc/mtc.env` secrets (`root:mtc` `0640`) · service user `mtc`.
@@ -96,6 +99,15 @@ sudo chown -R mtc:mtc /opt/mtc/src && sudo /opt/mtc/src/Project-root/deploy/depl
 ```
 
 Excluding `backups` and `logs` is what keeps `--delete` safe here.
+
+### Sites with unreliable power
+
+If mains outages at the installation run for hours and the inverters do not
+always outlast them, read
+**[POWER_OUTAGE_RESILIENCE.md](POWER_OUTAGE_RESILIENCE.md)**. Short version:
+committed data survives a hard cut, the service now comes back on its own
+without anyone SSHing in, and the remaining work is a UPS with a data link
+so the machine can shut down cleanly instead of being killed.
 
 ### Three things that bite
 

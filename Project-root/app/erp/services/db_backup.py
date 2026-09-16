@@ -51,12 +51,20 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import hashlib
+import logging
 import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from urllib.parse import urlparse
+
+# This module deliberately does not import flask. It is called from the
+# nightly scheduler thread, from a manual-trigger thread and from the test
+# suite, so it logs through the stdlib logger the way backup_service does
+# rather than through current_app, which is not guaranteed to exist.
+logger = logging.getLogger(__name__)
 
 # pg_dump's custom format: compressed, selectively restorable, and the only
 # format pg_restore can list without a running server to restore into.
@@ -115,6 +123,26 @@ RETAIN_WEEKLY = int(os.getenv("BACKUP_RETAIN_WEEKLY", "4"))
 RETAIN_MONTHLY = int(os.getenv("BACKUP_RETAIN_MONTHLY", "12"))
 
 _SNAPSHOT_RE = re.compile(r"^mtc_(?P<stamp>\d{8}_\d{6})\.dump$")
+
+# In-progress snapshots carry this suffix until they are verified (see
+# create_snapshot). Normally the name exists for seconds and is either
+# renamed into place or deleted by the error path.
+#
+# A power cut is the case where neither happens. SIGKILL and a dead machine
+# run no `except` block, so the .partial file survives as an orphan -- and
+# _SNAPSHOT_RE anchors on `.dump$`, so prune_snapshots could not see it to
+# delete it. At a site losing power most nights, one abandoned full dump per
+# outage accumulates in the same directory as the backups, on the same disk
+# as the database, until the disk fills and PostgreSQL cannot write WAL. The
+# backup directory became the outage.
+_PARTIAL_SUFFIX = ".partial"
+
+# A .partial older than this cannot belong to a live run: create_snapshot
+# caps pg_dump at DUMP_TIMEOUT_SECONDS and pg_restore's verification at
+# VERIFY_TIMEOUT_SECONDS, and _run kills the child at those limits. The
+# extra hour is slack for a machine whose clock jumped -- which, on a box
+# that keeps losing power, is not hypothetical either.
+ORPHAN_PARTIAL_AGE_SECONDS = DUMP_TIMEOUT_SECONDS + VERIFY_TIMEOUT_SECONDS + 3600
 
 
 class BackupError(RuntimeError):
@@ -340,9 +368,16 @@ def create_snapshot(
     dsn, password = build_dsn(config)
 
     os.makedirs(backup_dir, exist_ok=True)
+
+    # Before writing a new one, reclaim the space abandoned ones are holding.
+    # Also done from prune_snapshots, which only runs after a SUCCESSFUL
+    # backup -- and the site that generates orphans is the site where runs
+    # keep getting killed, so the reap has to happen on the way in too.
+    reap_orphaned_partials(backup_dir)
+
     stamp = (now or dt.datetime.now()).strftime("%Y%m%d_%H%M%S")
     final_path = os.path.join(backup_dir, f"mtc_{stamp}.dump")
-    partial_path = final_path + ".partial"
+    partial_path = final_path + _PARTIAL_SUFFIX
 
     cmd = [
         pg_dump,
@@ -375,9 +410,31 @@ def create_snapshot(
         checksum = _sha256(partial_path)
         size = os.path.getsize(partial_path)
 
+        # Flush the dump's own bytes BEFORE the rename makes it visible
+        # under a name a restore would trust. See _fsync_path.
+        _fsync_path(partial_path)
         os.replace(partial_path, final_path)
-        with open(final_path + ".sha256", "w", encoding="utf-8") as handle:
+
+        sidecar_path = final_path + ".sha256"
+        with open(sidecar_path, "w", encoding="utf-8") as handle:
             handle.write(f"{checksum}  {os.path.basename(final_path)}\n")
+            handle.flush()
+            try:
+                os.fsync(handle.fileno())
+            except OSError as exc:
+                # Guarded for the same reason _fsync_path swallows its own
+                # errors, and it matters more here: this sits INSIDE the
+                # try whose handler reports the run FAILED, so an unguarded
+                # fsync would fail a backup whose dump is already safely in
+                # place over a sidecar that is merely unflushed.
+                logger.warning("Could not fsync %s: %s", sidecar_path, exc)
+
+        # The rename and the sidecar's creation are directory metadata, and
+        # a file's data being durable says nothing about its name being
+        # durable. Without this the dump can survive a cut under its
+        # .partial name while the reap above treats it as an orphan, or the
+        # sidecar can vanish and leave a snapshot nobody can check.
+        _fsync_path(backup_dir, directory=True)
     except BaseException:
         # Never leave an unverified file where a human might reach for it.
         try:
@@ -395,6 +452,86 @@ def create_snapshot(
         table_count=table_count,
         verified=True,
     )
+
+
+def _fsync_path(path: str, *, directory: bool = False) -> None:
+    """Force `path` to durable storage. Logs and continues on failure.
+
+    pg_dump exiting 0 means the bytes reached the kernel, not the disk. They
+    sit in the page cache for up to /proc/sys/vm/dirty_expire_centisecs --
+    30 seconds by default -- and a power cut inside that window leaves a
+    file that is short or all zeroes.
+
+    That is worse than having no backup, because everything upstream of the
+    disk agreed the file was good: verify_snapshot read it back through the
+    same page cache, so pg_restore listed every required table, and _sha256
+    hashed the cached bytes, so the .sha256 sidecar recorded a checksum for
+    data the platters never received. The result is a snapshot that presents
+    as verified and fails at restore -- discovered, by definition, on the
+    day the database is already gone.
+    """
+    flags = os.O_RDONLY
+    if directory:
+        # O_DIRECTORY is Linux-only; this module is imported on Windows dev
+        # machines, where the whole helper degrades to the warning below.
+        flags |= getattr(os, "O_DIRECTORY", 0)
+    fd = None
+    try:
+        fd = os.open(path, flags)
+        os.fsync(fd)
+    except OSError as exc:
+        # Never fatal. A snapshot that is verified but possibly not yet
+        # flushed still beats failing a backup that otherwise succeeded --
+        # the point of this call is to narrow the window, not to add a new
+        # way for the nightly job to report FAILED.
+        logger.warning("Could not fsync %s: %s", path, exc)
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def reap_orphaned_partials(
+    backup_dir: str, *, older_than_seconds: int | None = None
+) -> list[str]:
+    """Delete abandoned ``*.dump.partial`` files. Returns the names removed.
+
+    These can only be leftovers from a run that died without running its own
+    cleanup -- a power cut, an OOM kill, `kill -9`. The age floor is what
+    keeps this from racing a snapshot that is legitimately still being
+    written; see ORPHAN_PARTIAL_AGE_SECONDS.
+    """
+    cutoff = (
+        ORPHAN_PARTIAL_AGE_SECONDS if older_than_seconds is None else older_than_seconds
+    )
+    now = time.time()
+    removed: list[str] = []
+
+    try:
+        entries = sorted(Path(backup_dir).glob(f"mtc_*.dump{_PARTIAL_SUFFIX}"))
+    except OSError:
+        return removed
+
+    for entry in entries:
+        try:
+            if now - entry.stat().st_mtime < cutoff:
+                continue
+            size = entry.stat().st_size
+            entry.unlink()
+        except OSError:
+            # Same reasoning as prune_snapshots: a file we cannot delete is
+            # not a reason to fail a backup that already succeeded.
+            continue
+        removed.append(entry.name)
+        logger.warning(
+            "Removed abandoned partial snapshot %s (%d bytes) -- a previous "
+            "backup was killed mid-dump, most likely by a power loss.",
+            entry.name,
+            size,
+        )
+    return removed
 
 
 def _snapshot_files(backup_dir: str) -> list[tuple[dt.datetime, Path]]:
@@ -417,7 +554,13 @@ def prune_snapshots(backup_dir: str) -> list[str]:
     Nothing pruned the old backups/ directory at all, so it grew without
     bound -- on a machine whose disk filling up is itself a way to lose the
     database.
+
+    Also reaps abandoned ``.partial`` files, which the retention rules below
+    cannot see (they match on the final name) and which no error path can
+    clean up when the process was killed outright.
     """
+    removed = reap_orphaned_partials(backup_dir)
+
     snapshots = _snapshot_files(backup_dir)
     keep: set[Path] = set()
 
@@ -438,7 +581,6 @@ def prune_snapshots(backup_dir: str) -> list[str]:
             seen_months.add(key)
             keep.add(path)
 
-    removed = []
     for _when, path in snapshots:
         if path in keep:
             continue
