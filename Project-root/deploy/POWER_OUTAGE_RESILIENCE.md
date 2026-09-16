@@ -140,11 +140,27 @@ These are in priority order.
 ### 1. Let the machine shut itself down before the battery dies — do this first
 
 This is the single highest-value change available, and it is the one that
-converts the whole problem class into a non-event. An inverter that fails
-mid-outage yanks power with no warning. A UPS with a **data link** (USB or
-serial, not just a socket the server is plugged into) can say "battery at
-20%", and the server can shut down cleanly while it still has power to do
-it. A clean shutdown needs no WAL replay, no fsck, and no gamble.
+converts the whole problem class into a non-event.
+
+**An inverter is already in place at this site, and it is not enough.** The
+missing piece is not capacity — it is a **data link**. An inverter carries
+the load and then dies silently, so the server gets the same hard cut it
+would have got without one, several hours later. Sizing up only moves the
+failure later; there is always an outage longer than the battery you bought.
+
+What removes the failure is the server *hearing* "battery at 20%" over USB
+or serial, so it can shut down cleanly while power remains. A clean shutdown
+needs no WAL replay, no fsck, and no gamble.
+
+Two ways to get there, and the second is the cheap retrofit:
+
+- A UPS with a USB or serial port for the server and the network gear, on
+  their own supply. Server + switch + ONT is roughly 100–150 W against the
+  whole office load, so a dedicated line multiplies runtime as well.
+- Keep the existing inverter as the bulk supply and put a small
+  line-interactive UPS **between it and the server**. That buys the data
+  link plus a final few minutes to flush and halt — which is all the
+  shutdown actually needs.
 
 ```bash
 sudo apt install nut
@@ -192,19 +208,79 @@ better, and the right answer for a site like this — use a drive with power-
 loss protection. A UPS covers this too: a cache that is never surprised by a
 cut cannot lose what it holds.
 
-### 3. Get the backups off this machine
+### 3. Get the backups off this machine — use `offsite-pull.sh`
 
 Already flagged as a gap in `PRODUCTION_REMEDIATION_RUNBOOK.md`; repeated
 power loss makes it urgent. Snapshots land in `/opt/mtc/src/backups`, on the
 same disk as the database. A backup on the same disk as the database is not
-a backup — the failure that takes the disk takes both.
+a backup — the failure that takes the disk takes both. There is also no
+download endpoint in the app (`triggerBackup` and `getBackupStatus` are the
+only backup RPCs), so nothing leaves that box unless something fetches it.
 
-Anything off-box beats nothing: a `rsync` to another machine on the LAN, a
-nightly copy to an external drive, `rclone` to cloud storage. The snapshot
-has a `.sha256` sidecar; verify against it after the copy.
+`deploy/offsite-pull.sh` is that something. It runs on the machine holding
+the copy — **not** on the server — and over Tailscale the server's tailnet
+name is a stable address from anywhere, so it works from the factory, from
+home, or from a hotel, with no port forwarding and no dynamic DNS.
+
+```bash
+./offsite-pull.sh --source mtc-server:/opt/mtc/src/backups \
+                  --dest ~/mtc-backups --keep 14
+```
+
+It fetches only what it does not already hold, verifies every copy against
+its `.sha256` sidecar, discards anything that fails, and prunes its own
+copies to `--keep`. Being idempotent, it needs no state and no coordination:
+a laptop that was closed for three days collects all three snapshots on its
+next run. A local `--source` (a mounted NAS, a USB disk) works too, which is
+also how to rehearse the setup before pointing it at the real server.
+
+Three properties worth knowing, because they are the difference between a
+backup and a file that looks like one:
+
+- **It is not a mirror.** It never deletes a local snapshot because the
+  source no longer has it. A mirror faithfully reproduces the deletion that
+  destroyed the original. If you use Syncthing or `rsync --delete` instead,
+  turn on file versioning at the receiving end or you have two copies of one
+  failure.
+- **It never keeps an unverified copy.** A checksum mismatch deletes the
+  local file and exits non-zero, rather than leaving something under a
+  trusted name that a restore would reach for.
+- **It exits non-zero on any failure**, so Task Scheduler or cron surfaces a
+  stale copy instead of letting it rot quietly — which is how backups
+  usually die.
+
+**Scheduling on a Windows laptop.** Git for Windows already ships Git Bash,
+which provides `bash`, `ssh`, `scp` and `sha256sum`, so the script runs as
+is — no WSL, no PowerShell port. In Task Scheduler, run:
+
+```
+"C:\Program Files\Git\bin\bash.exe" -lc "~/mtc/deploy/offsite-pull.sh --source mtc-server:/opt/mtc/src/backups --dest ~/mtc-backups --keep 14"
+```
+
+Set it to *Run whether user is logged on or not* and tick *Run task as soon
+as possible after a scheduled start is missed* — the closed-lid case is the
+normal case for a laptop.
+
+**Pull, don't push.** The server knows exactly when a fresh verified dump
+exists and could push it, but that needs the server to hold an SSH key for
+the laptop, turning a server compromise into laptop access. Pulling keeps
+the credential on the machine being protected.
+
+**Then restore from the off-site copy once, on purpose.** This is the step
+everyone skips and the only one that proves the rest worked. Commands are in
+`PRODUCTION_REMEDIATION_RUNBOOK.md`.
+
+**Encrypt the machine holding the copy.** These dumps are the complete
+vendor, client, costing and payment history. On a laptop that leaves the
+site, that wants BitLocker or FileVault on.
+
+**Lock down the tailnet.** Tailscale ACLs default to flat — every device
+reaching every other device on every port. Restrict the server to the
+devices that actually need it, on the ports they actually need.
 
 The Google Sheets mirror is a convenience, not a restore path. It does not
-round-trip into a database.
+round-trip into a database: no schema, no sequences, no constraints, no
+foreign-key ordering.
 
 ### 4. Turn on data checksums
 

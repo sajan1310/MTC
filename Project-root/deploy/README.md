@@ -31,6 +31,7 @@ sudo /opt/mtc/src/Project-root/deploy/deploy.sh      # every release
 | `deploy.sh` | — | Pull, sync venv, verify runtime, migrate, restart, health-check. |
 | `mtc.service` | `/etc/systemd/system/` | gunicorn under systemd |
 | `wait-for-deps.sh` | — | Startup gate: blocks until Postgres and Redis actually accept connections. |
+| `offsite-pull.sh` | — | Runs on the laptop/NAS, not the server: fetches and verifies snapshots over Tailscale or a LAN. |
 | `nginx-mtc.conf` | `/etc/nginx/sites-available/mtc` | Reverse proxy, static, `/health` |
 | `mtc.env.example` | `/etc/mtc/mtc.env` | Annotated config template |
 | `POWER_OUTAGE_RESILIENCE.md` | — | Sites with long outages: what survives a hard cut, and what to fix on the host. |
