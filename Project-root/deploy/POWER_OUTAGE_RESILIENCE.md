@@ -251,6 +251,154 @@ which is the plan anyway.
 Rehearse all of it. A UPS integration nobody has tested is a UPS integration
 that does not work.
 
+#### Setting it up
+
+`deploy/ups-setup.sh` does the whole data-link side: installs NUT, finds the
+UPS with `nut-scanner`, writes every config file (backing up what was there),
+sets the thresholds above, wires the handler, and enables the services.
+
+```bash
+sudo ./deploy/ups-setup.sh --detect   # just show what is on the USB bus
+sudo ./deploy/ups-setup.sh            # configure and enable
+```
+
+It refuses to write a configuration when `nut-scanner` finds nothing, because
+the most likely reason is the one that matters: the unit is an inverter with
+no data port at all, which is exactly the situation this section exists to
+fix. A socket the server is plugged into tells it nothing.
+
+#### The emergency snapshot: why it fires at ONBATT, not LOWBATT
+
+The obvious design — "when the battery is nearly gone, save everything" — is
+backwards, and worth spelling out because it is the instinct everyone has.
+
+At LOWBATT there are minutes of power left and exactly one correct action:
+shut down cleanly. Starting a database dump and an internet upload at that
+moment *delays* the shutdown, and can cause the hard crash the UPS was bought
+to prevent. Worse, by then the site's router is usually dark too, so the send
+blocks until its own timeout while the battery drains.
+
+So the snapshot fires the instant mains fails, when the battery is still full
+and the network is most likely still up:
+
+| Event | What `deploy/ups-notify.sh` does |
+| --- | --- |
+| `ONBATT` | Take a snapshot now and mail it — backgrounded, so upsmon is never blocked |
+| `LOWBATT` | **Kill** any run still in flight, and get out of the shutdown's way |
+| `ONLINE` | Let an in-flight run finish; mains is back, there is no hurry |
+| `COMMBAD` / `NOCOMM` | Warn that the data link is gone, which defeats the whole arrangement |
+
+The run is capped by `EMERGENCY_BACKUP_BUDGET` (180s) and started with
+`setsid`, so LOWBATT can signal the whole process group and be sure `pg_dump`
+dies with its parent rather than being orphaned holding the database open.
+
+Run it by hand any time — this is also the rehearsal:
+
+```bash
+sudo -u mtc /opt/mtc/venv/bin/python     /opt/mtc/src/Project-root/scripts/emergency_backup.py --dry-run
+journalctl -t mtc-ups -f          # watch it during a real event
+```
+
+Its exit codes are deliberately graded: `0` sent, `1` snapshot written but
+sending failed, `2` no snapshot at all, `3` nothing configured to send to.
+Only `2` is genuinely bad. A `1` still leaves a verified snapshot on disk for
+`offsite-pull.sh` to collect.
+
+#### No UPS data link? Watch the modem instead
+
+The arrangement above needs a UPS that can talk over USB. This site has an
+inverter that says nothing, so the trigger has to be inferred — and the
+server's own journal shows how. From the last hard cut:
+
+```
+08:59:57  tailscaled: connectivity impacted
+09:00:57  tailscaled: "Your Internet connection might be down"
+09:01:57  <log ends; machine dead>
+```
+
+The modem died about **two minutes** before the server, because the server is
+on the inverter and the modem effectively is not. That two-minute lead is the
+whole budget, and it is enough: a snapshot takes ~3 seconds and a clean
+shutdown well under a minute.
+
+`deploy/mains-watch.sh` (installed as `mains-watch.service`) pings the default
+gateway every 5s. Four consecutive misses plus a confirmation burst means the
+modem has lost power, so mains is out — at which point it takes an immediate
+snapshot and shuts the machine down cleanly.
+
+**"Gateway down" is not "internet down", and the distinction is the whole
+design:**
+
+| Observation | Meaning | Action |
+| --- | --- | --- |
+| Gateway unreachable | The modem has no power | Mains is out — snapshot, then shut down |
+| Gateway answers, WAN dead | The ISP has a problem | Log it. Do nothing. |
+
+Conflating them powers a factory's ERP off over a transient ISP blip — and
+the journal has isolated `connectivity impacted` entries on days with no
+outage at all (Sep 15, Sep 17). Nothing then powers the machine back on, so
+a false positive costs a walk to the server.
+
+The snapshot runs with `--no-send`: the modem is already dead, so attempting
+SMTP would only burn the 45-second timeout against a draining battery. It is
+marked `.pending-send` instead and mailed once the network is back.
+
+**It ships disarmed**, because a bug in something that can power off a
+production server should cost a journal line rather than a working day:
+
+```bash
+sudo systemctl edit mains-watch     # [Service] / Environment=MAINS_WATCH_ENABLE=1
+sudo systemctl restart mains-watch
+journalctl -t mtc-mains -f
+```
+
+Rehearse it against an address known to be dead, which is exactly how this
+was verified on the live server:
+
+```bash
+sudo MAINS_WATCH_GATEWAY=203.0.113.1 MAINS_WATCH_POLL=2      MAINS_WATCH_THRESHOLD=3 bash deploy/mains-watch.sh
+```
+
+Two things to check on the host before arming it, or a clean shutdown becomes
+a permanent one: the desktop's BIOS should be set to **restore power state on
+AC loss**, and the VM should be set to **start automatically** with the
+VMware host. Without both, the machine shuts down correctly and then waits
+for a human.
+
+#### Where the emergency copy goes, and why not Drive
+
+It goes out by **email**, as an attachment, over the relay the app already
+uses for password resets (`MAIL_SERVER`, to `EMERGENCY_BACKUP_TO` or
+`MAIL_DEFAULT_SENDER`).
+
+Google Drive was tried first and cannot work here. The credentials are a
+**service account**; a service account owns whatever it uploads, and service
+accounts have **zero bytes** of Drive storage. Only a Shared Drive bypasses
+that — storage belongs to the organisation instead — and Shared Drives are a
+Google Workspace feature that a consumer Gmail account does not have. The
+upload fails with `storageQuotaExceeded`.
+
+The trap is that the *spreadsheet* backup works fine, which looks like proof
+that Drive is configured correctly. It is not: Google Sheets/Docs files are
+exempt from storage quota and binary files are not.
+`app/erp/services/drive_backup.py` is written and correct, and turns that
+failure into these instructions rather than a stack trace — but it stays
+unwired until the credentials become OAuth user credentials (scope
+`drive.file`, consent screen set to **In production**, or Google expires the
+refresh token after 7 days and backups stop silently).
+
+Two things to know about the email route:
+
+- **Size.** A compressed dump of this database is about 1 MB; base64 makes it
+  ~1.4 MB against a Mailjet ceiling near 15 MB. `EMERGENCY_MAIL_MAX_BYTES`
+  (10 MB) is checked *before* connecting, because a relay rejects an
+  oversized message only after the whole attachment has gone up the wire —
+  the most expensive possible way to discover a limit on a dying battery.
+- **Exposure.** The attachment is the entire vendor, client, costing and
+  payment history, passing through a third-party relay and landing in a
+  mailbox. TLS covers it in transit. Keep that mailbox private, and consider
+  encrypting the attachment if that is not good enough.
+
 ### 2. Check that the disk is not lying about flushes
 
 `fsync=on` is only as good as the hardware's honesty. Consumer SSDs and USB
