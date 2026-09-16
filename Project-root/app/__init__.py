@@ -1186,6 +1186,27 @@ def create_app(config_name: str | None = None) -> Flask:
     # instance whose connection pool has died still returns a static 200
     # while every real request 500s -- precisely the outage a health check
     # exists to catch.
+    def _health_vitals() -> dict:
+        """{"vitals": {...}} for callers allowed to see it, else {}.
+
+        Keeping the public answer to its three documented keys is the whole
+        point: a load balancer and an uptime monitor reach this without
+        credentials, so what they get back must stay boring. See app/health.py
+        for who qualifies and why each section is guarded separately.
+        """
+        try:
+            from app import health as health_vitals
+
+            if not health_vitals.should_expose():
+                return {}
+            return {"vitals": health_vitals.collect()}
+        except Exception as exc:  # noqa: BLE001
+            # The vitals are a convenience. They must never be the reason a
+            # health check fails, because a failing health check drains the
+            # instance out of rotation.
+            app.logger.warning("Could not collect health vitals: %s", exc)
+            return {}
+
     def _health():
         from datetime import datetime, timezone
 
@@ -1204,11 +1225,24 @@ def create_app(config_name: str | None = None) -> Flask:
             # DSN, which carries the database host, user and password, and
             # this endpoint is public and unauthenticated by necessity.
             app.logger.error("Health check failed: %s", exc)
-            return (
-                jsonify(status="unhealthy", database="error", timestamp=timestamp),
-                503,
-            )
-        return jsonify(status="healthy", database="connected", timestamp=timestamp), 200
+            body = {
+                "status": "unhealthy",
+                "database": "error",
+                "timestamp": timestamp,
+            }
+            # Vitals matter MORE when the database is down, not less: this is
+            # the response that has to say which of disk, Redis or backups is
+            # the actual cause. Still gated, still never carrying the DSN.
+            body.update(_health_vitals())
+            return jsonify(body), 503
+
+        body = {
+            "status": "healthy",
+            "database": "connected",
+            "timestamp": timestamp,
+        }
+        body.update(_health_vitals())
+        return jsonify(body), 200
 
     # Talisman's force_https 302-redirects plain http. Probes hit the pod or
     # container directly over http, and k8s counts any 3xx as a pass -- so

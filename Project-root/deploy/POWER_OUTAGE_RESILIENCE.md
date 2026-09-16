@@ -619,6 +619,51 @@ systemctl is-enabled mtc postgresql redis-server nginx
 
 ---
 
+## One command for "is everything working?"
+
+```bash
+curl -s http://127.0.0.1:8000/health | python3 -m json.tool
+```
+
+`/health` keeps its three documented keys for everyone — a load balancer and
+an uptime monitor read the status code and nothing else — and adds a
+`vitals` object for callers it recognises:
+
+| Section | Why it is in there |
+| --- | --- |
+| `app` | uptime, pid, env, debug flag |
+| `database` | version, size, connections used/max, query latency, migrations applied |
+| `database.durability` | `fsync`, `synchronous_commit`, `full_page_writes`. These three decide whether a power cut costs committed data. Turning one off to make the box "faster" would otherwise go unnoticed until the day it matters. |
+| `redis` | reachable or not — `create_app()` *raises* without it under `FLASK_ENV=production`, so a dead Redis turns the next restart into a crash loop |
+| `backups` | newest snapshot, its age and size, whether it has a checksum, how many are pending send, how many abandoned `.partial` files |
+| `disk` | free space where the backups live — a full disk stops PostgreSQL writing WAL |
+| `attention` | a list naming anything unhappy, or `null`. Read this line first. |
+
+`backups.pending_send` is the one to watch after an outage: non-zero for an
+hour is expected, non-zero for days means `mtc-boot-backup.service` is not
+delivering.
+
+**Who sees the vitals.** `HEALTH_VITALS_SCOPE` decides:
+
+- `local` — loopback only
+- `private` — loopback, RFC1918 and the Tailscale `100.64/10` range
+  (**default**), so the vitals are readable over the LAN and over the tailnet
+- `all` — anyone who can route to the app
+
+An admin session or the `METRICS_TOKEN` bearer always qualifies. The ranges
+are spelled out in `app/health.py` rather than left to
+`ipaddress.is_private`, which is not stable across the interpreters this runs
+on — Python 3.12 widened it, so the same request would be answered
+differently on 3.10 and 3.13.
+
+Worth knowing what `private` does and does not buy: it keeps a box that ends
+up with a public address from narrating its disk usage to the internet, and
+it does very little against someone already on the factory LAN, because
+`/health` is unauthenticated by necessity. Nothing in the payload is a
+credential either way — the DSN never appears, and a failing section reports
+its exception *type* only, never the message, which is where psycopg2 puts
+the host, user and password. `tests/test_smoke.py` asserts exactly that.
+
 ## After an outage: what to check
 
 Normally nothing — that is the point of the readiness gate. When something
