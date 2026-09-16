@@ -37,6 +37,7 @@ def _clean_env(monkeypatch):
         "MAIL_PASSWORD",
         "MAIL_USE_TLS",
         "MAIL_USE_SSL",
+        "MAIL_ALLOW_INSECURE",
         "MAIL_DEFAULT_SENDER",
         "EMERGENCY_BACKUP_TO",
     ):
@@ -189,3 +190,51 @@ def test_super_admin_lookup_itself_never_raises(monkeypatch):
     monkeypatch.setenv("DB_PORT", "1")  # nothing listens here
     monkeypatch.delenv("DATABASE_URL", raising=False)
     assert backup_mail.super_admin_emails() == []
+
+
+# ── The transport itself ─────────────────────────────────────────────────
+
+
+def test_refuses_to_send_in_the_clear(monkeypatch, snapshot):
+    """The attachment is the entire vendor, client, costing and payment
+    history, and SMTP AUTH sends the password base64-encoded -- which is
+    encoding, not encryption. Both would have crossed the network in the
+    clear with MAIL_USE_TLS=false, and nothing objected."""
+    monkeypatch.setenv("MAIL_SERVER", "smtp.invalid")
+    monkeypatch.setenv("EMERGENCY_BACKUP_TO", "owner@example.com")
+    monkeypatch.setenv("MAIL_USE_TLS", "false")
+    monkeypatch.setenv("MAIL_USE_SSL", "false")
+
+    with pytest.raises(backup_mail.BackupMailError) as excinfo:
+        backup_mail.email_snapshot(str(snapshot))
+
+    message = str(excinfo.value)
+    assert "unencrypted" in message
+    # The refusal has to say how to fix it, or it is just an obstacle.
+    assert "MAIL_USE_TLS" in message
+
+
+def test_the_insecure_override_is_honoured(monkeypatch, snapshot):
+    """Defensible against a relay on localhost, and nowhere else. It must get
+    past the refusal and fail on the connection instead."""
+    monkeypatch.setenv("MAIL_SERVER", "smtp.invalid")
+    monkeypatch.setenv("EMERGENCY_BACKUP_TO", "owner@example.com")
+    monkeypatch.setenv("MAIL_USE_TLS", "false")
+    monkeypatch.setenv("MAIL_ALLOW_INSECURE", "1")
+
+    with pytest.raises(backup_mail.BackupMailError) as excinfo:
+        backup_mail.email_snapshot(str(snapshot))
+
+    assert "unencrypted" not in str(excinfo.value)
+
+
+def test_tls_context_verifies_chain_and_hostname():
+    """Stated rather than inherited: this connection carries the whole
+    database and an SMTP password."""
+    import ssl
+
+    context = backup_mail.tls_context()
+
+    assert context.check_hostname is True
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.minimum_version >= ssl.TLSVersion.TLSv1_2

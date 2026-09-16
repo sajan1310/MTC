@@ -165,6 +165,68 @@ def _truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def tls_context() -> ssl.SSLContext:
+    """A context that verifies the chain AND the hostname, on TLS 1.2+.
+
+    ``ssl.create_default_context()`` already does all three on every Python
+    this runs on, so the assignments below change no behaviour. They are here
+    to state it rather than inherit it: this connection carries the entire
+    database and an SMTP password, and "the defaults were fine when we wrote
+    it" is not a property a reader can check at a glance.
+    """
+    context = ssl.create_default_context()
+    context.check_hostname = True
+    context.verify_mode = ssl.CERT_REQUIRED
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
+
+
+def _deliver(message, *, server: str, port: int) -> None:
+    """Open the connection, secure it, authenticate, send.
+
+    Split out of email_snapshot so the transport decisions sit together and
+    can be read without the message-building around them.
+    """
+    username = _env("MAIL_USERNAME")
+    password = _env("MAIL_PASSWORD")
+    use_ssl = _truthy(_env("MAIL_USE_SSL"))
+    use_tls = _truthy(_env("MAIL_USE_TLS", "true"))
+
+    # Refuse plaintext before opening anything. The attachment is the entire
+    # vendor, client, costing and payment history, and SMTP AUTH sends the
+    # password base64-encoded, which is encoding and not encryption. With
+    # MAIL_USE_TLS=false both would have crossed the network in the clear,
+    # and nothing here would have objected.
+    if not use_ssl and not use_tls and not _truthy(_env("MAIL_ALLOW_INSECURE")):
+        raise BackupMailError(
+            "Refusing to send a database backup over an unencrypted "
+            "connection. Set MAIL_USE_TLS=true (STARTTLS, the usual choice on "
+            "port 587) or MAIL_USE_SSL=true (implicit TLS, port 465). "
+            "MAIL_ALLOW_INSECURE=1 overrides it, and is only defensible "
+            "against a relay on localhost."
+        )
+
+    context = tls_context()
+    if use_ssl:
+        smtp = smtplib.SMTP_SSL(
+            server, port, timeout=SMTP_TIMEOUT_SECONDS, context=context
+        )
+    else:
+        smtp = smtplib.SMTP(server, port, timeout=SMTP_TIMEOUT_SECONDS)
+
+    with smtp:
+        smtp.ehlo()
+        if use_tls and not use_ssl:
+            # Raises SMTPNotSupportedError when the relay cannot upgrade,
+            # which is the right outcome: carrying on in the clear is exactly
+            # what the check above exists to prevent.
+            smtp.starttls(context=context)
+            smtp.ehlo()
+        if username and password:
+            smtp.login(username, password)
+        smtp.send_message(message)
+
+
 def build_message(
     path: str,
     *,
@@ -271,29 +333,12 @@ def email_snapshot(
         return MailResult(to=target, subject=subject, attachment=name, size_bytes=size)
 
     port = int(_env("MAIL_PORT", "587") or 587)
-    username = _env("MAIL_USERNAME")
-    password = _env("MAIL_PASSWORD")
-    use_ssl = _truthy(_env("MAIL_USE_SSL"))
-    use_tls = _truthy(_env("MAIL_USE_TLS", "true"))
-
     try:
-        if use_ssl:
-            smtp = smtplib.SMTP_SSL(
-                server,
-                port,
-                timeout=SMTP_TIMEOUT_SECONDS,
-                context=ssl.create_default_context(),
-            )
-        else:
-            smtp = smtplib.SMTP(server, port, timeout=SMTP_TIMEOUT_SECONDS)
-        with smtp:
-            smtp.ehlo()
-            if use_tls and not use_ssl:
-                smtp.starttls(context=ssl.create_default_context())
-                smtp.ehlo()
-            if username and password:
-                smtp.login(username, password)
-            smtp.send_message(message)
+        _deliver(message, server=server, port=port)
+    except BackupMailError:
+        # Already explained -- a refusal to send in the clear, say. Wrapping
+        # it again would bury the instruction under a second message.
+        raise
     except Exception as exc:  # noqa: BLE001 -- every failure is the same failure here
         raise BackupMailError(
             f"SMTP delivery of {name} to {target} failed: {type(exc).__name__}: {exc}"
