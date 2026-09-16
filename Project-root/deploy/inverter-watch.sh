@@ -18,15 +18,27 @@
 #
 #     modem loses power  =>  the inverter is exhausted  =>  we are next.
 #
-# Three states, and only one of them is an emergency:
+# Three states, and each gets a different answer:
 #
-#   mains out, modem answering   -> running on inverter. Carry on. Do nothing.
+#   modem switched to inverter   -> mains failed, link still UP.
+#   (mains reference gone,           SNAPSHOT AND EMAIL, right now. Keep
+#    modem still answering)          running. This is the only moment in an
+#                                    outage when the copy can actually leave
+#                                    the building under its own steam.
+#
 #   modem answering, WAN dead    -> the ISP's problem. Log it. Do nothing.
-#   modem NOT answering          -> inverter is gone. Snapshot, shut down.
 #
-# The middle case is why "no internet" is never the trigger. The journal
-# carries isolated connectivity-impacted entries on days with no outage at
-# all, and acting on those would power a factory's ERP off over an ISP blip.
+#   modem NOT answering          -> the inverter is exhausted and this machine
+#                                   is next. SNAPSHOT, THEN SHUT DOWN.
+#
+# The middle case is why "no internet" is never a trigger. The journal carries
+# isolated connectivity-impacted entries on days with no outage at all, and
+# acting on those would power a factory's ERP off over an ISP blip.
+#
+# The first case needs a mains-only reference device -- see MAINS_REF below.
+# Without one, mains failure is simply invisible: a modem answering pings
+# looks the same on mains as on inverter. The watchdog still works, but it
+# can only act at the end, when the email can no longer be sent.
 #
 # Why two stages
 # --------------
@@ -67,7 +79,24 @@ DRYRUN="${INVERTER_WATCH_DRYRUN:-0}"
 
 POLL_SECONDS="${INVERTER_WATCH_POLL:-5}"
 SNAPSHOT_AFTER="${INVERTER_WATCH_SNAPSHOT_AFTER:-2}"    # ~10s
-SHUTDOWN_AFTER="${INVERTER_WATCH_SHUTDOWN_AFTER:-9}"    # ~45s
+SHUTDOWN_AFTER="${INVERTER_WATCH_SHUTDOWN_AFTER:-6}"    # ~30s
+
+# OPTIONAL: a device on MAINS-ONLY power -- one that dies when mains dies and
+# is NOT on the inverter. It is the only way to notice mains failing while
+# everything else is still happily running on battery, because a modem
+# answering pings looks identical whether it is on mains or on inverter.
+#
+# When this one goes quiet while the modem still answers, mains has failed and
+# the inverter has taken over: the network is still up, so this is the moment
+# to snapshot AND EMAIL, with plenty of battery and a working link. Waiting
+# for the modem to die means waiting until the email can no longer be sent.
+#
+# It must be always-on as well as mains-only. A phone, a laptop or a printer
+# that sleeps will drop off the network by itself and raise a false alarm; a
+# desk PC left running, a non-inverter access point or a camera will not.
+# Unset by default, because guessing wrong is worse than not having it.
+MAINS_REF="${INVERTER_WATCH_MAINS_REF:-}"
+MAINS_REF_AFTER="${INVERTER_WATCH_MAINS_REF_AFTER:-3}"  # ~15s
 
 # One last patient burst before committing. A false positive costs a walk to
 # the machine, because nothing powers it back on.
@@ -118,6 +147,27 @@ take_snapshot() {
     return 0
 }
 
+snapshot_and_email() {
+    # Mains has failed but the modem is still up on the inverter, so the link
+    # works and there is no hurry. This is the ONLY moment in an outage when
+    # the copy can actually leave the building under its own steam -- so it
+    # sends, rather than marking the dump pending for the next boot.
+    if [[ ! -x "$VENV_PY" ]]; then
+        log "Cannot snapshot: interpreter $VENV_PY not found."
+        return 1
+    fi
+    local -a prefix=()
+    if [[ "$(id -u)" == "0" ]] && id -u "$APP_USER" >/dev/null 2>&1; then
+        prefix=(runuser -u "$APP_USER" --)
+    fi
+    log "Mains reference $MAINS_REF is gone but the modem still answers: mains has failed and the inverter has taken over."
+    log "Network is still up -- snapshotting and emailing now, while that is still possible."
+    "${prefix[@]}" "$VENV_PY" "$APP_DIR/scripts/emergency_backup.py" \
+        --reason MAINS-LOST --budget 240 2>&1 |
+        while IFS= read -r line; do log "  $line"; done
+    return 0
+}
+
 power_off() {
     if [[ "$DRYRUN" == "1" ]]; then
         log "DRY RUN: would run 'systemctl poweroff' now. Not doing it."
@@ -143,10 +193,17 @@ if [[ "$ENABLED" != "1" ]]; then
 else
     log "Armed. Watching $GW every ${POLL_SECONDS}s. Snapshot after $((POLL_SECONDS * SNAPSHOT_AFTER))s of silence, shutdown after $((POLL_SECONDS * SHUTDOWN_AFTER))s."
 fi
-log "Mains failure alone does NOT trigger anything -- that is what the inverter is for."
+if [[ -n "$MAINS_REF" ]]; then
+    log "Mains reference: $MAINS_REF. If it goes quiet while $GW still answers, mains has failed -- snapshot and email then, while the link still works."
+else
+    log "No mains reference set (INVERTER_WATCH_MAINS_REF). Mains failure will pass unnoticed; only inverter exhaustion is detectable."
+fi
+log "Mains failure alone never causes a shutdown -- that is what the inverter is for."
 
 misses=0
 snapshotted=0
+ref_misses=0
+ref_handled=0
 while :; do
     GW="$(detect_gateway)"
     if [[ -z "$GW" ]]; then
@@ -163,6 +220,32 @@ while :; do
     else
         misses=$((misses + 1))
         log "Modem $GW missed probe $misses (snapshot at $SNAPSHOT_AFTER, shutdown at $SHUTDOWN_AFTER)."
+    fi
+
+    # ── Mains lost, inverter carrying, link still up: send it NOW ────────
+    # Only while the modem is answering. If it is not, we are in the
+    # inverter-exhausted path below and an email cannot go anywhere anyway.
+    if [[ -n "$MAINS_REF" && $misses -eq 0 ]]; then
+        if probe "$MAINS_REF"; then
+            if (( ref_misses > 0 )); then
+                log "Mains reference $MAINS_REF is back after $ref_misses miss(es) -- mains has returned."
+            fi
+            ref_misses=0
+            ref_handled=0
+        else
+            ref_misses=$((ref_misses + 1))
+            log "Mains reference $MAINS_REF missed probe $ref_misses/$MAINS_REF_AFTER."
+            if (( ref_misses >= MAINS_REF_AFTER && ref_handled == 0 )); then
+                if [[ "$ENABLED" == "1" || "$DRYRUN" == "1" ]]; then
+                    snapshot_and_email
+                else
+                    log "REPORT-ONLY: mains appears to have failed while the modem still answers; would snapshot and EMAIL now."
+                fi
+                # Once per outage, not once per poll. Reset only when mains
+                # actually comes back.
+                ref_handled=1
+            fi
+        fi
     fi
 
     # ── Stage 1: bank the data early, while it is still cheap to be wrong ──

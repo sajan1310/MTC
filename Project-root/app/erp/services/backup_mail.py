@@ -71,14 +71,90 @@ def _env(name: str, default: str | None = None) -> str | None:
     return value if value not in (None, "") else default
 
 
-def recipient(explicit: str | None = None) -> str | None:
-    """Where the emergency copy goes.
+_SUPER_ADMIN_CACHE: list[str] | None = None
 
-    EMERGENCY_BACKUP_TO first so the destination can differ from the address
-    the application sends password resets FROM, which is what
-    MAIL_DEFAULT_SENDER means and is not necessarily a mailbox anyone reads.
+
+def super_admin_emails() -> list[str]:
+    """Every active super_admin's address, straight from the database.
+
+    Connects directly with psycopg2 rather than through database.get_conn():
+    that pool belongs to a running Flask app, and this is called from a shell
+    on a machine that may be losing power, where no app exists. Same env
+    resolution as migrations/erp/runner.py, for the same reason.
+
+    Never raises. A database that cannot be read is not a reason to fail to
+    send a backup -- the caller falls back to the configured address. Cached
+    for the life of the process so that is_configured() does not open a
+    connection every time it is asked a question.
     """
-    return explicit or _env("EMERGENCY_BACKUP_TO") or _env("MAIL_DEFAULT_SENDER")
+    global _SUPER_ADMIN_CACHE
+    if _SUPER_ADMIN_CACHE is not None:
+        return _SUPER_ADMIN_CACHE
+
+    _SUPER_ADMIN_CACHE = []
+    try:
+        import psycopg2
+
+        dsn = _env("DATABASE_URL")
+        kwargs = (
+            {"dsn": dsn}
+            if dsn
+            else {
+                "host": _env("DB_HOST", "127.0.0.1"),
+                "port": _env("DB_PORT", "5432"),
+                "dbname": _env("DB_NAME", "MTC"),
+                "user": _env("DB_USER", "postgres"),
+                "password": _env("DB_PASS", ""),
+            }
+        )
+        # Short: this runs on a battery, and an unreachable database must not
+        # hold up a snapshot that is already written.
+        with psycopg2.connect(connect_timeout=5, **kwargs) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = 5000")
+                cur.execute(
+                    """
+                    SELECT email
+                      FROM public.users
+                     WHERE role = 'super_admin'
+                       AND deleted_at IS NULL
+                       AND email IS NOT NULL
+                       AND email <> ''
+                     ORDER BY user_id
+                    """
+                )
+                _SUPER_ADMIN_CACHE = [row[0].strip() for row in cur.fetchall()]
+        conn.close()
+    except Exception as exc:  # noqa: BLE001 -- see the docstring
+        logger.warning(
+            "[backup_mail] Could not read super_admin addresses (%s); "
+            "falling back to the configured recipient.",
+            exc,
+        )
+    return _SUPER_ADMIN_CACHE
+
+
+def recipient(explicit: str | None = None) -> str | None:
+    """Where the backup goes.
+
+    The super_admin in the database is the real answer -- that is the person
+    who owns this system, and the address stays right when it changes there
+    rather than needing an env file edited on a server nobody wants to touch.
+
+    EMERGENCY_BACKUP_TO still wins when it is set, because an operator needs
+    a way to redirect this without editing the user table. MAIL_DEFAULT_SENDER
+    is only the last resort: it is who mail comes FROM, and that is not
+    necessarily a mailbox anyone reads.
+    """
+    if explicit:
+        return explicit
+    override = _env("EMERGENCY_BACKUP_TO")
+    if override:
+        return override
+    admins = super_admin_emails()
+    if admins:
+        return ", ".join(admins)
+    return _env("MAIL_DEFAULT_SENDER")
 
 
 def is_configured(explicit_to: str | None = None) -> bool:

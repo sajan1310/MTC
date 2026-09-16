@@ -377,11 +377,90 @@ Two caveats worth knowing before arming it:
   with the VMware host. Without both, this shuts the server down correctly
   and then waits for a human.
 
+#### The three states, and what each one does
+
+| State | How it is detected | Action |
+| --- | --- | --- |
+| **Modem switched to inverter** (mains failed, link still up) | Mains reference stops answering while the modem still does | **Snapshot and EMAIL, now.** Keep running. |
+| ISP down, modem fine | Modem answers, WAN does not | Log only |
+| **Modem dead** (inverter exhausted) | Modem stops answering | **Snapshot, then shut down** |
+
+The first row is the one worth having, because it is the *only* moment in an
+outage when the copy can leave the building under its own steam. The modem is
+still on inverter power, so the link works and there is no hurry — a full
+snapshot and a 1.4 MB email both fit comfortably.
+
+It needs a **mains-only reference device**: something that dies when mains
+dies and is *not* on the inverter. Without one, mains failure is invisible —
+a modem answering pings looks identical on mains and on inverter — and the
+watchdog can only act at the end, when the email can no longer be sent.
+
+```ini
+# /etc/systemd/system/inverter-watch.service.d/override.conf
+[Service]
+Environment=INVERTER_WATCH_ENABLE=1
+Environment=INVERTER_WATCH_MAINS_REF=192.168.31.xxx
+```
+
+Choose it carefully. It must be **always-on as well as mains-only**: a phone,
+a laptop or a sleeping printer drops off the network by itself and would
+raise a false alarm every night. A desk PC left running, a non-inverter
+access point or a camera will not. Devices currently visible on the LAN are
+`192.168.31.140`, `.151`, `.152` and `.229` — pick whichever is on a plain
+wall socket.
+
+#### Delivering what the outage could not send
+
+When the inverter gives out, the snapshot is marked `.pending-send` rather
+than mailed — the modem is dead by then, so SMTP cannot succeed and trying
+would only burn the battery discovering that.
+
+`mtc-boot-backup.service` is the other half. At the next boot the network is
+back by definition, so it delivers whatever is owed:
+
+```bash
+sudo install -m 0644 deploy/mtc-boot-backup.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable mtc-boot-backup
+journalctl -u mtc-boot-backup -b
+```
+
+It also covers the case the watchdog cannot: an outage that gave no warning,
+or a boot where the watchdog was not armed. If the previous boot ended
+without a shutdown and nothing was pending, it takes a snapshot then and
+sends that — which loses nothing, because **the database cannot change while
+the machine is off**. A snapshot taken at the next boot holds exactly what one
+taken at the moment of the cut would have held.
+
+After a clean reboot it does nothing at all: nothing pending plus a clean
+previous boot means it exits having taken no action.
+
+A marker is cleared only once the relay has actually accepted the message, so
+a send that fails is retried at the next boot rather than lost. A marker
+whose snapshot has since been pruned is dropped, so it cannot be retried
+forever.
+
 #### Where the emergency copy goes, and why not Drive
 
 It goes out by **email**, as an attachment, over the relay the app already
-uses for password resets (`MAIL_SERVER`, to `EMERGENCY_BACKUP_TO` or
-`MAIL_DEFAULT_SENDER`).
+uses for password resets.
+
+**The recipient is the `super_admin` in the database** — the person who owns
+this system — so the address stays right when it changes there, rather than
+needing an env file edited on a server nobody wants to touch. Every active
+`super_admin` gets a copy if there is more than one. The order is:
+
+1. `--to` on the command line
+2. `EMERGENCY_BACKUP_TO`, so an operator can redirect it during a restore
+   drill without editing the user table
+3. every active `super_admin` in `public.users`
+4. `MAIL_DEFAULT_SENDER`, last resort — that is who mail comes *from*, and is
+   not necessarily a mailbox anyone reads
+
+The lookup connects with psycopg2 directly rather than through the app's
+pool, because this runs from a shell on a machine that may be losing power
+and no Flask app exists there. It never raises: a database that cannot be
+read falls back to the configured address rather than failing to send a
+backup.
 
 Google Drive was tried first and cannot work here. The credentials are a
 **service account**; a service account owns whatever it uploads, and service

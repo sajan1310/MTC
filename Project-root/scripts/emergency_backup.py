@@ -83,6 +83,126 @@ def _backup_dir() -> str:
     return backup_service.get_backup_dir()
 
 
+def _pending_markers(backup_dir: str) -> list[str]:
+    """Snapshots that were taken during an outage and still owe a copy.
+
+    Oldest first, so a backlog drains in the order it accumulated.
+    """
+    try:
+        names = sorted(
+            n for n in os.listdir(backup_dir) if n.endswith(".dump.pending-send")
+        )
+    except OSError:
+        return []
+    return [os.path.join(backup_dir, n) for n in names]
+
+
+def _send_pending(backup_dir: str, to: str | None) -> int:
+    """Mail every pending snapshot. Returns the number still owed afterwards.
+
+    A marker is removed only after its snapshot is actually accepted by the
+    relay. Anything that fails stays marked and is retried at the next boot,
+    which is the whole point of writing the marker to disk rather than
+    remembering it in a process that is about to lose power.
+    """
+    from app.erp.services import backup_mail
+
+    markers = _pending_markers(backup_dir)
+    if not markers:
+        logger.info("Nothing pending.")
+        return 0
+    if not backup_mail.is_configured(to):
+        logger.warning(
+            "%d snapshot(s) are pending but nothing is configured to send "
+            "them to (MAIL_SERVER / EMERGENCY_BACKUP_TO).",
+            len(markers),
+        )
+        return len(markers)
+
+    owed = 0
+    for marker in markers:
+        snapshot_path = marker[: -len(".pending-send")]
+        if not os.path.isfile(snapshot_path):
+            # The snapshot went away -- pruned, or moved by hand. The marker
+            # is meaningless without it and would otherwise be retried forever.
+            logger.warning(
+                "Dropping marker for %s: the snapshot is gone.",
+                os.path.basename(snapshot_path),
+            )
+            try:
+                os.unlink(marker)
+            except OSError:
+                pass
+            continue
+
+        reason = "outage"
+        try:
+            with open(marker, "r", encoding="utf-8") as handle:
+                reason = handle.readline().strip() or reason
+        except OSError:
+            pass
+
+        try:
+            backup_mail.email_snapshot(
+                snapshot_path,
+                to=to,
+                subject=(
+                    f"[MTC] Snapshot from the {reason} outage: "
+                    f"{os.path.basename(snapshot_path)}"
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Still cannot send %s: %s", os.path.basename(marker), exc)
+            owed += 1
+            continue
+
+        try:
+            os.unlink(marker)
+        except OSError as exc:
+            logger.warning("Sent, but could not clear %s: %s", marker, exc)
+        logger.info("Delivered pending snapshot %s", os.path.basename(snapshot_path))
+    return owed
+
+
+def _previous_boot_was_unclean() -> bool | None:
+    """Did the last boot end in a shutdown, or was it cut off?
+
+    True means cut off. None means the question could not be answered -- no
+    previous boot recorded, or no persistent journal -- and the caller must
+    not treat that as a crash, or every first boot mails a snapshot.
+
+    Reads the journal rather than keeping a marker file of our own: systemd
+    already records this, and a marker has its own failure modes (missed
+    ExecStop, a full disk) that would produce exactly the false alarms this
+    is trying to avoid.
+    """
+    import subprocess
+
+    try:
+        completed = subprocess.run(
+            ["journalctl", "-b", "-1", "-o", "cat", "--no-pager"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0 or not completed.stdout:
+        return None
+
+    text = completed.stdout.lower()
+    for marker in (
+        "reached target shutdown",
+        "reached target power-off",
+        "reached target reboot",
+        "systemd-shutdown",
+        "powering off",
+    ):
+        if marker in text:
+            return False
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -117,6 +237,20 @@ def main(argv: list[str] | None = None) -> int:
         default=int(os.getenv("EMERGENCY_BACKUP_BUDGET", "180")),
         help="Seconds this whole run may take before it stops trying (default 180).",
     )
+    parser.add_argument(
+        "--send-pending",
+        action="store_true",
+        help="Mail any snapshot left marked .pending-send, then stop.",
+    )
+    parser.add_argument(
+        "--boot",
+        action="store_true",
+        help=(
+            "Boot-time mode: deliver anything left pending, and if the last "
+            "boot ended badly with nothing pending, take a snapshot and send "
+            "that. Run by mtc-boot-backup.service."
+        ),
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -132,6 +266,39 @@ def main(argv: list[str] | None = None) -> int:
     from app.erp.services import backup_mail, db_backup
 
     backup_dir = _backup_dir()
+
+    # ── 0. Delivery modes ────────────────────────────────────────────────
+    if args.send_pending or args.boot:
+        had_pending = bool(_pending_markers(backup_dir))
+        owed = _send_pending(backup_dir, args.to)
+
+        if args.send_pending:
+            return 1 if owed else 0
+
+        # --boot. Anything that was owed has now been tried.
+        if owed:
+            return 1
+        if had_pending:
+            return 0
+
+        # Nothing was pending. If the machine was cut off anyway, the outage
+        # gave no warning at all -- the watchdog never got its 10 seconds, or
+        # was not armed. Take a snapshot now and send that instead, so every
+        # outage still produces an off-site copy.
+        #
+        # The database cannot change while the machine is off, so a snapshot
+        # taken here holds exactly what a snapshot taken at the moment of the
+        # cut would have held.
+        if _previous_boot_was_unclean() is not True:
+            logger.info(
+                "Last boot ended cleanly (or could not be determined). Nothing to do."
+            )
+            return 0
+        logger.info(
+            "Last boot was cut off and nothing was pending -- taking a "
+            "snapshot now and sending it."
+        )
+        args.reason = "unclean-boot"
 
     # ── 1. Get a snapshot ────────────────────────────────────────────────
     if args.latest:

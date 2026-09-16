@@ -27,6 +27,9 @@ def snapshot(tmp_path):
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
+    # The super_admin lookup is cached for the life of the process; without
+    # this every test after the first would reuse the first one's answer.
+    monkeypatch.setattr(backup_mail, "_SUPER_ADMIN_CACHE", None, raising=False)
     for key in (
         "MAIL_SERVER",
         "MAIL_PORT",
@@ -46,7 +49,11 @@ def test_not_configured_without_a_relay(monkeypatch):
 
 
 def test_not_configured_without_a_recipient(monkeypatch):
+    """No env recipient AND no super_admin in the database. The stub matters:
+    without it this reaches the real database, finds the real super_admin,
+    and is correctly configured -- which is the new behaviour, not a bug."""
     monkeypatch.setenv("MAIL_SERVER", "smtp.example.com")
+    monkeypatch.setattr(backup_mail, "super_admin_emails", list)
     assert backup_mail.is_configured() is False
 
 
@@ -131,3 +138,54 @@ def test_body_records_the_checksum_so_the_mail_is_its_own_receipt(
 
     assert "a" * 64 in captured["body"]
     assert "pg_restore" in captured["body"]
+
+
+# ── Who the backup goes to ───────────────────────────────────────────────
+#
+# The super_admin in the database is the real answer: that is the person who
+# owns the system, and the address stays correct when it changes there rather
+# than needing an env file edited on a server nobody wants to touch.
+
+
+def test_super_admin_from_the_database_beats_the_sender_address(monkeypatch):
+    monkeypatch.setenv("MAIL_DEFAULT_SENDER", "no-reply@example.com")
+    monkeypatch.setattr(backup_mail, "super_admin_emails", lambda: ["boss@example.com"])
+    assert backup_mail.recipient() == "boss@example.com"
+
+
+def test_several_super_admins_all_get_it(monkeypatch):
+    monkeypatch.setenv("MAIL_DEFAULT_SENDER", "no-reply@example.com")
+    monkeypatch.setattr(
+        backup_mail,
+        "super_admin_emails",
+        lambda: ["a@example.com", "b@example.com"],
+    )
+    assert backup_mail.recipient() == "a@example.com, b@example.com"
+
+
+def test_explicit_override_still_wins_over_the_database(monkeypatch):
+    """An operator needs a way to redirect this without editing the user
+    table -- during a restore drill, say."""
+    monkeypatch.setenv("EMERGENCY_BACKUP_TO", "ops@example.com")
+    monkeypatch.setattr(backup_mail, "super_admin_emails", lambda: ["boss@example.com"])
+    assert backup_mail.recipient() == "ops@example.com"
+
+
+def test_unreadable_database_falls_back_instead_of_failing(monkeypatch):
+    """A database that cannot be read is not a reason to fail to send a
+    backup -- which is exactly the situation this runs in. The real lookup
+    swallows its errors and returns an empty list, so this asserts what the
+    caller then does with that."""
+    monkeypatch.setenv("MAIL_DEFAULT_SENDER", "fallback@example.com")
+    monkeypatch.setattr(backup_mail, "super_admin_emails", list)
+    assert backup_mail.recipient() == "fallback@example.com"
+
+
+def test_super_admin_lookup_itself_never_raises(monkeypatch):
+    """The real function swallows everything; only the monkeypatched stub
+    above can raise. Point psycopg2 at nothing and confirm."""
+    monkeypatch.setattr(backup_mail, "_SUPER_ADMIN_CACHE", None, raising=False)
+    monkeypatch.setenv("DB_HOST", "127.0.0.1")
+    monkeypatch.setenv("DB_PORT", "1")  # nothing listens here
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    assert backup_mail.super_admin_emails() == []

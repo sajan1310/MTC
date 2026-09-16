@@ -36,6 +36,7 @@ sudo /opt/mtc/src/Project-root/deploy/deploy.sh      # every release
 | `ups-notify.sh` | — | NUT event handler: snapshot+mail on ONBATT, kill it on LOWBATT. |
 | `inverter-watch.sh` | — | No UPS data link: shuts down when the modem dies (inverter exhausted), not when mains fails. |
 | `inverter-watch.service` | `/etc/systemd/system/` | Runs the inverter watchdog. Ships disarmed. |
+| `mtc-boot-backup.service` | `/etc/systemd/system/` | At boot, mails any snapshot the outage could not send. |
 | `nginx-mtc.conf` | `/etc/nginx/sites-available/mtc` | Reverse proxy, static, `/health` |
 | `mtc.env.example` | `/etc/mtc/mtc.env` | Annotated config template |
 | `POWER_OUTAGE_RESILIENCE.md` | — | Sites with long outages: what survives a hard cut, and what to fix on the host. |
