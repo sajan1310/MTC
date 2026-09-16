@@ -141,7 +141,10 @@ verify() {
 }
 
 # ── Pull ─────────────────────────────────────────────────────────────────
-mapfile -t available < <(list_source | sort)
+available=()
+while IFS= read -r line; do
+    [[ -n "$line" ]] && available+=("$line")
+done < <(list_source | sort)
 if (( ${#available[@]} == 0 )); then
     warn "No snapshots found at $SOURCE. Has a backup run yet?"
     exit 1
@@ -149,7 +152,17 @@ fi
 
 # Newest KEEP entries: anything older is outside local retention, so there is
 # no point spending bandwidth on it only to prune it below.
-wanted=("${available[@]: -KEEP}")
+#
+# The length check is not decoration. `${array[@]: -N}` yields NOTHING when N
+# exceeds the array length -- silently, and with a zero exit -- so with the
+# documented --keep 14 against a server holding fewer than 14 snapshots this
+# fetched nothing at all and reported success. That is the first two weeks of
+# any new install, and permanent wherever retention keeps fewer than --keep.
+if (( ${#available[@]} > KEEP )); then
+    wanted=("${available[@]: -KEEP}")
+else
+    wanted=("${available[@]}")
+fi
 
 fetched=0 skipped=0 failed=0
 for remote_dump in "${wanted[@]}"; do
@@ -191,7 +204,10 @@ done
 # ── Local retention ──────────────────────────────────────────────────────
 # Applied to what is HERE, never to what the source still has. See the
 # header: this is a backup, not a mirror.
-mapfile -t held < <(list_local)
+held=()
+while IFS= read -r line; do
+    [[ -n "$line" ]] && held+=("$line")
+done < <(list_local)
 if (( ${#held[@]} > KEEP )); then
     for name in "${held[@]:0:${#held[@]}-KEEP}"; do
         rm -f -- "$DEST/$name" "$DEST/$name.sha256"
