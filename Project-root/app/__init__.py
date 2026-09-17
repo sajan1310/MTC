@@ -402,12 +402,48 @@ def _register_error_handlers(app: Flask) -> None:
             ), 503
         return render_template("500.html"), 503
 
+    # flask-wtf raises this for several unrelated conditions and gives them
+    # all 400. One of them is not a CSRF failure at all.
+    #
+    # "The CSRF session token is missing" means the request carried NO SESSION
+    # -- it lapsed, or the cookie was cleared. There is nothing to forge
+    # against and nothing the user did wrong: they are signed out. Everything
+    # else (tokens that do not match, an expired token, a missing submitted
+    # token) is a genuine CSRF rejection and keeps its 400.
+    _CSRF_NO_SESSION = "session token is missing"
+
     @app.errorhandler(CSRFError)
     def handle_csrf_error(e):
-        if request.path.startswith("/api/"):
+        # Reported from the factory floor: a phone left on /erp/mobile past
+        # the 24h PERMANENT_SESSION_LIFETIME showed "CSRF Token missing" and
+        # loaded nothing at all. The service worker kept serving the cached
+        # shell, so the app never navigated anywhere that would have revealed
+        # the session was gone, and api.js only recognises 401 as "signed
+        # out" -- a 400 fell through to the generic HTTP branch, which says
+        # the call failed but not that signing in would fix it. The screen
+        # was a dead end with no action on it.
+        signed_out = _CSRF_NO_SESSION in (e.description or "").lower()
+
+        if signed_out:
+            # Deliberately identical to _unauthorized() above, message and
+            # all. The two describe the same state, api.js already knows how
+            # to recover from it, and the mobile outbox already treats it as
+            # failed-but-retryable once the user signs back in.
+            if _client_wants_json():
+                return jsonify(
+                    {
+                        "success": False,
+                        "data": None,
+                        "message": "Your session has expired. Please sign in again.",
+                    }
+                ), 401
+            return redirect(url_for("auth.login", next=request.full_path))
+
+        if _client_wants_json():
             return jsonify(
                 {
                     "success": False,
+                    "data": None,
                     "message": f"CSRF error: {e.description}",
                     "error": e.description,
                 }
