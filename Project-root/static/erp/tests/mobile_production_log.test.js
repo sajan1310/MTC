@@ -327,6 +327,135 @@ describe('saving', () => {
   });
 });
 
+// The sheet is meant to survive being used over and over -- a supervisor
+// logs a run of lots through it, and reopens it all day. Each of these is
+// a way it used to come back filled with the last lot's state, dead to the
+// touch, or both.
+describe('reusing the sheet', () => {
+  // Holds one method's answer open so a load can be left in flight.
+  function deferMethod(method) {
+    const original = MApp.Api.call;
+    let release;
+    const gate = new Promise(r => { release = r; });
+    MApp.Api.call = jest.fn(async (m, ...args) => {
+      if (m === method) await gate;
+      return original(m, ...args);
+    });
+    return () => { MApp.Api.call = original; release(); };
+  }
+
+  async function enterRedLot(qty) {
+    await openWithProcess('Frame Painting 20');
+    await tap(rowFor('Red').querySelector('[data-row-toggle]'));
+    type(rowFor('Red').querySelector('.mapp-lot-color-qty'), qty);
+    picks.push('Rakesh');
+    await tap($('#lot-assignedto-field'));
+  }
+
+  function goOffline() {
+    const fail = jest.fn(async () => {
+      const err = new Error('Network request failed.');
+      err.isNetworkError = true;
+      throw err;
+    });
+    Api.mutateWithId = fail;
+    MApp.Api.call = fail;
+    MApp.Api.callCached = fail;
+  }
+
+  test('a process load left in flight cannot paint the form that replaced it', async () => {
+    await MApp.Production.load();
+    await MApp.Production.openLogLotSheet();
+
+    const release = deferMethod('getProcessColorGroups');
+    picks.push('Frame Painting 20');
+    $('#lot-process-field').click();   // deliberately not awaited
+    await flush();
+    expect(MApp.Production.selection.processId).toBe('PRC-PNT');
+
+    // Close and reopen before that process's colour groups land.
+    MApp.Production.closeLogLotSheet();
+    await MApp.Production.openLogLotSheet();
+    expect(MApp.Production.selection.process).toBeNull();
+
+    release();
+    await flush(); await flush(); await flush();
+
+    // The abandoned load wrote nothing back into the new form...
+    expect(MApp.Production.selection.process).toBeNull();
+    expect(MApp.Production.model).toBeNull();
+    expect($('#lot-qty-section').innerHTML).toBe('');
+    expect($('#lot-process-field').textContent).toBe('Search all processes…');
+    // ...and it is still a form you can use.
+    expect($('#lot-process-field').disabled).toBe(false);
+    expect($('#log-lot-save-btn').disabled).toBe(false);
+  });
+
+  test('a lot queued to the outbox still leaves a form the next lot can be typed into', async () => {
+    await enterRedLot(20);
+    goOffline();
+
+    await MApp.Production.saveLot();
+    await flush(); await flush();
+
+    expect(OfflineCache.outbox.enqueue).toHaveBeenCalled();
+    expect($('#mapp-toast-stack').textContent).toContain('will sync when back online');
+    // The reset cannot reach the five reads onProcessSelected makes, so it
+    // rebuilds from the reference data this process already had: the
+    // process, its colours and its recipe are all still on screen.
+    expect($('#lot-process-field').textContent).toBe('Frame Painting 20');
+    expect(MApp.Production.selection.process).not.toBeNull();
+    expect(MApp.Production.model).not.toBeNull();
+    expect(rowFor('Red')).toBeTruthy();
+    expect($('#lot-materials-section').textContent).toContain('Primer');
+    // Cleared for the next lot, not carried over from the one just queued.
+    expect(rowFor('Red').classList.contains('is-checked')).toBe(false);
+    expect(MApp.Production.selectedAssignedTo).toBe('');
+    expect($('#log-lot-save-btn').disabled).toBe(false);
+    expect($('#lot-process-field').disabled).toBe(false);
+  });
+
+  test('the next lot queued offline sends its own numbers, not the previous lot\'s', async () => {
+    await enterRedLot(20);
+    goOffline();
+    await MApp.Production.saveLot();
+    await flush(); await flush();
+
+    await tap(rowFor('Blue').querySelector('[data-row-toggle]'));
+    type(rowFor('Blue').querySelector('.mapp-lot-color-qty'), 7);
+    MApp.Production.selectedAssignedTo = 'sanjay';
+    await MApp.Production.saveLot();
+    await flush(); await flush();
+
+    expect(OfflineCache.outbox.enqueue).toHaveBeenCalledTimes(2);
+    const second = OfflineCache.outbox.enqueue.mock.calls[1][2][0];
+    expect(JSON.parse(second.colorBreakdown)).toEqual([
+      { color: 'Blue', qty: 7, isCustom: false, countsTowardTotal: true, axisKey: '' }
+    ]);
+    expect(second.assignedTo).toBe('sanjay');
+  });
+
+  test('a form that fails to rebuild is not reported as a failed save', async () => {
+    await enterRedLot(20);
+    jest.spyOn(MApp.Production, 'resetLogLotForm')
+      .mockRejectedValue(new Error('rebuild exploded'));
+
+    await MApp.Production.saveLot();
+    await flush(); await flush();
+
+    const toasts = $('#mapp-toast-stack').textContent;
+    expect(mutate).toHaveBeenCalled();
+    // The lot IS saved, and is reported that way. What failed is named for
+    // what it was -- a reset -- rather than surfacing as a bare save error
+    // that invites the supervisor to log the same lot a second time.
+    expect(toasts).toContain('LOT-PNT-0032');
+    expect(toasts).toContain('Lot saved, but the form could not be reset');
+    expect(toasts).not.toContain('Could not save this lot');
+    expect($('#sheet-log-lot').classList.contains('open')).toBe(false);
+    expect($('#log-lot-save-btn').disabled).toBe(false);
+  });
+});
+
 describe('editing', () => {
   test('opens as it was saved and, unchanged, sends back exactly that', async () => {
     await MApp.Production.load();

@@ -5302,6 +5302,16 @@ MApp.Production = {
   },
 
   _resetFormState() {
+    // Abandon any onProcessSelected still in flight. Its guard is the
+    // ONLY thing standing between a slow process load and a form that has
+    // since been torn down, and until this bump the guard only ever moved
+    // when a NEW process was picked -- so a load started before the sheet
+    // was closed still passed `mySeq === _procSelectSeq` when it landed,
+    // and painted the old process's colour groups, quantity grid and
+    // recipe into the freshly-reopened blank form. selection.process was
+    // null by then, so the form looked filled in but Log Lot answered
+    // "Choose a process first": stale on screen and dead to the touch.
+    this._procSelectSeq++;
     this.selection = { size: '', model: '', type: '', processId: '', process: null, productId: '', productName: '' };
     this.model = null;
     this.outputItemName = '';
@@ -5344,6 +5354,9 @@ MApp.Production = {
   },
 
   closeLogLotSheet() {
+    // Closing abandons an in-flight process load as well, so it cannot
+    // keep writing to this.model and this.selection behind a shut sheet.
+    this._procSelectSeq++;
     MApp.Sheet.close('sheet-log-lot');
   },
 
@@ -6434,6 +6447,10 @@ MApp.Production = {
     const idleLabel = isEdit ? 'Save Changes' : 'Log Lot';
 
     MApp.Util.setSheetBusy('log-lot-body', 'log-lot-save-btn', true, busyLabel);
+    // This process's reference data, kept for the reset below to re-seed
+    // from. Read here because _resetFormState() nulls this.model.
+    const savedCtx = this.model ? this.model.ctx : null;
+    let saved = null;
     try {
       const res = await Api.mutateWithId('saveProduction', mutationId, formData);
       if (!res || !res.success) {
@@ -6444,7 +6461,7 @@ MApp.Production = {
       }
       // The server's own message: it names the lot, and says when a
       // component was dropped or a pool bucket will go negative.
-      await this._onLotSaved(res.message || (isEdit ? 'Lot updated.' : `Lot logged${res.data && res.data.lotNumber ? ' — ' + res.data.lotNumber : ''}.`));
+      saved = { message: res.message || (isEdit ? 'Lot updated.' : `Lot logged${res.data && res.data.lotNumber ? ' — ' + res.data.lotNumber : ''}.`) };
     } catch (err) {
       if (err && err.isNetworkError) {
         // The fetch itself never reached the server -- queue under the
@@ -6457,15 +6474,22 @@ MApp.Production = {
         await OfflineCache.outbox.enqueue(mutationId, 'saveProduction', [formData]);
         MApp.Outbox.updateBadge();
         MApp.Outbox.requestSync();
-        await this._onLotSaved('Saved — will sync when back online.');
+        saved = { message: 'Saved — will sync when back online.', offline: true };
+      } else {
+        // Reached the server but got a real HTTP-level failure -- not safe
+        // to queue for blind retry.
+        MApp.Toast.error(err.message || 'Could not save this lot. Please try again.');
+        MApp.Util.setSheetBusy('log-lot-body', 'log-lot-save-btn', false, null, idleLabel);
+        this._applyCascadeEnabledStates();
         return;
       }
-      // Reached the server but got a real HTTP-level failure -- not safe
-      // to queue for blind retry.
-      MApp.Toast.error(err.message || 'Could not save this lot. Please try again.');
-      MApp.Util.setSheetBusy('log-lot-body', 'log-lot-save-btn', false, null, idleLabel);
-      this._applyCascadeEnabledStates();
     }
+
+    // Outside the try on purpose. The lot is saved by this point, so a
+    // failure while rebuilding the form must not fall into the catch above
+    // and be reported as "Could not save this lot. Please try again." --
+    // that reads as a failed save, and gets the same lot logged twice.
+    await this._onLotSaved(saved.message, { ctx: savedCtx, offline: saved.offline });
   },
 
   // An edit closes the sheet. A new lot keeps it open on the same process,
@@ -6473,31 +6497,81 @@ MApp.Production = {
   // cleared -- the next lot is nearly always the same process for someone
   // else, and re-picking the process four levels deep for every one of
   // them was the slowest part of logging a run of lots.
-  async _onLotSaved(message) {
+  async _onLotSaved(message, opts = {}) {
     const toast = String(message || '').includes('Warning') ? MApp.Toast.error : MApp.Toast.success;
     toast.call(MApp.Toast, message);
     const saveBtn = document.getElementById('log-lot-save-btn');
     if (this.editingLot) {
       this.editingLot = null;
       this.closeLogLotSheet();
-      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Log Lot'; }
     } else {
-      await this.resetLogLotForm({ keepProcess: true });
-      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Log Lot'; }
+      try {
+        await this.resetLogLotForm({ keepProcess: true, ctx: opts.ctx, reuseContext: !!opts.offline });
+      } catch (err) {
+        // The lot is saved; only the form for the NEXT one failed to
+        // rebuild. Close it rather than leave a half-built sheet behind,
+        // which reads as though the save itself had gone wrong.
+        MApp.Toast.error('Lot saved, but the form could not be reset: ' + (err.message || ''));
+        this.closeLogLotSheet();
+      }
     }
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Log Lot'; }
     this.load();
   },
 
   async resetLogLotForm(opts = {}) {
     const keep = opts.keepProcess ? this.selection.process : null;
+    // Read before _resetFormState() nulls this.model.
+    const ctx = opts.ctx || (this.model ? this.model.ctx : null);
     this._keepDate = keep ? (document.getElementById('lot-date')?.value || '') : '';
     this._keepAssignedBy = keep ? (document.getElementById('lot-assignedby')?.value || '') : '';
     this._resetFormState();
-    document.getElementById('log-lot-body').innerHTML = this._formHtml(null);
+    const body = document.getElementById('log-lot-body');
+    if (!body) return;
+    body.innerHTML = this._formHtml(null);
     this._wireForm();
     this._keepDate = '';
     this._keepAssignedBy = '';
-    if (keep) await this.onProcessSelected(keep.processId);
+    if (!keep) return;
+
+    // onProcessSelected re-reads five endpoints. After a save that went to
+    // the outbox there is no network to read them from, so the form came
+    // back naming a process but with no quantity and no materials section
+    // -- unusable for the next lot, exactly when the queue matters most.
+    // This process's reference data is already in hand, so re-seed from it.
+    if (opts.reuseContext && ctx && ctx.process && ctx.process.processId === keep.processId) {
+      this._reseedFromContext(keep, ctx);
+      return;
+    }
+    await this.onProcessSelected(keep.processId);
+  },
+
+  // The half of onProcessSelected that needs no network: restore the
+  // selection this process implies and build a blank lot model from
+  // reference data already loaded for it. Synchronous, so it cannot be
+  // overtaken -- no seq guard needed beyond the one _resetFormState took.
+  _reseedFromContext(process, ctx) {
+    this.selection.processId = process.processId;
+    this.selection.process = process;
+    this.selection.size = this.getSizeFromOutputItemName(process.outputItemName);
+    this.selection.model = this.getModelFromOutputItemName(process.outputItemName);
+    this.selection.type = process.processType || 'General';
+    this.outputItemName = process.outputItemName || '';
+    const output = document.getElementById('lot-output');
+    if (output) output.value = this.outputItemName;
+    this._updateFieldLabel('lot-process-field', process.processName, 'Search all processes…');
+    const hint = document.getElementById('lot-process-hint');
+    if (hint) hint.textContent = this._processSublabel(process);
+
+    this.model = MApp.LotModel.using(Object.assign({}, ctx, {
+      process,
+      outputItemName: this.outputItemName,
+      manualColors: false
+    }));
+    this._applyProcessVisibility();
+    this._renderLotSections();
+    this._showContractorRate();
+    this._applyCascadeEnabledStates();
   }
 };
 // ================================================================
