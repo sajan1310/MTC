@@ -17,6 +17,7 @@ import uuid
 from datetime import date, timedelta
 
 import database
+from app.erp.services import warehouse_service
 
 
 def _rpc(client, method, args=None, mutation=False):
@@ -346,17 +347,19 @@ def test_adjust_warehouse_pool_manually_computes_delta(erp_client):
     )
     body = resp.get_json()
     assert body["success"] is True
-    # newAvailableQty is now read back from the recalculated pool rather
-    # than echoed from the request, and appliedDelta/expectedDelta say
-    # whether the correction had to be widened to make the entered figure
-    # hold -- see test_manual_correction_supersedes_the_calculation.
-    # Nothing re-allocates here, so it did not.
+    # newAvailableQty is read back from the recalculated pool rather than
+    # echoed from the request. appliedDelta/expectedDelta no longer
+    # diverge -- a count is recorded as the count and never widened past
+    # it -- and producedQty is the bucket's real stored figure, which a
+    # caller cannot derive because Pass 0 REPLACES a recounted bucket's
+    # produced rather than adding to it.
     assert body["data"] == {
         "oldAvailableQty": 20,
         "newAvailableQty": 15,
         "requestedQty": 15,
         "appliedDelta": -5,
         "expectedDelta": -5,
+        "producedQty": 15,
     }
 
     pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
@@ -1607,6 +1610,328 @@ def test_the_newest_recount_wins(erp_client):
         assert body["success"] is True, body["message"]
 
     assert _pool_by_color(erp_client, name)[""]["availableQty"] == 33
+
+
+def _dispatch_split_for_arrival_order(erp_app, colors):
+    """Build one final-stage product whose colour lots arrive in `colors`
+    order, dispatch more than one bucket holds, and report what each colour
+    was debited.
+
+    Written against the tables rather than the RPCs on purpose: the whole
+    question is what ARRIVAL ORDER does, and inserting directly is the only
+    way to hold everything else identical while varying just that.
+    """
+    import psycopg2.extras
+
+    proc = f"P{uuid.uuid4().hex[:8]}"
+    out = _unique_name("Out")
+    tag = _unique_name("Tag")
+
+    with (
+        erp_app.app_context(),
+        database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+            _conn,
+            cur,
+        ),
+    ):
+        cur.execute(
+            "INSERT INTO erp.process_master (process_id, process_name, lot_prefix, "
+            "output_item_name, sequence, is_final_stage, active) "
+            "VALUES (%s, %s, %s, %s, 1, TRUE, TRUE) RETURNING id",
+            (proc, proc, proc[:6].upper(), out),
+        )
+        pm_id = cur.fetchone()["id"]
+        for i, (color, qty) in enumerate(colors):
+            cur.execute(
+                "INSERT INTO erp.production (production_date, product_id, qty, "
+                "assigned_to, status, process_id, process_master_id, lot_number, "
+                "output_item_name, color_breakdown, created_at) "
+                "VALUES (%s, %s, %s, 'W', 'Completed', %s, %s, %s, %s, %s, %s)",
+                (
+                    date(2026, 1, 1),
+                    tag,
+                    qty,
+                    proc,
+                    pm_id,
+                    f"{proc}-L{i}",
+                    out,
+                    psycopg2.extras.Json([{"color": color, "qty": qty}]),
+                    date(2026, 1, 1),
+                ),
+            )
+        cur.execute(
+            "INSERT INTO erp.dispatch_headers (dispatch_number, dispatch_date, "
+            "created_at) VALUES (%s, %s, %s) RETURNING id",
+            (f"D-{proc}", date(2026, 6, 1), date(2026, 6, 1)),
+        )
+        header_id = cur.fetchone()["id"]
+        cur.execute(
+            "INSERT INTO erp.dispatch_lines (header_id, product_id, product_name, qty) "
+            "VALUES (%s, %s, %s, 60)",
+            (header_id, tag, out),
+        )
+
+        buckets = warehouse_service._build_warehouse_pool_buckets(cur)
+
+    return {
+        b["color"]: b["consumedQty"]
+        for b in buckets.values()
+        if b["outputItemName"] == out
+    }
+
+
+def test_a_draw_is_not_paid_from_stock_made_after_it(erp_client):
+    """The drains allocate by availability, and availability read as
+    `producedQty - consumedQty` already contains every credit in the table
+    whatever its date. So a draw could be settled against stock that did not
+    exist when it happened -- measured on this database, a bucket credited
+    only by a lot dated 1 December paid a draw dated 15 January.
+
+    The item-level arithmetic was never wrong; this decided WHICH bucket
+    wore the consumption, and it picked one that had nothing in it at the
+    time. The control below is that the total still nets out the same.
+    """
+    up_payload, up_id = _save_process(erp_client)
+    up_name = up_payload["outputItemName"]
+    # The only credit this item has is dated August.
+    body = _rpc(
+        erp_client,
+        "saveWarehousePoolOpening",
+        [
+            {
+                "processId": up_id,
+                "qty": 50,
+                "color": "Red",
+                "date": date(2026, 8, 1).isoformat(),
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+    down_payload, down_id = _save_process(
+        erp_client,
+        components=[
+            {
+                "itemName": up_name,
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            }
+        ],
+    )
+    # A colour-agnostic draw dated a month BEFORE that stock was there.
+    _make_lot(erp_client, down_id, up_name, 30, date(2026, 7, 1))
+
+    pool = _pool_by_color(erp_client, up_name)
+    # Red held nothing in July, so it cannot have paid for anything.
+    assert pool["Red"]["availableQty"] == 50
+    # The draw is real and unattributable, so it stays visible as a negative
+    # rather than being quietly taken off stock that came later.
+    assert pool[""]["availableQty"] == -30
+    # The control: netting across the item is unchanged either way.
+    assert sum(b["availableQty"] for b in pool.values()) == 20
+
+
+def test_the_newest_recount_wins_even_when_both_share_a_moment(erp_app, erp_client):
+    """_get_bucket_anchors selects the newest recount with `opening_at DESC,
+    id DESC`; Pass 0 walks rows in (moment, id) ASCENDING order. Where two
+    recounts of one bucket shared an effective moment, matching the anchor by
+    moment hit the LOWER id first and froze the real one out -- the older
+    count won, which is the opposite of what was selected.
+
+    Two recounts collapse onto one moment whenever both carry a date but no
+    time, which is exactly how migration 045's backfill stamps a row whose
+    date it cannot time.
+    """
+    payload, proc_id = _save_process(erp_client)
+    name = payload["outputItemName"]
+
+    for counted in (40, 33):
+        body = _rpc(
+            erp_client,
+            "adjustWarehousePoolManually",
+            [name, proc_id, "", "", counted, "physical recount"],
+            mutation=True,
+        ).get_json()
+        assert body["success"] is True, body["message"]
+
+    assert _pool_by_color(erp_client, name)[""]["availableQty"] == 33
+
+    # Collapse both onto midnight of their shared date.
+    with erp_app.app_context(), database.get_conn() as (_conn, cur):
+        cur.execute(
+            "UPDATE erp.warehouse_pool_opening "
+            "SET opening_at = opening_date::timestamptz "
+            "WHERE output_item_name = %s",
+            (name,),
+        )
+
+    # Any mutating call rebuilds the whole pool; use an unrelated process so
+    # this bucket is not touched by anything but the rebuild itself.
+    _other_payload, other_id = _save_process(erp_client)
+    _rpc(
+        erp_client,
+        "saveWarehousePoolOpening",
+        [{"processId": other_id, "qty": 1}],
+        mutation=True,
+    )
+
+    # Still the count that was taken last.
+    assert _pool_by_color(erp_client, name)[""]["availableQty"] == 33
+
+
+def test_the_dispatch_drain_does_not_depend_on_which_lot_arrived_first(erp_app):
+    """Identical data, two arrival orders, one answer.
+
+    Pass 3 iterated `buckets.values()` -- dict insertion order, which
+    follows the Pass 1 production query, which has no ORDER BY. Two colour
+    buckets of 50 against a dispatch of 60 therefore reported Red 50 /
+    Blue 10 or Blue 50 / Red 10 purely by which lot was read first, and a
+    sequential scan reorders itself whenever a row is updated or the table
+    is vacuumed.
+
+    The colour-agnostic drain already sorted its candidates for this exact
+    reason; this is the same guarantee for Dispatch. The control below is
+    the point: the TOTAL debited was never wrong, only which colour wore it.
+    """
+    forward = _dispatch_split_for_arrival_order(erp_app, [("Red", 50), ("Blue", 50)])
+    reverse = _dispatch_split_for_arrival_order(erp_app, [("Blue", 50), ("Red", 50)])
+
+    assert forward == reverse
+    # Sorted by colour, so the answer is a property of the data: "Blue"
+    # sorts before "Red" and is drained first.
+    assert forward == {"Blue": 50, "Red": 10}
+    # The control: the item-level total was always right, whichever order.
+    assert sum(forward.values()) == sum(reverse.values()) == 60
+
+
+def test_a_backdated_opening_balance_cannot_reach_a_later_recount(erp_client):
+    """The same rule a backdated LOT obeys, on the table the rule was
+    written for.
+
+    save_warehouse_pool_opening left opening_at to its DEFAULT NOW(), so an
+    opening balance dated three weeks ago claimed to take effect the instant
+    it was typed -- after a count taken today -- and was credited on top of
+    a count that already included that stock. 40 became 52.
+    """
+    payload, proc_id = _save_process(erp_client)
+    name = payload["outputItemName"]
+
+    body = _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [name, proc_id, "", "", 40, "physical recount"],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+    assert _pool_by_color(erp_client, name)[""]["availableQty"] == 40
+
+    body = _rpc(
+        erp_client,
+        "saveWarehousePoolOpening",
+        [
+            {
+                "processId": proc_id,
+                "qty": 12,
+                "date": (date.today() - timedelta(days=21)).isoformat(),
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+    # Already on the shelf when it was counted.
+    assert _pool_by_color(erp_client, name)[""]["availableQty"] == 40
+
+
+def test_an_opening_balance_dated_today_still_lands_after_a_count(erp_client):
+    """The other half: stamping the effective moment must not freeze an
+    entry that genuinely follows the count. A row dated today keeps its own
+    time of day, so it applies on top exactly as before."""
+    payload, proc_id = _save_process(erp_client)
+    name = payload["outputItemName"]
+
+    _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [name, proc_id, "", "", 40, "physical recount"],
+        mutation=True,
+    )
+    body = _rpc(
+        erp_client,
+        "saveWarehousePoolOpening",
+        [{"processId": proc_id, "qty": 12, "date": date.today().isoformat()}],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+    assert _pool_by_color(erp_client, name)[""]["availableQty"] == 52
+
+
+def test_a_count_is_recorded_as_the_count_not_widened_past_it(erp_client):
+    """A lot dated AFTER the count legitimately lifts the bucket off the
+    counted figure, and that is not a failed correction.
+
+    There used to be a settling loop that treated any gap as one: it widened
+    this correction's own qty by the residual and recalculated, up to three
+    times. Since migration 045 Pass 0 seeds the bucket from counted_qty and
+    never reads qty for an anchor row, so the widening could not change the
+    result -- it just walked the stored delta (28 -> 16 -> 4 -> -8) and then
+    reported a failure to converge, blaming colour-agnostic consumption that
+    was not involved.
+    """
+    up_name, name, down_id = _stage_fed_by_pool(erp_client)
+    # Dated ahead of today, so the count cannot freeze it.
+    _make_lot(erp_client, down_id, up_name, 12, date.today() + timedelta(days=5))
+
+    body = _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [name, down_id, "", "", 40, "physical recount"],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+    # The count is the count: the delta it implied is the delta applied.
+    assert body["data"]["requestedQty"] == 40
+    assert body["data"]["appliedDelta"] == body["data"]["expectedDelta"] == 28
+    # The future-dated lot carries forward on top of it.
+    assert body["data"]["newAvailableQty"] == 52
+    assert "movement dated after the count" in body["message"]
+
+    # And the stored correction keeps the delta the count implied, rather
+    # than whatever a residual walked it to.
+    openings = _rpc(erp_client, "getWarehousePoolOpeningData").get_json()["data"]
+    corrections = [
+        o
+        for o in openings
+        if o["outputItemName"] == name and o["remarks"].startswith("Correction: ")
+    ]
+    assert len(corrections) == 1
+    assert corrections[0]["qty"] == 28
+
+
+def test_a_correction_reports_the_buckets_real_produced_qty(erp_client):
+    """Pass 0 REPLACES a recounted bucket's produced/consumed rather than
+    adding to them, so a caller cannot derive produced from (old + delta).
+    The response carries the stored figure instead."""
+    frame_name, frame_id = _common_shortfall_fixture(erp_client)
+    before = _pool_by_color(erp_client, frame_name)["Black"]
+    assert (before["producedQty"], before["consumedQty"]) == (10, 10)
+
+    body = _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [frame_name, frame_id, "", "Black", 10, "physical recount"],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+    after = _pool_by_color(erp_client, frame_name)["Black"]
+    assert (after["producedQty"], after["consumedQty"]) == (10, 0)
+    # Not 10 + appliedDelta, which is what deriving it would have given.
+    assert body["data"]["producedQty"] == after["producedQty"] == 10
 
 
 def test_colour_agnostic_consumption_cannot_reach_a_later_recount(erp_client):

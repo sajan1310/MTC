@@ -1709,23 +1709,37 @@ App.Stock = {
         const appliedDelta = typeof res.data?.appliedDelta === 'number'
           ? res.data.appliedDelta
           : (newQty - oldQty);
-        // Says how much of the correction covered consumption the pool had
-        // no record of. The count stands either way; the gap is the thing
-        // worth auditing.
-        if (appliedDelta !== (newQty - oldQty)) App.Utils.showToast(res.message);
+        // The count is always recorded as the count, so appliedDelta no
+        // longer diverges from the typed difference and cannot signal
+        // anything. What CAN differ is where the bucket ended up: movement
+        // dated after the count carries forward on top of it, which is
+        // correct and worth saying out loud rather than leaving the operator
+        // to wonder why the figure they typed is not the figure on screen.
+        if (Math.abs(settledQty - newQty) > 0.0001) App.Utils.showToast(res.message);
 
         if (!App.State.globalWarehousePool) App.State.globalWarehousePool = [];
         let bucket = App.State.globalWarehousePool.find(b =>
           App.Utils.sameText(b.outputItemName, outputItemName) && b.processId === processId &&
           App.Utils.sameText(b.productTag || '', productTag || '') && App.Utils.sameText(b.color || '', color || ''));
+        // Produced comes from the SERVER, not from (on-screen + delta). A
+        // recount does not add to a bucket, it REPLACES it: Pass 0 seeds
+        // produced with the counted figure and zeroes consumed (migration
+        // 045). Adding the delta to what was on screen therefore overstated
+        // produced by whatever had already been consumed -- a bucket showing
+        // 100 produced / 90 consumed, recounted to 25, rendered 115/90 where
+        // the row really holds 25/0, and renderWarehousePoolTable() below
+        // folded that into the process totals.
+        const producedQty = typeof res.data?.producedQty === 'number'
+          ? res.data.producedQty
+          : (bucket ? (bucket.producedQty || 0) + appliedDelta : appliedDelta);
         if (bucket) {
-          bucket.producedQty = (bucket.producedQty || 0) + appliedDelta;
+          bucket.producedQty = producedQty;
           // available is produced - consumed by definition, so whatever the
           // settlement drew shows up here as consumption.
           bucket.consumedQty = bucket.producedQty - settledQty;
           bucket.availableQty = settledQty;
         } else {
-          bucket = { outputItemName, processId, productTag, color, producedQty: appliedDelta, consumedQty: appliedDelta - settledQty, availableQty: settledQty };
+          bucket = { outputItemName, processId, productTag, color, producedQty, consumedQty: producedQty - settledQty, availableQty: settledQty };
           App.State.globalWarehousePool.push(bucket);
         }
 
@@ -2050,16 +2064,50 @@ App.Stock = {
 
     if (body) {
       body.innerHTML = entries.length
-        ? entries.map(e => `<tr>
-          <td>${escapeHtml(e.date || '-')}</td>
-          <td><span class="badge ${this.POOL_LEDGER_BADGES[e.type] || 'bg-secondary'}">${escapeHtml(e.type)}</span></td>
-          <td><strong class="text-dark">${escapeHtml(e.ref || '-')}</strong></td>
-          <td><small class="text-muted">${escapeHtml(e.remarks || '-')}</small></td>
-          <td class="text-center text-success fw-bold">${e.inQty ? App.Production.formatQty(e.inQty) : '-'}</td>
-          <td class="text-center text-danger fw-bold">${e.outQty ? App.Production.formatQty(e.outQty) : '-'}</td>
-          <td class="text-center fw-bold">${App.Production.formatQty(e.balance)}</td>
-        </tr>`).join('')
+        ? entries.map(e => {
+          // A movement a later Recount absorbed. It is shown so the closing
+          // balance can be traced back to where it came from, and greyed
+          // because it no longer moves that balance -- everything dated at
+          // or before a count is already inside the counted figure
+          // (migration 045). This row is the audit trail for that, not a
+          // second opinion on the number.
+          const sup = e.superseded === true;
+          const mute = sup ? 'text-muted' : '';
+          // What the stocktake actually booked: the counted figure against
+          // the balance the book had reached, and the difference between
+          // them. That difference is the reason to take a count at all.
+          const variance = typeof e.variance === 'number'
+            ? `<div class="small text-muted mt-1">Counted <strong>${App.Production.formatQty(e.countedQty)}</strong>`
+              + ` · book had <strong>${App.Production.formatQty(e.computedBalance)}</strong>`
+              + ` · variance <strong>${e.variance > 0 ? '+' : ''}${App.Production.formatQty(e.variance)}</strong></div>`
+            : '';
+          return `<tr${sup ? ' class="table-light"' : ''}>
+          <td class="${mute}">${escapeHtml(e.date || '-')}</td>
+          <td><span class="badge ${sup ? 'bg-secondary' : (this.POOL_LEDGER_BADGES[e.type] || 'bg-secondary')}">${escapeHtml(e.type)}</span>${
+            sup ? '<div class="small text-muted mt-1"><i class="bi bi-lock-fill me-1"></i>inside a later count</div>' : ''}</td>
+          <td><strong class="${sup ? 'text-muted' : 'text-dark'}">${escapeHtml(e.ref || '-')}</strong></td>
+          <td><small class="text-muted">${escapeHtml(e.remarks || '-')}</small>${variance}</td>
+          <td class="text-center fw-bold ${sup ? 'text-muted' : 'text-success'}">${e.inQty ? App.Production.formatQty(e.inQty) : '-'}</td>
+          <td class="text-center fw-bold ${sup ? 'text-muted' : 'text-danger'}">${e.outQty ? App.Production.formatQty(e.outQty) : '-'}</td>
+          <td class="text-center fw-bold ${mute}">${App.Production.formatQty(e.balance)}</td>
+        </tr>`;
+        }).join('')
         : '<tr><td colspan="7" class="text-center text-muted p-4">No transaction history found for this bucket.</td></tr>';
+    }
+
+    // Say plainly why some rows are greyed, rather than leaving the operator
+    // to infer it from a badge colour. Rows render newest-first, so the
+    // absorbed history sits below the count that absorbed it.
+    const note = document.getElementById('poolLedgerNote');
+    if (note) {
+      const absorbed = entries.filter(e => e.superseded === true).length;
+      note.innerHTML = absorbed
+        ? `<i class="bi bi-info-circle me-1"></i><strong>${absorbed}</strong> greyed movement${absorbed === 1 ? '' : 's'}`
+          + ` below the Recount ${absorbed === 1 ? 'was' : 'were'} absorbed by it -- already inside the counted figure, so`
+          + ` ${absorbed === 1 ? 'it does' : 'they do'} not move the balance again. They stay listed so this bucket's`
+          + ` balance can be traced from its first movement to its last.`
+        : '';
+      note.classList.toggle('d-none', !absorbed);
     }
   },
 

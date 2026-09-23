@@ -15066,21 +15066,32 @@ MApp.Pool = {
         MApp.Util.renderEmpty(body, { title: 'No movements', body: 'Nothing has moved in or out of this bucket.' });
         return;
       }
-      body.innerHTML = entries.map(e => `
-        <div class="mb-card">
+      // A movement a later Recount absorbed: listed so the balance can be
+      // traced, dimmed because it no longer moves it (migration 045). Same
+      // distinction the desktop modal draws -- both read one server field
+      // rather than each deciding for themselves what is superseded.
+      body.innerHTML = entries.map(e => {
+        const sup = e.superseded === true;
+        const variance = typeof e.variance === 'number'
+          ? `<div class="mb-card-sub">counted ${MApp.Util.formatQty(e.countedQty)} · book ${MApp.Util.formatQty(e.computedBalance)} · var ${e.variance > 0 ? '+' : ''}${MApp.Util.formatQty(e.variance)}</div>`
+          : '';
+        return `
+        <div class="mb-card"${sup ? ' style="opacity:.6;"' : ''}>
           <div class="mb-card-row">
             <div>
               <div class="mb-card-title">${MApp.Util.escapeHtml(e.type)}${e.ref ? ' · ' + MApp.Util.escapeHtml(e.ref) : ''}</div>
               <div class="mb-card-sub">${MApp.Util.formatDateDisplay(e.dateRaw)}${e.remarks ? ' · ' + MApp.Util.escapeHtml(e.remarks) : ''}</div>
+              ${sup ? '<div class="mb-card-sub">inside a later count</div>' : ''}${variance}
             </div>
             <div style="text-align:right;white-space:nowrap;">
-              <div style="font-weight:700;color:${e.inQty ? 'var(--mb-enamel-green-ink)' : 'var(--mb-enamel-red-ink)'};">
+              <div style="font-weight:700;color:${sup ? 'var(--mb-ink-3, #888)' : (e.inQty ? 'var(--mb-enamel-green-ink)' : 'var(--mb-enamel-red-ink)')};">
                 ${e.inQty ? '+' + MApp.Util.formatQty(e.inQty) : '-' + MApp.Util.formatQty(e.outQty)}
               </div>
               <div class="mb-card-sub">bal ${MApp.Util.formatQty(e.balance)}</div>
             </div>
           </div>
-        </div>`).join('');
+        </div>`;
+      }).join('');
     } catch (err) {
       MApp.Util.renderError(body, err && err.message, () => this.openLedger(row));
     }

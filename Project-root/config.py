@@ -183,6 +183,12 @@ class Config:
     DB_CONNECT_TIMEOUT = int(os.getenv("DB_CONNECT_TIMEOUT", 10))
     DB_STATEMENT_TIMEOUT = int(os.getenv("DB_STATEMENT_TIMEOUT", 60000))
 
+    # The calendar the business runs on. Pinned onto every connection so
+    # Postgres evaluates `::date` in the same zone this process derives
+    # date.today() in -- see database._warn_if_clock_frames_disagree for
+    # what goes wrong when those two disagree.
+    DB_TIMEZONE = os.getenv("DB_TIMEZONE", "Asia/Kolkata")
+
     # Import configuration
     IMPORT_BATCH_SIZE = int(os.getenv("IMPORT_BATCH_SIZE", 1000))
     IMPORT_MAX_ROWS = int(os.getenv("IMPORT_MAX_ROWS", 50000))

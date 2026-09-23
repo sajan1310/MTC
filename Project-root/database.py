@@ -10,6 +10,51 @@ from psycopg2 import pool
 db_pool = None
 
 
+def _warn_if_clock_frames_disagree(app, session_timezone: str) -> None:
+    """Pinning the SESSION timezone only fixes half of it.
+
+    The other half is this process: business dates come from date.today() and
+    datetime.now(), which read the OS clock's zone. Pinning Postgres to
+    Asia/Kolkata while the app runs in UTC -- a container default, and the
+    easy way to get there by accident -- swaps a silent disagreement for a
+    different silent disagreement.
+
+    So compare the two offsets once, at startup, and say so loudly if they
+    differ. This deliberately does not raise: a wrong calendar is a serious
+    problem but not a reason to refuse to serve, and an operator who can read
+    the log can decide. Any failure to perform the check is itself ignored --
+    a diagnostic must never be the thing that takes the application down.
+    """
+    try:
+        from datetime import datetime
+
+        with get_conn() as (_conn, cur):
+            cur.execute("SELECT now()")
+            db_offset = cur.fetchone()[0].utcoffset()
+        app_offset = datetime.now().astimezone().utcoffset()
+        if db_offset != app_offset:
+            app.logger.error(
+                "Clock frames disagree: database session TimeZone=%s is %s from UTC, "
+                "but this process's local time is %s. Dates derived in Python "
+                "(date.today()) and in SQL (::date) will disagree for entries made "
+                "near midnight, which silently changes which day a Warehouse Pool "
+                "entry belongs to. Set DB_TIMEZONE to this host's zone, or fix the "
+                "host's zone.",
+                session_timezone,
+                db_offset,
+                app_offset,
+            )
+        else:
+            app.logger.info(
+                "Clock frames agree: database and application both %s from UTC "
+                "(DB_TIMEZONE=%s)",
+                app_offset,
+                session_timezone,
+            )
+    except Exception:  # noqa: BLE001 - a diagnostic must not break startup
+        app.logger.warning("Could not verify database/application timezone agreement")
+
+
 def init_app(app):
     """
     Initialize database connection pool with production-grade settings.
@@ -47,6 +92,23 @@ def init_app(app):
     # Query timeout in milliseconds (prevent runaway queries)
     statement_timeout = int(app.config.get("DB_STATEMENT_TIMEOUT", 60000))  # 60 seconds
 
+    # The calendar this application runs on, declared in ONE place.
+    #
+    # Business dates here are naive local time -- date.today() for an opening
+    # balance, datetime.now() for the moment a recount was taken -- while
+    # Postgres renders timestamptz and evaluates `::date` in ITS session
+    # timezone, inherited from postgresql.conf. Those were two independent
+    # sources of "what day is it" that had to agree and nothing made them.
+    # They happened to agree (both Asia/Calcutta); nothing said they would.
+    #
+    # Where they drift, the damage is quiet and dated. A row written at
+    # 02:00 IST has a UTC date of the previous day, so anything comparing a
+    # Python-derived date against a SQL `::date` cast disagrees about which
+    # day it belongs to -- and in the Warehouse Pool "which day" decides
+    # whether a recount absorbs an entry (see warehouse_service._effective_at
+    # and migration 047).
+    session_timezone = str(app.config.get("DB_TIMEZONE", "Asia/Kolkata"))
+
     try:
         # Prefer DATABASE_URL if provided; fallback to discrete DB_* settings
         db_kwargs = {
@@ -78,7 +140,10 @@ def init_app(app):
             keepalives_idle=30,  # Start keepalives after 30s idle
             keepalives_interval=10,  # Send keepalive every 10s
             keepalives_count=5,  # Drop connection after 5 failed keepalives
-            options=f"-c statement_timeout={statement_timeout}",
+            options=(
+                f"-c statement_timeout={statement_timeout} "
+                f"-c TimeZone={session_timezone}"
+            ),
             **db_kwargs,
         )
         app.logger.info(
@@ -91,6 +156,7 @@ def init_app(app):
             with get_conn() as (conn, cur):
                 cur.execute("SELECT 1")
                 app.logger.info("Database connectivity verified")
+            _warn_if_clock_frames_disagree(app, session_timezone)
 
     except psycopg2.OperationalError as e:
         if app.config.get("TESTING"):
