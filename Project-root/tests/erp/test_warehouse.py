@@ -1934,6 +1934,87 @@ def test_a_correction_reports_the_buckets_real_produced_qty(erp_client):
     assert body["data"]["producedQty"] == after["producedQty"] == 10
 
 
+def test_colour_agnostic_consumption_is_never_charged_to_an_annotation(erp_client):
+    """Credit and debit have to agree on which buckets are goods.
+
+    Pass 3 refuses to drain a non-counting bucket -- a packing set recorded
+    per colour on units the primary axis already counted is an annotation,
+    not output of its own, and debiting it takes stock off something that
+    never held any (migration 043). The colour-agnostic drain had no such
+    filter, so it happily charged consumption to one.
+
+    Found in the live pool: "Fitted Frame 20 inch Crysta S/Rim" reported 2
+    units MORE than it held, because 2 units of consumption had been parked
+    on its SeaGreen annotation bucket and the item total, which excludes
+    annotations, never saw them. That direction is the dangerous one --
+    overstating what Dispatch is allowed to ship.
+    """
+    up_payload, up_id = _save_process(erp_client)
+    up_name = up_payload["outputItemName"]
+    for color, qty in (("Black", 10), ('Kit Bag 24"', 10)):
+        body = _rpc(
+            erp_client,
+            "saveWarehousePoolOpening",
+            [{"processId": up_id, "qty": qty, "color": color}],
+            mutation=True,
+        ).get_json()
+        assert body["success"] is True, body["message"]
+
+    # Opening Stock carries no colorBreakdown, so nothing in the data says
+    # the packing set is an annotation -- the operator does (migration 044).
+    body = _rpc(
+        erp_client,
+        "setWarehousePoolBucketCountsTowardTotal",
+        [up_name, up_id, "", 'Kit Bag 24"', False],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+    down_payload, down_id = _save_process(
+        erp_client,
+        components=[
+            {
+                "itemName": up_name,
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            }
+        ],
+    )
+    # 15 drawn colour-agnostically against 10 real units. The lot carries its
+    # OWN output colour (the upstream item now has two, so the downstream
+    # process counts as colour-tracking); the DRAW is still COMMON, which is
+    # what this test is about.
+    body = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "status": "Completed",
+                "qty": 15,
+                "colorBreakdown": [{"color": "Black", "qty": 15}],
+                "componentsConsumed": [
+                    {"itemName": up_name, "qty": 15, "sourceType": "POOL"}
+                ],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+    assert down_payload is not None
+
+    pool = _pool_by_color(erp_client, up_name)
+    # The real stock pays, in full.
+    assert pool["Black"]["availableQty"] == 0
+    # The annotation is untouched: it is not goods, so it cannot be spent.
+    assert pool['Kit Bag 24"']["availableQty"] == 10
+    # And the 5 that had nowhere to go stays visible as the shortfall it is,
+    # rather than being absorbed by a bucket that holds no units.
+    assert pool[""]["availableQty"] == -5
+
+
 def test_colour_agnostic_consumption_cannot_reach_a_later_recount(erp_client):
     """Option A, settled draw by draw in date order.
 

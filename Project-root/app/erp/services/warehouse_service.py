@@ -1403,12 +1403,26 @@ def _build_warehouse_pool_buckets(
             # Stable order so a rebuild is repeatable rather than dependent on
             # dict insertion order, which follows whichever lot happened to be
             # credited first.
+            # Units only, exactly as Pass 3 filters its own candidates --
+            # credit and debit have to agree on which buckets are goods
+            # (migration 043). A non-counting bucket is a packing set
+            # recorded per colour on units the primary axis already counted,
+            # so draining it takes stock off something that never held any,
+            # and the shortfall it should have shown never appears.
+            #
+            # Pass 3 got this filter when 043 landed; this drain did not, and
+            # the live pool shows what that cost: "Fitted Frame 20 inch
+            # Crysta S/Rim" read 2 units HIGHER than it held, because 2 units
+            # of consumption sat on its SeaGreen annotation bucket where the
+            # item total -- which excludes annotations -- could not see them.
+            # Overstating what Dispatch may ship is the direction that hurts.
             colored = [
                 b
                 for b in buckets.values()
                 if b["outputItemName"].lower() == key
                 and not b["productTag"]
                 and b["color"]
+                and _bucket_counts_as_units(b)
             ]
             colored.sort(key=lambda b: _color_order_key(b["color"]))
 
@@ -2323,6 +2337,7 @@ def get_warehouse_pool_adjustment_history():
 
 
 @rpc_method("setWarehousePoolBucketCountsTowardTotal", mutation=True)
+@database.transactional
 def set_warehouse_pool_bucket_counts_toward_total(
     conn, cur, output_item_name, process_id, product_tag, color, counts_toward_total
 ):
