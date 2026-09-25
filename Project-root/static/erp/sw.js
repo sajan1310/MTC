@@ -357,7 +357,13 @@
 // with no mudguard consumed. Now such a column gives up only what a
 // counting column already records (and any common part) and goes only if
 // that leaves it empty; a quantity typed into it stays.
-const CACHE_NAME = 'erp-shell-v75';
+// v76: editing a bill no longer wipes its Ledger Remarks. openEditModal
+// filled its fields with page-wide name= lookups, and the Vendor form --
+// included ahead of the Bill partial -- has its own name="remarks", so a
+// bill's remarks went there and Update Bill saved a blank over them.
+// bill.js is precached; without the bump an installed client runs the old
+// lookup for one more load, and one edit in it is enough to wipe a bill.
+const CACHE_NAME = 'erp-shell-v76';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
