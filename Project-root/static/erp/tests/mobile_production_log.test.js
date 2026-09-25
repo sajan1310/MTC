@@ -172,7 +172,33 @@ describe('finding the process', () => {
     const offered = MApp.Picker.open.mock.calls[0][0].items.map(i => i.label);
     expect(offered).toEqual(expect.arrayContaining(['Frame Painting 20', 'Assembly Kalpi 20', 'Tube Cutting']));
     expect(offered).not.toContain('Old Line');
-    expect(MApp.Production.selection).toMatchObject({ size: '20 inch', model: 'Kalpi', type: 'Assembly' });
+    // The process that was picked, and its size/model/type under the field
+    // -- but the cascade itself is untouched, because it is the operator's
+    // filter and picking a process is not the operator narrowing anything.
+    expect(MApp.Production.selection.process.processId).toBe('PRC-ASM');
+    expect($('#lot-process-hint').textContent).toBe('20 inch · Kalpi · Assembly · Stage 4');
+    expect(MApp.Production.selection).toMatchObject({ size: '', model: '', type: '' });
+  });
+
+  // The regression this cascade-as-readout caused: the form stays open on
+  // the same process after a lot is logged, so the process picker came back
+  // narrowed to that process's own size AND model AND type -- in practice
+  // the one process just used, with every other process gone from a list
+  // whose field still said "Search all processes…".
+  test('the process picker still offers every process after a lot is logged', async () => {
+    await openWithProcess('Frame Painting 20');
+    await tap(rowFor('Red').querySelector('[data-row-toggle]'));
+    type(rowFor('Red').querySelector('.mapp-lot-color-qty'), 20);
+    picks.push('Rakesh');
+    await tap($('#lot-assignedto-field'));
+    await MApp.Production.saveLot();
+    await flush(); await flush();
+
+    expect($('#lot-process-field').textContent).toBe('Frame Painting 20');
+    MApp.Picker.open.mockClear();
+    await tap($('#lot-process-field'));
+    const offered = MApp.Picker.open.mock.calls[0][0].items.map(i => i.label);
+    expect(offered).toEqual(expect.arrayContaining(['Frame Painting 20', 'Assembly Kalpi 20', 'Tube Cutting']));
   });
 
   test('the processes logged most recently come first', async () => {

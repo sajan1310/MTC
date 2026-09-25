@@ -2450,7 +2450,13 @@ MApp.Print = {
   // baseline cell styling must leave them alone -- the same print-cells-own
   // switch the PO and stock pivot templates carry in their markup. Set or
   // cleared on every job, so one job's choice never outlives it.
-  bulk(records, buildPageHtml, { filename, title, landscape, cellsOwn } = {}) {
+  //
+  // `toggles` are chooseAction's own per-document switches, passed
+  // straight through: a bulk job's pages are built inside populate(), so a
+  // switch that changes how a page is laid out (the Production Sheet's
+  // Page choice) has to be flipped before the pages exist, which is
+  // exactly when chooseAction offers them.
+  bulk(records, buildPageHtml, { filename, title, landscape, cellsOwn, toggles } = {}) {
     const list = records || [];
     if (!list.length) {
       MApp.Toast.error('Nothing to print.');
@@ -2461,6 +2467,7 @@ MApp.Print = {
       filename: filename || 'Document',
       title: title || 'Document',
       landscape,
+      toggles,
       populate: () => {
         const container = document.getElementById('print-bulk-container');
         if (container) container.classList.toggle('print-cells-own', !!cellsOwn);
@@ -5020,12 +5027,26 @@ MApp.Production = {
       rows.map(r => r.rowIdx),
       rows.map(r => ({ rowIdx: r.rowIdx, expectedProductId: r.productId || '', expectedQty: r.qty }))
     ],
-    onDone: () => MApp.Production.load()
+    onDone: () => MApp.Production.load(),
+
+    // The same long-press selection that arms a bulk delete also arms a
+    // bulk document job: the lots picked out of the list go to the
+    // printer, to a PDF or into a share sheet as one multi-page set of
+    // production sheets. Selecting the four lots a contractor is coming
+    // to collect is how "print these" is actually asked on the floor, and
+    // the phone could only ever produce one sheet at a time.
+    documents: {
+      label: 'Sheets',
+      run: rows => MApp.ProductionSheet.printSheets(rows)
+    }
   },
 
   entries: [],
   searchTerm: '',
   lots: [],
+  // What the list is showing after search and the pending filter -- what
+  // the print/download/share actions act on. Set by render().
+  filtered: [],
   allProcesses: [],
   activeProcesses: [],
   processById: {},
@@ -5141,6 +5162,12 @@ MApp.Production = {
       lots = lots.filter(l => l.status === 'Pending' || l.status === 'In Progress');
     }
 
+    // Every lot the search and the pending filter leave, not just the
+    // page of them on screen: a document is printed from what was asked
+    // for, and paging is a scrolling convenience that has no business
+    // deciding what lands on paper.
+    this.filtered = lots;
+
     const page = MApp.Paging.take('production', lots, () => this.render());
     const shown = page.rows;
     MApp.SearchBox.setCount('production-search', page.shown, page.total, page.meta);
@@ -5228,6 +5255,74 @@ MApp.Production = {
 
     const clearBtn = listEl.querySelector('[data-clear-filter]');
     if (clearBtn) clearBtn.addEventListener('click', () => { this._pendingOnly = false; this.render(); });
+  },
+
+  // ── Download / print / share, over more than one lot ─────────────────
+  // Production could produce exactly one document: a single lot's sheet,
+  // and only with that lot's sheet open. Everything the tab is actually
+  // asked for -- today's run as one list, or a stack of sheets for the
+  // lots going out -- had no route at all, on a screen whose whole point
+  // is that it is the one in the operator's hand.
+  //
+  // Two documents, because they answer different questions: the log is
+  // the lots (one row each, for reconciling), the sheets are the
+  // materials (one page each, for picking and counting). Both go through
+  // MApp.Print's own chooser, so each one prints, downloads as a PDF or
+  // goes into the phone's share sheet -- the bulk download and bulk share
+  // this tab never had.
+  //
+  // Both act on what the list is showing, so the search box and the
+  // pending filter are how a job is narrowed. A specific handful of lots
+  // instead: long-press to select them and use Sheets on the selection
+  // bar (SELECT.documents above).
+  async printMenu() {
+    const lots = this.filtered || [];
+    if (lots.length === 0) {
+      MApp.Toast.error('No lots to print.');
+      return;
+    }
+    const n = lots.length;
+    const picked = await MApp.Picker.open({
+      title: 'Production',
+      searchable: false,
+      items: [
+        { value: 'log', label: 'Production log', sublabel: `${n} lot${n === 1 ? '' : 's'}, one row each` },
+        { value: 'sheets', label: 'Production sheets', sublabel: `${n} sheet${n === 1 ? '' : 's'}, one page each` }
+      ]
+    });
+    if (!picked) return;
+    if (picked.value === 'log') this.printReport();
+    else MApp.ProductionSheet.printSheets(lots);
+  },
+
+  printReport() {
+    const lots = this.filtered || [];
+    const term = (this.searchTerm || '').trim();
+    const parts = [`${lots.length} lot${lots.length === 1 ? '' : 's'}`];
+    if (term) parts.push(`matching "${term}"`);
+    if (this._pendingOnly) parts.push('pending & in progress only');
+
+    MApp.Print.report({
+      title: 'Production Log',
+      subtitle: parts.join(' · '),
+      filename: 'Production_Log',
+      columns: [
+        { label: 'Date', get: l => MApp.Util.formatDateDisplay(l.dateRaw) },
+        { label: 'Lot', get: l => l.lotNumber || '' },
+        { label: 'Process', get: l => (this.processById[l.processId] || {}).processName || l.processId || '' },
+        { label: 'Output item', get: l => l.outputItemName || '' },
+        { label: 'Colours', get: l => this._colorSummary(l) },
+        { label: 'Qty', align: 'right', get: l => MApp.LotModel.formatQty(l.qty) },
+        { label: 'Assigned to', get: l => MApp.Util.formatNameCase(l.assignedTo || '') },
+        { label: 'Status', get: l => l.status || 'Pending' },
+        // Blank rather than a printed zero: a lot with no rate on file and
+        // a lot that genuinely costs nothing are not the same thing, and
+        // "₹0.00" down a column reads as the second.
+        { label: 'Payable', align: 'right',
+          get: l => (Number(l.contractorPayable) > 0 ? MApp.Util.formatCurrency(l.contractorPayable) : '') }
+      ],
+      rows: lots
+    });
   },
 
   STATUS_OPTIONS: ['Pending', 'In Progress', 'Completed', 'Cancelled'],
@@ -5390,11 +5485,10 @@ MApp.Production = {
       if (stale()) return;
       const process = this.processById[lot.processId] || this.allProcesses.find(p => p.processId === lot.processId) || null;
       this.selection.process = process;
-      if (process) {
-        this.selection.size = this.getSizeFromOutputItemName(process.outputItemName);
-        this.selection.model = this.getModelFromOutputItemName(process.outputItemName);
-        this.selection.type = process.processType || 'General';
-      }
+      // selection.size/model/type are the cascade FILTER and nothing else
+      // (see _cascadeMatches). An edit renders no cascade -- the process is
+      // locked -- so there is nothing to seed, and what used to read those
+      // fields for this lot's own size and type now reads the process.
       // This lot's own saved Output Item Name, not the process default --
       // reopening a customised lot must not quietly reset it.
       this.outputItemName = lot.outputItemName || (process ? (process.outputItemName || '') : '');
@@ -5571,6 +5665,17 @@ MApp.Production = {
     return [size, model, p.processType || 'General', p.sequence != null ? `Stage ${p.sequence}` : ''].filter(Boolean).join(' · ');
   },
 
+  // The three cascade fields are a FILTER the operator sets, and nothing
+  // else. They used to double as a readout of whichever process was
+  // picked, which quietly turned that process's own size, model and type
+  // into the filter -- so re-opening the process picker offered only the
+  // processes that matched all three, which for most lots is the one
+  // process just chosen. On a fresh form that was merely confusing; after
+  // logging a lot, where the form stays open on the same process for the
+  // next one, it meant the list came back holding a single entry and the
+  // form could not be reused for anything else. The process's size, model
+  // and type are already on screen, in the hint under the Process field
+  // (_processSublabel), which is where a readout belongs.
   _cascadeMatches() {
     return this.activeProcesses
       .filter(p => !this.selection.size || this.getSizeFromOutputItemName(p.outputItemName) === this.selection.size)
@@ -5713,11 +5818,11 @@ MApp.Production = {
     // colour groups. Same mySeq idiom as Bills/Vendors openForm().
     const mySeq = ++this._procSelectSeq;
 
+    // Deliberately does NOT write the cascade fields -- see _cascadeMatches.
+    // Whatever the operator narrowed by stays narrowed by exactly that, and
+    // a process picked from the full list leaves the filter open.
     this.selection.processId = processId;
     this.selection.process = process;
-    this.selection.size = this.getSizeFromOutputItemName(process.outputItemName);
-    this.selection.model = this.getModelFromOutputItemName(process.outputItemName);
-    this.selection.type = process.processType || 'General';
     if (!opts.lot) {
       this.selection.productId = '';
       this.selection.productName = '';
@@ -5829,9 +5934,15 @@ MApp.Production = {
     const hint = document.getElementById('lot-rate-hint');
     if (!hint) return;
     const contractor = this.selectedAssignedTo;
-    const processType = this.selection.type;
-    const size = this.selection.size;
-    if (!contractor || !processType) { hint.textContent = ''; hint.hidden = true; return; }
+    // The rate card is keyed on THIS LOT'S process type and size, so both
+    // come off the chosen process. They used to be read off the cascade
+    // fields, which happened to hold the same two values only because a
+    // process pick overwrote them -- and stopped holding them at all once
+    // the cascade went back to being the filter it is named after.
+    const process = this.selection.process;
+    const processType = process ? (process.processType || 'General') : '';
+    const size = process ? this.getSizeFromOutputItemName(process.outputItemName) : '';
+    if (!contractor || !process) { hint.textContent = ''; hint.hidden = true; return; }
 
     // The pick may have changed again while this was in flight.
     const token = ++this._rateSeq;
@@ -6551,11 +6662,10 @@ MApp.Production = {
   // reference data already loaded for it. Synchronous, so it cannot be
   // overtaken -- no seq guard needed beyond the one _resetFormState took.
   _reseedFromContext(process, ctx) {
+    // Same as onProcessSelected: the cascade filter is the operator's and
+    // is left where they left it.
     this.selection.processId = process.processId;
     this.selection.process = process;
-    this.selection.size = this.getSizeFromOutputItemName(process.outputItemName);
-    this.selection.model = this.getModelFromOutputItemName(process.outputItemName);
-    this.selection.type = process.processType || 'General';
     this.outputItemName = process.outputItemName || '';
     const output = document.getElementById('lot-output');
     if (output) output.value = this.outputItemName;
@@ -11867,7 +11977,35 @@ MApp.Select = {
       const noun = n === 1 ? (s.config.noun || 'item') : (s.config.plural || (s.config.noun || 'item') + 's');
       label.textContent = `${n} ${noun} selected`;
     }
+
+    // Selection has been a way to delete several records and nothing
+    // else. A screen whose records are also DOCUMENTS (Production's lots
+    // and their sheets) declares `documents` on its config and gets a
+    // second, non-destructive button here -- print, download or share the
+    // selection as one job. Hidden, not disabled, on every screen that
+    // declares none: an always-present button that does nothing on most
+    // screens is worse than no button.
+    const docsBtn = document.getElementById('mapp-select-docs');
+    if (docsBtn) {
+      const docs = s.config.documents;
+      docsBtn.classList.toggle('mb-hidden', !docs);
+      if (docs) docsBtn.textContent = docs.label || 'Print';
+    }
     if (bar) bar.classList.add('open');
+  },
+
+  // The selection as a document job. Leaves selection mode first, exactly
+  // as deleteSelected does: the rows are already in hand, and a selection
+  // bar left standing over a print dialog or a share sheet has nothing
+  // left to act on.
+  async documentsForSelected() {
+    const s = this._state;
+    if (!s || !s.selected.size) return;
+    const docs = s.config.documents;
+    if (!docs || typeof docs.run !== 'function') return;
+    const rows = [...s.selected].sort((a, b) => a - b).map(i => s.rows[i]);
+    this.exit();
+    await docs.run(rows);
   },
 
   async deleteSelected() {
@@ -14083,7 +14221,14 @@ MApp.ProductionSheet = {
   // The components as this screen now has them -- quantities as edited,
   // removed rows gone, added rows in.
   _components() {
-    return (this.rows || []).map(r => (r.src
+    return this._componentsFrom(this.rows);
+  },
+
+  // Split out from _components() so a bulk job can build a lot's
+  // components WITHOUT going through this.rows, which belongs to whatever
+  // single lot happens to be open on screen.
+  _componentsFrom(rows) {
+    return (rows || []).map(r => (r.src
       ? { ...r.src, requiredQty: r.requiredQty }
       : { itemName: r.itemName, size: r.size, narration: r.narration, color: r.color, requiredQty: r.requiredQty }));
   },
@@ -14241,6 +14386,95 @@ MApp.ProductionSheet = {
         this._fillRemarks(data.remarks);
       }
     });
+  },
+
+  // ── Many lots, one job ───────────────────────────────────────────────
+  // printSheet() above needs this sheet OPEN, for one lot, which is the
+  // only way the phone could ever produce a production sheet. A stack of
+  // them -- the lots on a contractor's collection, a morning's run -- is
+  // what the floor asks for, and desktop cannot do it either.
+  //
+  // These are the lots' SAVED sheets: their customised components if they
+  // have any, their recorded consumption if they do not, and their own
+  // saved remarks. Nothing here reads this screen's edit state, which
+  // belongs to whichever single lot is open and would otherwise leak one
+  // lot's uncommitted corrections onto another lot's page.
+  //
+  // Every column prints. The per-column ticks on the single-lot path are
+  // a judgement about one sheet; there is no honest way to apply one lot's
+  // answer to twenty other lots' colour sets.
+  async printSheets(lots, { filename, title } = {}) {
+    const list = (lots || []).filter(Boolean);
+    if (list.length === 0) {
+      MApp.Toast.error('No lots to print.');
+      return;
+    }
+
+    MApp.Toast.show(`Preparing ${list.length} sheet${list.length === 1 ? '' : 's'}…`);
+    const lookups = await this._lookups();
+    const landscape = () => MApp.Prefs.get(this.PREF_LANDSCAPE, false);
+
+    return MApp.Print.bulk(list, lot => this._pageHtmlFor(lot, lookups, landscape()), {
+      filename: filename || (list.length === 1
+        ? this.docName(list[0])
+        : `Production_Sheets_${list.length}`),
+      title: title || `Production Sheets (${list.length})`,
+      landscape,
+      // Same Page preference the single-lot sheet uses, and the same
+      // switch, so one operator's choice holds however they print.
+      toggles: [{
+        on: landscape,
+        flip: () => MApp.Prefs.toggle(this.PREF_LANDSCAPE, false),
+        onLabel: 'Page: landscape',
+        offLabel: 'Page: portrait'
+      }]
+    });
+  },
+
+  // One lot's sheet as standalone markup for a bulk page.
+  //
+  // Rendered through the SAME builder the single-lot path uses, into the
+  // same container, because that container is where the fit-to-page loop
+  // lives: PrintTemplates.productionSheet lays it out offscreen at the
+  // real page width and steps down the density tiers until it fits. Build
+  // the markup some second way and a bulk page would quietly stop being
+  // the document a single print produces. So it is rendered there and
+  // lifted out afterwards.
+  //
+  // The lifted copy sheds three things. Its id and every id inside it,
+  // which would be duplicated the moment two pages sit in one document
+  // (and would shadow the real container on the next lot's render). Its
+  // .print-container class, because @media print hides every print
+  // container that is not the one being printed, and this one is now
+  // INSIDE #print-bulk-container rather than being printed itself. And
+  // its inline display:none. Everything else -- the frame, the green top
+  // rule, the type, the tables' own inline styling -- rides along, and the
+  // stylesheet's `.print-container *` rules still reach it through the
+  // bulk container, so a bulk page prints as the single sheet does.
+  _pageHtmlFor(lot, lookups, landscape) {
+    const data = this.sheetData(lot, this._componentsFrom(this._rowsFor(lot)), {
+      ...lookups,
+      remarks: lot.sheetRemarks || '',
+      landscape: !!landscape,
+      excluded: []
+    });
+    PrintTemplates.productionSheet(data, {
+      formatQty: v => MApp.Util.formatQty(v),
+      sameColor: (a, b) => MApp.SheetGrouping.sameText(a, b),
+      palette: MApp.Print.PRINT_PALETTE,
+      pageHeightPx: MApp.Print.PAGE_HEIGHT_PX,
+      pageWidthPx: MApp.Print.PAGE_WIDTH_PX
+    });
+    this._fillRemarks(data.remarks);
+
+    const host = document.getElementById('print-production-sheet-container');
+    if (!host) return '';
+    const page = host.cloneNode(true);
+    page.removeAttribute('id');
+    page.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+    page.classList.remove('print-container');
+    page.style.display = 'block';
+    return page.outerHTML;
   },
 
   close() { MApp.Sheet.close('sheet-production-sheet'); },

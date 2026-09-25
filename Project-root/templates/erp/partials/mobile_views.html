@@ -759,7 +759,14 @@
      TAB 3 — PRODUCTION
      ═══════════════════════════════════════════════════════════════════ -->
 <template id="tpl-production">
-  <h1 class="mapp-screen-title">Production</h1>
+  <!-- Same title row Stock carries: the log and the lots' own production
+       sheets, each as a print, a PDF download or a share, over whatever the
+       search and the pending filter have left on screen. -->
+  <div class="mapp-title-row">
+    <h1 class="mapp-screen-title">Production</h1>
+    <button type="button" class="mb-btn-text" id="production-print-btn"
+            onclick="MApp.Production.printMenu()">Download / print</button>
+  </div>
   <!-- Attributes and the clear button are applied by MApp.SearchBox.attach;
        no inline oninput, so the debounce cannot be bypassed. -->
   <div class="mb-search">

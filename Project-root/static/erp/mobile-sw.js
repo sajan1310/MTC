@@ -95,7 +95,13 @@
 // v67: the lot model follows desktop's fix to secondary colours -- their
 // own tagged parts are recorded, never a part a counting colour already
 // records, and never a common part.
-const CACHE_NAME = 'erp-mobile-shell-v67';
+// v68: Production can produce more than one document, and the Log Lot form
+// is reusable. mobile.js prints, downloads or shares the production log and
+// the lots' own sheets as one job -- over the list as filtered, or over a
+// long-press selection -- and the size/model/type cascade went back to
+// being only the operator's filter, so the process picker no longer comes
+// back holding just the process the last lot was logged under.
+const CACHE_NAME = 'erp-mobile-shell-v68';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

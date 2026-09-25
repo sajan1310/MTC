@@ -151,6 +151,13 @@
        one-handed device the easiest target should be the safe one. -->
   <div class="mb-select-bar" id="mapp-select-bar" role="region" aria-label="Selection actions">
     <span class="mb-select-count" id="mapp-select-count" aria-live="polite"></span>
+    <!-- Print / download / share the selection as one job. Shown, and
+         labelled, by MApp.Select._paint() only on a screen whose SELECT
+         config declares `documents` — Production's lots and their sheets
+         today. Left of Delete so the destructive button does not move as
+         it appears and disappears. -->
+    <button type="button" class="mb-btn mb-btn-secondary mb-hidden" id="mapp-select-docs"
+            onclick="MApp.Select.documentsForSelected()">Sheets</button>
     <button type="button" class="mb-btn mb-btn-danger" onclick="MApp.Select.deleteSelected()">Delete</button>
     <button type="button" class="mb-btn mb-btn-secondary" onclick="MApp.Select.exit()">Cancel</button>
   </div>

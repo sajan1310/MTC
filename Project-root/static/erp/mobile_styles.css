@@ -1910,10 +1910,26 @@ textarea:focus-visible,
 .mb-select-bar.open { display: flex; }
 /* No tab bar to clear while a sheet is up -- the sheet covers it. */
 body.mb-sheet-open .mb-select-bar { bottom: env(safe-area-inset-bottom); }
-.mb-select-bar .mb-btn { min-height: var(--mb-tap-min); width: auto; flex: 0 0 auto; }
+/* Tighter side padding than a full-width .mb-btn: the bar can carry three
+   buttons now (a document action, Delete, Cancel) next to the count, and on
+   a 360px phone the default var(--mb-sp-5) either wrapped the bar or
+   squeezed the count out of existence. The tap target is unchanged --
+   --mb-tap-min in height, and each label is still wider than it is tall. */
+.mb-select-bar .mb-btn {
+  min-height: var(--mb-tap-min);
+  width: auto;
+  flex: 0 0 auto;
+  padding: 0 var(--mb-sp-3);
+}
 
 .mb-select-count {
   flex: 1;
+  /* A flex item's min-width is auto, so without this the count refuses to
+     shrink below its text and pushes the buttons off the bar instead. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--mb-on-chrome);
   font-weight: 700;
   font-size: 0.875rem;

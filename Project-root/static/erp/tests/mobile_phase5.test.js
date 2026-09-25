@@ -235,7 +235,13 @@ describe('MApp.Process availability', () => {
 describe('Log Lot contractor rate', () => {
   beforeEach(() => {
     mount('<div class="mb-field-hint" id="lot-rate-hint" hidden></div>');
-    MApp.Production.selection = { size: '26 inch', type: 'Paint' };
+    // The rate card is keyed on the lot's own process type and size, so
+    // both come off the chosen process. They used to be read off the
+    // cascade fields (selection.size/type), which is the operator's
+    // process FILTER and only ever happened to agree with the process.
+    MApp.Production.selection = {
+      process: { processId: 'PRC-PNT', processName: 'Paint 26', processType: 'Paint', outputItemName: 'Painted Frame 26 inch' }
+    };
     MApp.Production.selectedAssignedTo = 'Rakesh';
   });
 
