@@ -111,7 +111,6 @@ Both workflows are designed to:
 - Runs ALL tests with coverage reporting
 - Matrix testing (Python 3.10, 3.11, 3.12)
 - Generates detailed coverage reports
-- Uploads to Codecov (if configured)
 - **Runtime**: ~5-7 minutes per Python version
 - **Artifacts**: 
   - `coverage-report-py{version}` - Coverage XML and HTML
@@ -129,7 +128,6 @@ Both workflows are designed to:
 - 📊 Detailed coverage reporting with HTML output
 - 🎯 Selective test execution via workflow inputs
 - ⏰ Optional scheduled testing
-- 📈 Coverage trend tracking via Codecov
 
 **Example Run Time**: ~15-20 minutes total (all matrix combinations)
 
