@@ -29,6 +29,7 @@ sudo /opt/mtc/src/Project-root/deploy/deploy.sh      # every release
 | `install.sh` | — | First install: clone + provision + configure + deploy, in one step. |
 | `provision.sh` | — | Packages, timezone, PostgreSQL 17, Redis, nginx, unit. Idempotent. |
 | `deploy.sh` | — | Pull, sync venv, verify runtime, migrate, restart, health-check. |
+| `health.py` | `/usr/local/bin/mtc-health` | `/health` as a readable panel, plus unit states, disk, memory, load. |
 | `mtc.service` | `/etc/systemd/system/` | gunicorn under systemd |
 | `wait-for-deps.sh` | — | Startup gate: blocks until Postgres and Redis actually accept connections. |
 | `offsite-pull.sh` | — | Runs on the laptop/NAS, not the server: fetches and verifies snapshots over Tailscale or a LAN. |
@@ -43,6 +44,23 @@ sudo /opt/mtc/src/Project-root/deploy/deploy.sh      # every release
 
 Layout: `/opt/mtc/src` checkout · `/opt/mtc/venv` the one interpreter ·
 `/etc/mtc/mtc.env` secrets (`root:mtc` `0640`) · service user `mtc`.
+
+### Is it healthy?
+
+`curl /health` answers a load balancer. `mtc-health` answers a person:
+
+```bash
+sudo ln -sf /opt/mtc/src/Project-root/deploy/health.py /usr/local/bin/mtc-health
+
+mtc-health              # the panel, once
+mtc-health --watch      # redraw every 5s
+mtc-health --json       # the raw payload, for a script
+```
+
+Exits 0 healthy · 1 wants attention · 2 the app is not answering, so it also
+works from cron. It reads `/health` for the application's own vitals and the
+host for unit states, root disk, memory and load — and still draws when the
+application is down, which is when it is worth having.
 
 ### Getting the code onto the server without GitHub
 
