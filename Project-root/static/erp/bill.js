@@ -652,19 +652,23 @@ App.Bill = {
     const contactInput = document.getElementById('billContact');
     if (contactInput) contactInput.value = bill.contact || '';
 
-    const billNumberInput = document.querySelector('input[name="billNumber"]');
+    const billNumberInput = document.querySelector('#billForm input[name="billNumber"]');
     if (billNumberInput) billNumberInput.value = bill.billNumber || '';
 
     const billDateInput = document.getElementById('billDateInput');
     if (billDateInput) billDateInput.value = String(bill.billDateRaw || '').split('T')[0];
 
-    const remarksInput = document.querySelector('input[name="remarks"]');
+    // Scoped to #billForm, like every name= lookup here: index.html
+    // includes vendors.html ahead of this partial, and the Vendor form has
+    // its own name="remarks". Unscoped, this filled that one instead -- the
+    // bill's Ledger Remarks opened blank, and saving the edit wiped them.
+    const remarksInput = document.querySelector('#billForm input[name="remarks"]');
     if (remarksInput) remarksInput.value = bill.remarks || '';
 
-    const issuingPartyInput = document.querySelector('input[name="issuingParty"]');
+    const issuingPartyInput = document.querySelector('#billForm input[name="issuingParty"]');
     if (issuingPartyInput) issuingPartyInput.value = bill.issuingParty || '';
 
-    const manufacturingVendorInput = document.querySelector('input[name="manufacturingVendor"]');
+    const manufacturingVendorInput = document.querySelector('#billForm input[name="manufacturingVendor"]');
     if (manufacturingVendorInput) manufacturingVendorInput.value = bill.manufacturingVendor || '';
 
     const tbody = document.getElementById('billItemsBody');
