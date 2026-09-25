@@ -1828,13 +1828,17 @@ App.Process = {
 
   // Fetches this (already-saved) process's auto-detected Warehouse Pool
   // color axes so their labels appear as Primary Axis options too.
+  // Everything but "tag" axes -- those come live from the Group fields
+  // typed on-form (collectColorAxisLabels). A "merged" axis (two pool axes
+  // paired by a Process Color Link) is a real axis save_process counts, so
+  // dropping it hid the picker while the server still demanded a choice.
   async loadPoolColorAxisLabels(processId, presetPrimary) {
     this._poolAxisLabels = [];
     if (processId) {
       try {
         const res = await Api.call('getProcessColorAxes', processId);
         if (res.success && res.data && Array.isArray(res.data.axes)) {
-          this._poolAxisLabels = res.data.axes.filter(a => a.source === 'pool').map(a => a.label);
+          this._poolAxisLabels = res.data.axes.filter(a => a.source !== 'tag').map(a => a.label);
         }
       } catch (err) {
         // Non-fatal -- the picker just falls back to whatever's typed on-form.
