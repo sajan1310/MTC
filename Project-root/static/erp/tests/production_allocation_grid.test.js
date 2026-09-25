@@ -274,3 +274,105 @@ describe('Two split axes at once cannot be drawn as a grid', () => {
       .toContain('split it into separate lots');
   });
 });
+
+// The save checks, and sends, an allocation for the checklist AS IT IS, not
+// for whatever the grid was last drawn from. "Select all" and a Primary
+// change did not redraw it, and the submit trusted the stale drawing: a lot
+// that needed an allocation could save without one, and the Warehouse Pool
+// then credited bare single-colour buckets.
+describe('The grid follows every way the checklist changes', () => {
+  const MIXED_FRAMES = ['Blue-White', 'Red-Black', 'Green'];
+
+  function mountMixed() {
+    mount();
+    const list = document.getElementById('productionColorChecklist');
+    list.innerHTML = '';
+    App.Production.renderColorChecklistRows(MIXED_FRAMES, FRAME_AXIS, false, true);
+    list.insertAdjacentHTML('beforeend', App.Production._buildColorGroupHeader(RIM_AXIS, 'Fitted Rim'));
+    App.Production.renderColorChecklistRows(['White', 'Black'], RIM_AXIS, false, false);
+  }
+
+  test('"Select all" on a secondary group draws the grid, and the save waits for it', async () => {
+    mountMixed();
+    await check('Blue-White', 10);
+    await check('Red-Black', 5);
+    await check('Green', 7);
+    // The frames ticked the rims they name; take them off again so "Select
+    // all" is what puts two rim colours on the lot.
+    await uncheck('White');
+    await uncheck('Black');
+    expect(gridVisible()).toBe(false);
+
+    const master = document.querySelector(`[data-group-master="${RIM_AXIS}"]`);
+    master.checked = true;
+    await App.Production.toggleColorGroup(master, RIM_AXIS);
+
+    expect(gridVisible()).toBe(true);
+    expect(rowLabels()).toEqual(MIXED_FRAMES);
+    expect(App.Production.allocationBlockingError()).toContain('Blue-White');
+  });
+
+  test('a Primary change redraws it for the new Primary, and the old grid no longer passes', async () => {
+    mount();
+    const list = document.getElementById('productionColorChecklist');
+    list.innerHTML = '';
+    const frames = { key: FRAME_AXIS, label: 'Painted Frame', colors: ['Blue-White', 'Pink-White'] };
+    const rims = { key: RIM_AXIS, label: 'Fitted Rim', colors: ['BCP', 'Black'] };
+    [frames, rims].forEach(axis => {
+      list.insertAdjacentHTML('beforeend', App.Production._buildColorAxisGroupHeader(axis, axis === frames));
+      App.Production.renderColorChecklistRows(axis.colors, axis.key, false, axis === frames);
+    });
+    await check('Blue-White', 20);
+    await check('Pink-White', 20);
+    await check('BCP', 24);
+    await check('Black', 16);
+    typeCell('Blue-White', 'BCP', 20);
+    typeCell('Blue-White', 'Black', 0);
+    typeCell('Pink-White', 'BCP', 4);
+    typeCell('Pink-White', 'Black', 16);
+    expect(App.Production.allocationBlockingError()).toBe('');
+
+    const rimRadio = Array.from(document.querySelectorAll('input[name="productionPrimaryAxisPick"]'))
+      .find(r => r.value === RIM_AXIS);
+    rimRadio.checked = true;
+    await App.Production.setPrimaryColorAxisChoice(rimRadio);
+
+    // The rims now count, so they are the grid's rows and the frames its
+    // columns -- and nothing has been allocated that way round yet.
+    expect(rowLabels()).toEqual(['BCP', 'Black']);
+    expect(columnHeaders()).toEqual(['Blue-White', 'Pink-White']);
+    expect(App.Production.allocationBlockingError()).toContain('BCP');
+    const bcp = App.Production.getCheckedColorQtys().find(c => c.color === 'BCP');
+    expect(bcp.countsTowardTotal).toBe(true);
+    expect(bcp.splits.map(s => s.axes[FRAME_AXIS])).toEqual(['Blue-White', 'Pink-White']);
+  });
+
+  test('a negative cell blocks the save even though its row adds up', async () => {
+    mount();
+    await checkAllFramesAt10();
+    await check('BCP', 24);
+    await check('Black', 16);
+    for (const frame of FRAMES) {
+      typeCell(frame, 'BCP', 10);
+      typeCell(frame, 'Black', 0);
+    }
+    typeCell('Blue-White', 'BCP', -5);
+    typeCell('Blue-White', 'Black', 15);
+
+    expect(App.Production.allocationBlockingError()).toContain('negative');
+    expect(document.getElementById('productionAllocationStatus').textContent).toContain('below zero');
+  });
+
+  test('a split axis that does not add up to the lot says so', async () => {
+    mount();
+    await checkAllFramesAt10();
+    await check('BCP', 24);
+    await check('Black', 12); // 36 against a lot of 40
+
+    // innerText, as the help line is written: jsdom has no layout, so it does
+    // not mirror innerText into textContent the way a browser does.
+    const help = document.getElementById('productionAllocationHelp').innerText;
+    expect(help).toContain('add up to 36');
+    expect(help).toContain('the lot is 40');
+  });
+});

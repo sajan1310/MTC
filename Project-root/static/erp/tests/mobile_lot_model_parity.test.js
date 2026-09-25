@@ -17,10 +17,10 @@
  * the same steps, and requires the two to send saveProduction the same
  * colour breakdown and the same components.
  *
- * One deliberate difference: desktop's per-colour and pool tables have no
- * unit column, so those lines leave desktop with no unit (read by the
- * server as "already in the base unit"). The phone keeps the recipe row's
- * unit on them. Units are compared on common lines only.
+ * Units included: desktop's per-colour and pool lines used to leave without
+ * the recipe row's unit (read by the server as "already in the base unit",
+ * so a Dozen part was debited twelve times short) while the phone kept it.
+ * Desktop carries it now, and every line's unit is compared.
  */
 
 'use strict';
@@ -215,6 +215,30 @@ const PROCESSES = {
       comp('Paint Red', 'Red', 0.1)
     ],
     pool: []
+  },
+
+  // A rim colour more than one frame colour names: White goes on the
+  // Blue-White frames AND the Red-White ones.
+  'PRC-WHT': {
+    process: { processId: 'PRC-WHT', processName: 'Rim Fitting 20', processType: 'Fitting', outputItemName: 'Fitted Frame 20 inch', sequence: 3, active: true, isFinalStage: false },
+    colors: ['Blue-White', 'Red-White', 'Red-Black', 'White', 'Black'],
+    axes: {
+      axes: [
+        { key: 'pool:painted frame 20w', label: 'Painted Frame 20W', colors: ['Blue-White', 'Red-Black', 'Red-White'], source: 'pool' },
+        { key: 'tag:rim color', label: 'Rim Color', colors: ['Black', 'White'], source: 'tag' }
+      ],
+      primaryAxisKey: 'pool:painted frame 20w', primaryIsDefault: false
+    },
+    recipe: [
+      comp('Painted Frame 20W', 'COMMON', 1, { sourceType: 'POOL', size: '20 inch' }),
+      comp('Rim White', 'White', 2, { size: '20 inch', colorAxis: 'Rim Color' }),
+      comp('Rim Black', 'Black', 2, { size: '20 inch', colorAxis: 'Rim Color' })
+    ],
+    pool: [
+      pool('Painted Frame 20W', 'Blue-White', 30),
+      pool('Painted Frame 20W', 'Red-White', 30),
+      pool('Painted Frame 20W', 'Red-Black', 30)
+    ]
   }
 };
 
@@ -407,14 +431,11 @@ function phoneWrap(m) {
   };
 }
 
-// Desktop's per-colour and pool lines carry no unit; see the header. Its
-// pool table also leaves poolColor off where the phone sends it blank --
-// the server reads the two the same (production_service._pool_bucket_color).
-const comparable = lines => lines.map(l => {
-  const out = { ...l, poolColor: l.poolColor || '' };
-  if (String(out.colorGroup || 'COMMON').toUpperCase() !== 'COMMON') delete out.unit;
-  return out;
-});
+// Desktop's pool table leaves poolColor off where the phone sends it blank,
+// and a line with no unit may carry it blank or not at all -- the server
+// reads each pair the same (production_service._pool_bucket_color; a blank
+// unit is the base unit).
+const comparable = lines => lines.map(l => ({ ...l, poolColor: l.poolColor || '', unit: l.unit || '' }));
 
 async function both(processId, steps, lot) {
   const d = await desktopOpen(processId, lot);
@@ -504,6 +525,16 @@ const FLOWS = {
     s => s.manualColors(),
     s => s.check('Red'), s => s.type('Red', 5),
     s => s.check('Sea Green'), s => s.type('Sea Green', 3)
+  ]],
+  'a rim colour two frame colours name': ['PRC-WHT', [
+    s => s.check('Blue-White'), s => s.type('Blue-White', 10),
+    s => s.check('Red-White'), s => s.type('Red-White', 5),
+    s => s.check('Red-Black'), s => s.type('Red-Black', 7)
+  ]],
+  'a frame colour unticked while another still names its rim': ['PRC-WHT', [
+    s => s.check('Blue-White'), s => s.type('Blue-White', 10),
+    s => s.check('Red-White'), s => s.type('Red-White', 5),
+    s => s.check('Blue-White')
   ]]
 };
 
@@ -523,6 +554,42 @@ describe.each(Object.entries(FLOWS))('%s', (_label, [processId, steps]) => {
     const { desktop, phone } = await both(processId, steps);
     expect(desktop.componentsConsumed.length).toBeGreaterThan(0);
     expect(comparable(phone.componentsConsumed)).toEqual(comparable(desktop.componentsConsumed));
+  });
+});
+
+describe('a rim colour more than one frame colour names', () => {
+  const qtyOf = (r, color) => r.colorBreakdown.find(c => c.color === color)?.qty;
+
+  test('takes every frame it pairs with, on both', async () => {
+    const [processId, steps] = FLOWS['a rim colour two frame colours name'];
+    const { desktop, phone } = await both(processId, steps);
+    // Taking the first match gave White 10, leaving 17 rims on 22 frames.
+    for (const r of [desktop, phone]) {
+      expect(qtyOf(r, 'White')).toBe(15);
+      expect(qtyOf(r, 'Black')).toBe(7);
+    }
+  });
+
+  test('stays on the lot while a frame that names it is still ticked, on both', async () => {
+    const [processId, steps] = FLOWS['a frame colour unticked while another still names its rim'];
+    const { desktop, phone } = await both(processId, steps);
+    // Unticking the Blue-White frames used to untick White too, though the
+    // Red-White frames still carry it.
+    for (const r of [desktop, phone]) expect(qtyOf(r, 'White')).toBe(5);
+  });
+});
+
+describe('an allocation cell below zero', () => {
+  test('is refused on both, though its row adds up', async () => {
+    const [processId, steps] = FLOWS['two axes with no Primary yet, then a split the grid has to record'];
+    const negative = [
+      ...steps.slice(0, -4),
+      s => s.allocate('Blue-White', 'BCP', 29), s => s.allocate('Blue-White', 'Black', -5),
+      s => s.allocate('Pink-White', 'BCP', 6), s => s.allocate('Pink-White', 'Black', 10)
+    ];
+    const { p } = await both(processId, negative);
+    expect(App.Production.allocationBlockingError()).toContain('negative');
+    expect(p.model.allocationError()).toContain('negative');
   });
 });
 
@@ -593,12 +660,14 @@ describe('what the port had to get right', () => {
     expect(phone.componentsConsumed.some(l => l.itemName === 'Primer' && l.qty === 4.375)).toBe(true);
   });
 
-  test('the phone keeps a per-colour line\'s unit, which desktop drops', async () => {
+  test('a per-colour line keeps its recipe unit, on both', async () => {
+    // Desktop used to drop it, and the server read the Kg quantity as the
+    // item's base unit.
     const [processId, steps] = FLOWS['flat colours: per-colour parts, a common part overridden for one colour, a shared item, a one-colour pool part'];
     const { phone, desktop } = await both(processId, steps);
     const pick = r => r.componentsConsumed.find(l => l.itemName === 'Paint(Gloss) Red');
     expect(pick(phone).unit).toBe('Kg');
-    expect(pick(desktop).unit).toBeUndefined();
+    expect(pick(desktop).unit).toBe('Kg');
   });
 });
 
@@ -647,14 +716,43 @@ describe('editing a lot', () => {
   });
 
   test('a lot whose process still has no Primary opens with the one it was saved with', async () => {
-    // Desktop asks again on every such edit, with the lot's own answer
-    // sitting in its breakdown; the phone reads it from there.
+    // The lot's own answer sits in its breakdown, and both read it from
+    // there rather than asking again on every edit.
     const [processId, steps] = FLOWS['two axes with no Primary yet, then a split the grid has to record'];
     const lot = await savedLot(processId, steps);
+    const d = await desktopOpen(processId, lot);
+    const picked = $$('#productionColorChecklist input[name="productionPrimaryAxisPick"]').find(r => r.checked);
+    expect(picked && picked.value).toBe('pool:painted frame 26');
+    expect(d.result().colorBreakdown).toEqual(lot.colorBreakdown);
     const p = phoneOpen(processId, lot);
     expect(p.model.primaryKey).toBe('pool:painted frame 26');
     expect(p.result().colorBreakdown).toEqual(lot.colorBreakdown);
     expect(p.model.validate()).toBe('');
+  });
+
+  test('a lot opens on the group it was saved with, after the process default moved', async () => {
+    // Every save writes its Primary back onto the process, so a later lot
+    // that picked the rims moves the default under this one. Opened on the
+    // rims, this lot of 40 frames totalled its rim rows instead -- and a
+    // save to fix a remark recounted it that way.
+    const [processId, steps] = FLOWS['two axes with no Primary yet, then a split the grid has to record'];
+    const lot = await savedLot(processId, steps);
+    const axes = PROCESSES[processId].axes;
+    const before = { key: axes.primaryAxisKey, isDefault: axes.primaryIsDefault };
+    axes.primaryAxisKey = 'tag:rim color';
+    axes.primaryIsDefault = false;
+    try {
+      const d = await desktopOpen(processId, lot);
+      const picked = $$('#productionColorChecklist input[name="productionPrimaryAxisPick"]').find(r => r.checked);
+      expect(picked && picked.value).toBe('pool:painted frame 26');
+      expect(d.result().colorBreakdown).toEqual(lot.colorBreakdown);
+      const p = phoneOpen(processId, lot);
+      expect(p.model.primaryKey).toBe('pool:painted frame 26');
+      expect(p.result().colorBreakdown).toEqual(lot.colorBreakdown);
+    } finally {
+      axes.primaryAxisKey = before.key;
+      axes.primaryIsDefault = before.isDefault;
+    }
   });
 
   test('a changed quantity moves the recipe\'s lines with it, as desktop\'s does', async () => {

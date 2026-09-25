@@ -231,3 +231,131 @@ describe('A colour on both a counting and a non-counting axis', () => {
     expect(App.Production._totalQtyForColorName('Orange-White')).toBe(7);
   });
 });
+
+// The same pairing, with a secondary colour that more than one primary colour
+// names -- and the ways a secondary row leaves the lot again.
+describe('A secondary colour paired with its primary colours', () => {
+  function mountWith(frames, rims) {
+    mount();
+    document.getElementById('productionColorChecklist').innerHTML = '';
+    App.Production.renderColorChecklistRows(frames, FRAME_AXIS, false, true);
+    App.Production.renderColorChecklistRows(rims, RIM_AXIS, false, false);
+  }
+
+  async function checkAt(color, qty) {
+    await check(color);
+    typeQty(color, qty);
+  }
+
+  const checked = color => rowFor(color).querySelector('.production-color-check').checked;
+
+  test('takes every primary colour it pairs with, not just the first', async () => {
+    mountWith(['Blue-White', 'Red-White', 'Red-Black'], ['White', 'Black']);
+    await checkAt('Blue-White', 10);
+    await checkAt('Red-White', 5);
+    await checkAt('Red-Black', 7);
+
+    // Both rims were ticked by the frames that name them, so the rim axis is
+    // split per colour. White goes on the Blue-White AND the Red-White frames:
+    // 15, where taking the first match gave 10 and left the rims short of
+    // the 22 frames.
+    expect(qtyOf('White')).toBe('15');
+    expect(qtyOf('Black')).toBe('7');
+  });
+
+  test('an exact colour name wins over one it is only a word of', async () => {
+    mountWith(['Sky Blue', 'Blue'], ['Blue', 'Grey']);
+    await checkAt('Sky Blue', 4);
+    await checkAt('Blue', 9);
+
+    expect(App.Production._matchingPrimaryColorQty('Blue')).toBe(9);
+  });
+
+  test('unticking one primary keeps a secondary another ticked primary still pairs with', async () => {
+    mountWith(['Blue-White', 'Red-White'], ['White', 'Black']);
+    await checkAt('Blue-White', 10);
+    await checkAt('Red-White', 5);
+    expect(checked('White')).toBe(true);
+
+    await uncheck('Blue-White');
+
+    // The Red-White frames still have white rims -- and the rims' parts
+    // column with them.
+    expect(checked('White')).toBe(true);
+    expect(qtyOf('White')).toBe('5');
+  });
+
+  test('unticking one primary keeps a secondary the operator typed', async () => {
+    mountWith(['Blue-White', 'Green'], ['White', 'Black']);
+    await checkAt('Blue-White', 10);
+    await checkAt('Green', 10);
+    typeQty('White', 20); // every frame got a white rim, whatever its colour
+
+    await uncheck('Blue-White');
+
+    expect(checked('White')).toBe(true);
+    expect(qtyOf('White')).toBe('20');
+  });
+
+  test('unticking the only primary a secondary pairs with still takes it off', async () => {
+    // The cascade's own tick is still undone -- unchanged behaviour.
+    mountWith(['Blue-White', 'Green'], ['White', 'Black']);
+    await checkAt('Blue-White', 10);
+    await checkAt('Green', 5);
+    expect(checked('White')).toBe(true);
+
+    await uncheck('Blue-White');
+
+    expect(checked('White')).toBe(false);
+    expect(qtyOf('White')).toBe('');
+  });
+});
+
+describe('"Select all" on a secondary group fills by the same rule as a single tick', () => {
+  function mountWithGroupHeader(frames, rims) {
+    mount();
+    const list = document.getElementById('productionColorChecklist');
+    list.innerHTML = '';
+    App.Production.renderColorChecklistRows(frames, FRAME_AXIS, false, true);
+    list.insertAdjacentHTML('beforeend', App.Production._buildColorGroupHeader(RIM_AXIS, 'Fitted Rim'));
+    App.Production.renderColorChecklistRows(rims, RIM_AXIS, false, false);
+  }
+
+  async function selectAll(on = true) {
+    const master = document.querySelector(`[data-group-master="${RIM_AXIS}"]`);
+    master.checked = on;
+    await App.Production.toggleColorGroup(master, RIM_AXIS);
+  }
+
+  test('a one-colour group takes the whole lot, not the frame it shares a word with', async () => {
+    mountWithGroupHeader(['Blue-White', 'Red-Black', 'Green'], ['Black']);
+    for (const [c, q] of [['Blue-White', 10], ['Red-Black', 7], ['Green', 5]]) {
+      await check(c);
+      typeQty(c, q);
+    }
+    // Checking Red-Black ticked Black by itself (it names it); start clean
+    // so "Select all" is what ticks it.
+    await uncheck('Black');
+
+    await selectAll();
+
+    // Was 7 -- this path used the old matched-first rule.
+    expect(qtyOf('Black')).toBe('22');
+  });
+
+  test('a rim ticked beforehand moves onto its pairing once "Select all" adds a second', async () => {
+    mountWithGroupHeader(['Blue-White', 'Red-Black', 'Green'], ['Black', 'White']);
+    for (const [c, q] of [['Blue-White', 10], ['Red-Black', 7], ['Green', 5]]) {
+      await check(c);
+      typeQty(c, q);
+    }
+    await uncheck('White');
+    expect(qtyOf('Black')).toBe('22'); // alone on its axis: the whole lot
+
+    await selectAll();
+
+    // Two rims ticked: each tracks the frames it pairs with.
+    expect(qtyOf('Black')).toBe('7');
+    expect(qtyOf('White')).toBe('10');
+  });
+});

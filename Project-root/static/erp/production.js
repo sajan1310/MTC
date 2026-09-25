@@ -1193,7 +1193,10 @@ App.Production = {
   _axisQualifierLabel(axisKey) {
     const key = String(axisKey || '').trim();
     if (!key) return '';
-    const m = key.match(/^(pool|tag):(.+)$/i);
+    // Every prefix an axis key can carry: computed axes (pool:, tag:,
+    // merged:) and the form's own-output group (own:). The last two used to
+    // come through verbatim, as "merged:frame, rim".
+    const m = key.match(/^(pool|tag|merged|own):(.+)$/i);
     return m ? m[2] : key;
   },
 
@@ -1258,7 +1261,7 @@ App.Production = {
     <td><strong>${escapeHtml(processLabel)}</strong><br><span class="badge bg-secondary">${escapeHtml(p.lotNumber || '-')}</span></td>
     <td>${escapeHtml(p.outputItemName || '-')}${colorBadges ? `<br>${colorBadges}` : ''}</td>
     <td>${p.productId ? `<span class="badge bg-dark fs-6 shadow-sm">${escapeHtml(p.productId)}</span><br>${escapeHtml(p.productName || '')}` : '<span class="text-muted">—</span>'}</td>
-    <td class="text-center fw-bold">${escapeHtml(String(p.qty))} Units</td>
+    <td class="text-center fw-bold">${escapeHtml(this.formatQty(p.qty))} Units</td>
     <td>${escapeHtml(App.Utils.formatNameCase(p.assignedBy) || '-')}</td>
     <td>${escapeHtml(App.Utils.formatNameCase(p.assignedTo) || '-')}${p.contractorPayable ? `<br><span class="badge bg-light text-dark border">${formatCurrency(p.contractorPayable)}</span>` : ''}${p.extraChargeType ? `<br><span class="badge" style="background-color:#ffc107;color:#000;" title="Extra charge included in Total Payable above">${escapeHtml(p.extraChargeType)}</span>` : ''}</td>
     <td class="text-center">
@@ -1996,7 +1999,7 @@ App.Production = {
     }
   },
 
-  _refreshCustomColorGroupSelect() {
+  _refreshCustomColorGroupSelect({ keepSelection = false } = {}) {
     const sel = document.getElementById('productionCustomColorGroupSelect');
     if (!sel) return;
     const options = this._customColorGroupOptions || [];
@@ -2013,8 +2016,15 @@ App.Production = {
     // match the label (see addCustomColorRow); both now say "recorded
     // separately". To make an extra color count, file it into the Primary
     // group in this same picker.
+    //
+    // `keepSelection` is for a Primary change (the "(Primary)" suffix moves
+    // with it): the groups are the same ones, so a group the operator had
+    // already chosen here stays chosen. A reload for a different process
+    // starts the picker afresh, as it always has.
+    const previous = keepSelection ? sel.value : '';
     sel.innerHTML = '<option value="">Independent extra color (recorded separately — does not add to the lot total)</option>'
       + options.map(o => `<option value="${escapeHtml(o.key)}">${escapeHtml(o.label)}${o.isPrimary ? ' (Primary)' : ''}</option>`).join('');
+    if (previous && options.some(o => o.key === previous)) sel.value = previous;
   },
 
   _colorRowHtml(color, groupKey, isCustom, isPrimary) {
@@ -2273,17 +2283,27 @@ App.Production = {
     return matched !== null ? matched : this._primaryColorAxisTotal();
   },
 
+  // How many of the lot's units a secondary colour pairs with: the checked
+  // PRIMARY colours it name-matches, or null when none does.
+  //
+  // Every match counts, not just the first one found: White rims go on the
+  // Blue-White frames AND the Red-White ones, so 10 + 5 frames need 15 rims --
+  // taking the first match filled 10 and under-recorded the rims' own parts.
+  // A primary colour that IS the secondary colour, exactly, wins over ones
+  // that merely contain it as a word, since _colorNamesMatch also matches on
+  // whitespace-separated words: a "Blue" rim beside "Sky Blue" (4) and "Blue"
+  // (9) frames belongs with the 9, not with whichever row came first.
   _matchingPrimaryColorQty(nonPrimaryColor) {
     const target = String(nonPrimaryColor || '').trim();
     if (!target) return null;
     const primaryRows = $$('#productionColorChecklist .production-color-row[data-primary="true"]')
       .filter(row => row.querySelector('.production-color-check')?.checked);
-    for (const row of primaryRows) {
-      if (this._colorNamesMatch(row.dataset.color, target)) {
-        return toNumber(row.querySelector('.production-color-qty')?.value) || 0;
-      }
-    }
-    return null;
+    const exact = primaryRows.filter(row => App.Utils.sameColor(row.dataset.color, target));
+    const matched = exact.length > 0
+      ? exact
+      : primaryRows.filter(row => this._colorNamesMatch(row.dataset.color, target));
+    if (matched.length === 0) return null;
+    return matched.reduce((sum, row) => sum + (toNumber(row.querySelector('.production-color-qty')?.value) || 0), 0);
   },
 
   // Finds which Per-Process Pool Components table def (see
@@ -2414,9 +2434,7 @@ App.Production = {
           qtyInput.value = '';
           delete row.dataset.autoSynced;
         } else if (row.dataset.primary === 'false') {
-          const matched = this._matchingPrimaryColorQty(row.dataset.color);
-          const fillQty = matched !== null ? matched : this._primaryColorAxisTotal();
-          if (fillQty > 0) qtyInput.value = this.formatQty(fillQty);
+          // Filled once the whole group is ticked -- see below.
           row.dataset.autoSynced = 'true';
         }
       }
@@ -2425,6 +2443,17 @@ App.Production = {
     });
 
     if (toggledColors.length === 0) return;
+
+    // What a secondary row is filled with depends on how many rows are ticked
+    // on its own axis (_nonPrimaryFillQty): one means the whole lot, two or
+    // more means each tracks the primary colour it pairs with. This path used
+    // its own older rule instead, row by row, so a one-colour rim group ticked
+    // with "Select all" took the 7 of the one frame colour it shares a word
+    // with rather than the lot's 42, and a sibling ticked beforehand kept the
+    // whole-lot figure it no longer had. Settled here, once the count is
+    // final, through the same re-flow a single toggle ends with -- before the
+    // matrix below is filled, so its cells scale off the settled figures.
+    this._refreshAutoSyncedFallbackRows();
 
     const processId = document.getElementById('productionProcessId')?.value;
     if (checked) {
@@ -2452,6 +2481,11 @@ App.Production = {
     if (toggledPrimaryColors.length > 0) this._refreshAutoSyncedFallbackRows();
 
     this._pruneRedundantMatrixColumns();
+    // From the settled checklist, as the single-toggle path does. "Select
+    // all" on a secondary group is the most direct way to put two or more
+    // colours on one axis -- exactly the case the grid exists for -- and it
+    // used to leave the grid undrawn.
+    this.refreshAllocationGrid();
     await this.refreshPoolAvailability();
   },
 
@@ -2795,10 +2829,22 @@ App.Production = {
       </div>`;
   },
 
-  async setPrimaryColorAxisChoice(radioEl) {
-    const axisKey = radioEl.value;
+  // Makes `axisKey` the Primary group: its rows count toward the lot total,
+  // every other group's rows are recorded per colour. The designation half
+  // of setPrimaryColorAxisChoice, split out so openEditModal can put back the
+  // Primary a lot was SAVED with (see _restoreLotPrimaryAxis) without also
+  // re-deriving the Per-Color Components table from the recipe -- on that
+  // path the table holds what the lot recorded, and re-deriving it would
+  // overwrite that.
+  _applyPrimaryAxisDesignation(axisKey) {
     $$('#productionColorChecklist .production-color-row[data-group]').forEach(row => {
-      row.dataset.primary = row.dataset.group === axisKey ? 'true' : 'false';
+      const isPrimary = row.dataset.group === axisKey;
+      row.dataset.primary = isPrimary ? 'true' : 'false';
+      // A row that was following the lot keeps the number it showed: it is
+      // becoming a counting row, and counting rows hold what they hold. Left
+      // flagged, it would start following the lot again the moment Primary
+      // moved back. Same rule as the phone's LotModel.setPrimary.
+      if (isPrimary) delete row.dataset.autoSynced;
     });
     document.querySelectorAll('#productionColorChecklist .axis-group-label').forEach(labelEl => {
       const ownRadio = labelEl.closest('div')?.querySelector('input[name="productionPrimaryAxisPick"]');
@@ -2808,10 +2854,30 @@ App.Production = {
       // of being stripped off the first time the operator changes it.
       labelEl.textContent = this._axisGroupHeadingText(label, !!ownRadio?.checked);
     });
+    // The group options follow the pick too. They are where addCustomColorRow
+    // reads a group's role from, and they used to keep the role each group
+    // had when the checklist was drawn: a colour filed into a group picked as
+    // Primary afterwards was recorded as a sub-group and never counted, and
+    // one filed into the group that had just stopped being Primary still did.
+    (this._customColorGroupOptions || []).forEach(opt => { opt.isPrimary = opt.key === axisKey; });
+    this._refreshCustomColorGroupSelect({ keepSelection: true });
     const warning = document.getElementById('productionPrimaryAxisWarning');
     if (warning) warning.remove();
+  },
+
+  async setPrimaryColorAxisChoice(radioEl) {
+    this._applyPrimaryAxisDesignation(radioEl.value);
+    // The secondary rows that follow the lot follow the PRIMARY group, which
+    // just changed -- re-flowed here rather than on the next unrelated
+    // toggle, so they never show figures derived from the old Primary.
+    this._refreshAutoSyncedFallbackRows();
     this.refreshCommonSuggestedQty();
     this.refreshPayableHint();
+    // Which colours count is exactly what the allocation grid is built from:
+    // the primary rows become its rows and a split secondary axis its
+    // columns. Left alone, the grid (and the cached shape the save validates
+    // and sends) kept describing the old Primary.
+    this.refreshAllocationGrid();
 
     // Which colours count just changed, and with it what every checked
     // colour's column carries: a colour that now counts takes the common
@@ -2833,6 +2899,40 @@ App.Production = {
     // new Primary axis's colors but never getting pruned.
     this._pruneRedundantMatrixColumns();
     await this.refreshPoolAvailability();
+  },
+
+  // Puts back the Primary group a saved lot was recorded with, read off its
+  // own colorBreakdown (the counting rows' axisKey) -- not whichever group
+  // the process defaults to today.
+  //
+  // save_production writes every lot's Primary pick back onto the process,
+  // so the default moves whenever a later lot picks differently. Reopening
+  // an earlier lot then rendered the OTHER group as Primary and totalled
+  // it: a lot saved as 40 on its rims reopened as 80 on its frames, and
+  // saving it again -- to fix a remark -- recounted it that way, payable
+  // included. The phone's LotModel.restore already reads the lot's pick
+  // from the same place.
+  //
+  // Only an unambiguous record is honoured: counting rows that all belong to
+  // ONE pickable group. A lot whose counting rows span several groups (history
+  // from before one group had to be chosen) keeps the process default, which
+  // is what it always opened with.
+  _restoreLotPrimaryAxis(breakdown) {
+    const radios = $$('#productionColorChecklist input[name="productionPrimaryAxisPick"]');
+    if (radios.length === 0) return;
+    const sameKey = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+    const recorded = new Set();
+    (breakdown || [])
+      .filter(entry => entry && entry.countsTowardTotal !== false && entry.axisKey)
+      .forEach(entry => {
+        const radio = radios.find(r => sameKey(r.value, entry.axisKey));
+        if (radio) recorded.add(radio);
+      });
+    if (recorded.size !== 1) return;
+    const [radio] = recorded;
+    if (radio.checked) return;
+    radio.checked = true;
+    this._applyPrimaryAxisDesignation(radio.value);
   },
 
   _syncColorGroupMasterCheckbox(groupKey) {
@@ -3020,6 +3120,15 @@ App.Production = {
     for (const row of matches) {
       const chk = row.querySelector('.production-color-check');
       if (!chk || chk.checked === checked) continue;
+      // Unticking only undoes what this cascade itself did. A row the operator
+      // typed a quantity into is theirs, and a row another still-ticked
+      // primary colour pairs with is still needed: unticking the Blue-White
+      // frames used to take the White rims off a lot still producing
+      // Red-White ones, and with them the rim parts' column.
+      if (!checked) {
+        if (row.dataset.autoSynced !== 'true') continue;
+        if (this._matchingPrimaryColorQty(row.dataset.color) !== null) continue;
+      }
       chk.checked = checked;
       if (checked) row.dataset.autoSynced = 'true'; else delete row.dataset.autoSynced;
       await this.handleColorCheckToggle(chk, false);
@@ -3097,7 +3206,7 @@ App.Production = {
         const cell = matrixRow.children[colIndex];
         const input = cell?.querySelector('.matrix-qty');
         const qtyPerUnit = input?.dataset.qtyPerUnit;
-        if (input && qtyPerUnit !== undefined && qtyPerUnit !== '') {
+        if (input && !this._isManualQty(input) && qtyPerUnit !== undefined && qtyPerUnit !== '') {
           input.value = this.formatQty(totalQty * toNumber(qtyPerUnit));
         }
       });
@@ -3260,9 +3369,24 @@ App.Production = {
     }
     table.style.display = '';
 
-    const axisLabel = this._axisQualifierLabel(shape.axisKey) || 'the second sub-group';
+    // The group's own name where this checklist has one -- a pool-cluster key
+    // such as "group_2" means nothing to the operator.
+    const groupOption = (this._customColorGroupOptions || []).find(o => o.key === shape.axisKey);
+    const axisLabel = (groupOption && groupOption.label) || this._axisQualifierLabel(shape.axisKey) || 'the second sub-group';
     help.innerText = `This batch has ${shape.columns.length} ${axisLabel} colours checked, so the quantities alone `
       + `can't say which went with which. Enter how many of each colour below used each one.`;
+    // The grid divides the lot, so it can only be completed truthfully when
+    // those colours' own quantities add up to the lot. When they don't, the
+    // grid is not the fix, and saying so is the only way the operator finds
+    // out -- the row checks below would otherwise just demand numbers that
+    // cannot all be true.
+    const lotTotal = shape.primaries.reduce((sum, p) => sum + p.qty, 0);
+    const columnTotal = shape.columns.reduce((sum, c) => sum + c.qty, 0);
+    if (Math.abs(columnTotal - lotTotal) >= 0.0001) {
+      help.innerText += ` Note: the ${axisLabel} quantities checked above add up to ${this.formatQty(columnTotal)}, `
+        + `but the lot is ${this.formatQty(lotTotal)}. If one of them is mistyped, correct it above; if some units `
+        + `took more than one of these, log those units as a lot of their own.`;
+    }
 
     this._allocationValues = this._allocationValues || {};
     const cell = (p, c) => escapeHtml(this._allocationValues[this._allocationCellKey(p.color, c.color)] ?? '');
@@ -3313,8 +3437,13 @@ App.Production = {
       const row = rows.find(r => r.dataset.primaryColor === p.color);
       const total = shape.columns.reduce((sum, c) =>
         sum + (toNumber(values[this._allocationCellKey(p.color, c.color)]) || 0), 0);
-      const ok = Math.abs(total - p.qty) < 0.0001;
-      if (!ok) problems.push(`${p.color}: ${this.formatQty(total)} of ${this.formatQty(p.qty)}`);
+      // Same rule allocationBlockingError enforces: a row that adds up with a
+      // cell below zero is still wrong, and must not be painted as complete.
+      const hasNegative = shape.columns.some(c =>
+        (toNumber(values[this._allocationCellKey(p.color, c.color)]) || 0) < 0);
+      const ok = !hasNegative && Math.abs(total - p.qty) < 0.0001;
+      if (hasNegative) problems.push(`${p.color}: a cell is below zero`);
+      else if (!ok) problems.push(`${p.color}: ${this.formatQty(total)} of ${this.formatQty(p.qty)}`);
       const totalCell = row?.querySelector('.production-allocation-rowtotal');
       if (totalCell) {
         totalCell.innerText = this.formatQty(total);
@@ -3341,16 +3470,34 @@ App.Production = {
 
     statusEl.innerHTML = problems.length === 0
       ? '<span class="text-success fw-bold">✓ Allocation complete.</span>'
-      : `<span class="text-danger fw-bold">Each row must add up to that colour's own quantity — ${escapeHtml(problems.join('; '))}.</span>`;
+      : `<span class="text-danger fw-bold">Each row must add up to that colour's own quantity, with no cell below zero — ${escapeHtml(problems.join('; '))}.</span>`;
   },
 
   // The blocking check saveProduction runs before submitting. Mirrors
   // production_service._validate_color_splits so the operator is stopped
   // here, with the grid still on screen, rather than by a server error.
+  //
+  // Worked out from the checklist as it stands, not from the shape the grid
+  // was last drawn with. "Select all" and a Primary change used to leave that
+  // cached shape describing an older checklist, so a lot that needed an
+  // allocation could pass this check without one -- and the Warehouse Pool
+  // then credited bare single-colour buckets, the phantom stock this grid
+  // exists to prevent. The phone's LotModel.allocationError works the shape
+  // out fresh the same way.
   allocationBlockingError() {
-    const shape = this._allocationShapeCache;
+    const shape = this._allocationShape();
     if (!shape || shape.tooMany) return '';
     const values = this._allocationValues || {};
+    // A cell says how many of the row's units went with one column colour,
+    // so it cannot be negative: a row of 10 split as -5 and 15 adds up, and
+    // would have put -5 into a real pool bucket. The server refuses it too.
+    const negative = shape.primaries.filter(p => shape.columns.some(c =>
+      (toNumber(values[this._allocationCellKey(p.color, c.color)]) || 0) < 0));
+    if (negative.length > 0) {
+      return 'Colour allocation has a negative quantity for '
+        + negative.map(p => `"${p.color}"`).join(', ')
+        + ' — each cell is how many of that colour went with that column, so it cannot be below zero.';
+    }
     const bad = shape.primaries.filter(p => {
       const total = shape.columns.reduce((sum, c) =>
         sum + (toNumber(values[this._allocationCellKey(p.color, c.color)]) || 0), 0);
@@ -3362,8 +3509,10 @@ App.Production = {
       + ' — each row of the allocation grid must add up to that colour\'s own quantity.';
   },
 
-  _allocationSplitsFor(primaryColor) {
-    const shape = this._allocationShapeCache;
+  // `shape` is passed in by getCheckedColorQtys, which works it out once for
+  // every entry it builds; the fallback to the drawn grid's cache is only for
+  // a caller that has none.
+  _allocationSplitsFor(primaryColor, shape = this._allocationShapeCache) {
     if (!shape || shape.tooMany) return null;
     if (!shape.primaries.some(p => p.color === primaryColor)) return null;
     const values = this._allocationValues || {};
@@ -3382,9 +3531,13 @@ App.Production = {
   // A primary entry additionally carries `splits` whenever the allocation
   // grid is showing -- see _allocationSplitsFor.
   getCheckedColorQtys() {
+    // Live, for the same reason allocationBlockingError is: the splits sent
+    // with a lot must describe the checklist being saved, not the one the
+    // grid was last drawn for.
+    const shape = this._allocationShape();
     return this._rawCheckedColorQtys().map(entry => {
       if (!entry.countsTowardTotal) return entry;
-      const splits = this._allocationSplitsFor(entry.color);
+      const splits = this._allocationSplitsFor(entry.color, shape);
       return splits ? { ...entry, splits } : entry;
     });
   },
@@ -4255,6 +4408,7 @@ App.Production = {
     container.querySelectorAll('tr').forEach(row => this.destroyComponentItemSelect2(row));
     container.innerHTML = '';
     this._poolColorGroupDefs = [];
+    this._ensureManualQtyTracking();
 
     if (!rows || rows.length === 0) {
       if (wrapper) wrapper.style.display = 'none';
@@ -4406,6 +4560,11 @@ App.Production = {
   _poolCellQtyPerUnit(row, color) {
     if (!row) return undefined;
     const perColor = row.colorsQtyPerUnit ? row.colorsQtyPerUnit[String(color || '').toLowerCase()] : undefined;
+    // null: this colour HAS a saved figure but no rate it could be rescaled
+    // by (see populateComponentsConsumedDirect) -- so no rate at all, and the
+    // saved figure stays as it is. Borrowing the row's rate here would
+    // rescale it by another colour's.
+    if (perColor === null) return undefined;
     return perColor !== undefined ? perColor : row.qtyPerUnit;
   },
 
@@ -4430,8 +4589,9 @@ App.Production = {
         const qtyPerUnitAttr = (cellQtyPerUnit !== undefined) ? ` data-qty-per-unit="${cellQtyPerUnit}"` : '';
         return `<td><input type="number" class="form-control text-end matrix-qty pool-group-qty" data-color="${escapeHtml(col)}"${qtyPerUnitAttr} min="0" step="any" value="${display}"></td>`;
       }).join('');
+      const unitAttr = r.unit ? ` data-unit="${escapeHtml(r.unit)}"` : '';
       return `
-        <tr id="${rowId}" data-row-idx="${rowIdx}">
+        <tr id="${rowId}" data-row-idx="${rowIdx}"${unitAttr}>
           ${this._dragCellHtml()}
           <td>
             <select class="form-select prod-comp-item-select" required>
@@ -4593,8 +4753,79 @@ App.Production = {
       const qtyPerUnit = row.dataset.qtyPerUnit;
       if (qtyPerUnit === undefined || qtyPerUnit === '') return;
       const qtyInput = row.querySelector('.prod-comp-qty');
-      if (qtyInput) qtyInput.value = this.formatQty(multiplier * toNumber(qtyPerUnit));
+      if (qtyInput && !this._isManualQty(qtyInput)) qtyInput.value = this.formatQty(multiplier * toNumber(qtyPerUnit));
     });
+  },
+
+  // ── Hand-typed component quantities ───────────────────────────────────
+  // Every component quantity in this form starts out derived -- the recipe's
+  // qty-per-unit times the lot's quantity -- and is re-derived whenever the
+  // checklist changes: _applyQtyPerUnit for Common rows, onColorQtyChanged
+  // for Per-Color cells, refreshPoolColorGroupCells for Pool cells. A figure
+  // the operator TYPES is not derived; it is what was actually used. The next
+  // checklist edit used to put the recipe figure straight back over it,
+  // silently. A typed quantity is now marked and left alone by every one of
+  // those paths -- the rule the checklist's own secondary rows already follow
+  // (autoSynced), and the one the phone's Log Lot form keeps for a typed
+  // line. Emptying the box hands it back to the recipe.
+  _ensureManualQtyTracking() {
+    [
+      ['productionComponentsBody', '.prod-comp-qty'],
+      ['productionColorMatrixBody', '.matrix-qty'],
+      ['productionPoolColorGroupsContainer', '.pool-group-qty'],
+    ].forEach(([hostId, selector]) => {
+      const host = document.getElementById(hostId);
+      if (!host || host.dataset.manualQtyBound === 'true') return;
+      host.dataset.manualQtyBound = 'true';
+      host.addEventListener('input', e => {
+        if (e.target?.matches?.(selector)) this._markManualQty(e.target);
+      });
+      // Emptied and left: the recipe figure comes back straight away rather
+      // than on some later, unrelated edit -- a blank Common row would
+      // otherwise block the save as a required field in the meantime.
+      host.addEventListener('change', e => {
+        if (e.target?.matches?.(selector) && String(e.target.value).trim() === '') {
+          this._refillDerivedQty(e.target);
+        }
+      });
+    });
+  },
+
+  _markManualQty(input) {
+    if (String(input.value).trim() === '') {
+      delete input.dataset.manualQty;
+      input.classList.remove('prod-qty-manual');
+      input.removeAttribute('title');
+      return;
+    }
+    input.dataset.manualQty = 'true';
+    input.classList.add('prod-qty-manual');
+    input.title = 'Typed by hand — kept as entered when the lot\'s colours or quantities change. Empty it to go back to the recipe quantity.';
+  },
+
+  _isManualQty(input) {
+    return !!input && input.dataset.manualQty === 'true';
+  },
+
+  // Puts the recipe-derived figure back into one emptied quantity box, by the
+  // same path that keeps that kind of box up to date.
+  _refillDerivedQty(input) {
+    if (input.classList.contains('pool-group-qty')) {
+      this.refreshPoolColorGroupCells(input.closest('table')?.dataset.axisKey || '');
+      return;
+    }
+    if (input.classList.contains('prod-comp-qty')) {
+      this._applyQtyPerUnit('#productionComponentsBody tr', this._currentComponentQtyMultiplier());
+      return;
+    }
+    const cell = input.closest('td');
+    const row = cell?.parentElement;
+    const qtyPerUnit = input.dataset.qtyPerUnit;
+    if (!row || qtyPerUnit === undefined || qtyPerUnit === '') return;
+    const color = document.getElementById('productionColorMatrixHeaderRow')
+      ?.children[Array.from(row.children).indexOf(cell)]?.dataset.color;
+    if (!color) return;
+    input.value = this.formatQty(this._totalQtyForColorName(color) * toNumber(qtyPerUnit));
   },
 
   // Live preview of this lot's own combined output identity, mirroring the
@@ -5220,6 +5451,7 @@ App.Production = {
     if (this.getMatrixColumnIndex(color) !== -1) return;
     const headerRow = document.getElementById('productionColorMatrixHeaderRow');
     if (!headerRow) return;
+    this._ensureManualQtyTracking();
 
     const th = document.createElement('th');
     // Matches the scope the partial's own static headers carry -- without
@@ -5301,6 +5533,9 @@ App.Production = {
   // stamps the cells it fills with data-recipe-cell). A cell the operator
   // filled in by hand carries no stamp and is never touched here.
   _clearRecipeCell(cell) {
+    // A quantity typed into the cell makes it the operator's, recipe stamp or
+    // not -- see _markManualQty.
+    if (this._isManualQty(cell.querySelector('.matrix-qty'))) return;
     const selectEl = cell.querySelector('.prod-comp-item-select');
     if (selectEl) {
       selectEl.innerHTML = '<option value=""></option>';
@@ -5315,6 +5550,7 @@ App.Production = {
     }
     delete cell.dataset.recipeCell;
     delete cell.dataset.recipeColorGroup;
+    delete cell.dataset.unit;
   },
 
   // The checked secondary-only colours that share a colour token with any
@@ -5675,10 +5911,15 @@ App.Production = {
     return rowEl;
   },
 
+  // Returns whether the cell was written: a cell whose quantity the operator
+  // typed is theirs (see _markManualQty), so a recipe re-fill leaves its item
+  // and quantity exactly as they are -- and the caller must not stamp it as a
+  // recipe cell either, or a later prune could clear it.
   _setMergedCellItem(cell, itemComp, qty, qtyPerUnit) {
-    if (!cell) return;
+    if (!cell) return false;
     const selectEl = cell.querySelector('.prod-comp-item-select');
     const qtyInput = cell.querySelector('.matrix-qty');
+    if (this._isManualQty(qtyInput)) return false;
 
     if (selectEl) {
       const sourceType = (itemComp.sourceType === 'POOL') ? 'POOL' : 'ITEM';
@@ -5689,9 +5930,21 @@ App.Production = {
       }
     }
     if (qtyInput) {
+      // No rate means this figure must not be rescaled (see
+      // populateComponentsConsumedDirect): an earlier fill's rate is removed
+      // rather than left to multiply a quantity it never described.
       if (qtyPerUnit !== undefined) qtyInput.dataset.qtyPerUnit = qtyPerUnit;
+      else delete qtyInput.dataset.qtyPerUnit;
       qtyInput.value = qty !== undefined ? this.formatQty(qty) : '';
     }
+    // The recipe row's (or the saved line's) unit, carried to
+    // serializeColorMatrix. The quantity above is in THAT unit -- a recipe of
+    // 2 Dozen per unit fills 20 for 10 units, meaning 20 Dozen -- and a line
+    // sent without it is read by the server as the item's base unit, so a
+    // Dozen part was debited twelve times short. The phone has always sent it.
+    if (itemComp.unit) cell.dataset.unit = itemComp.unit;
+    else delete cell.dataset.unit;
+    return true;
   },
 
   handleMergedSourceChange(selectEl) {
@@ -5829,9 +6082,9 @@ App.Production = {
             if (!row) row = this.addMergedMatrixRow({ itemName: c.displayName, size: c.size, sourceType: c.sourceType, narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration) });
             const cell = row.children[colIndex];
             const qty = thisColorQty > 0 ? thisColorQty * c.qtyPerUnit : c.qtyPerUnit;
-            this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType, poolColor: c.poolColor }, qty, c.qtyPerUnit);
+            const filled = this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType, poolColor: c.poolColor, unit: c.unit }, qty, c.qtyPerUnit);
             // Filled from the recipe, not by hand -- see _clearRecipeCell.
-            if (cell) {
+            if (filled) {
               cell.dataset.recipeCell = 'color';
               cell.dataset.recipeColorGroup = c.colorGroup || '';
             }
@@ -5845,8 +6098,8 @@ App.Production = {
             if (!row) row = this.addMergedMatrixRow({ itemName: c.itemName, size: c.size, sourceType: c.sourceType, narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration) });
             const cell = row.children[colIndex];
             const qty = thisColorQty > 0 ? thisColorQty * c.qtyPerUnit : c.qtyPerUnit;
-            this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType, poolColor: c.poolColor }, qty, c.qtyPerUnit);
-            if (cell) {
+            const filled = this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType, poolColor: c.poolColor, unit: c.unit }, qty, c.qtyPerUnit);
+            if (filled) {
               cell.dataset.recipeCell = 'common';
               delete cell.dataset.recipeColorGroup;
             }
@@ -5888,7 +6141,7 @@ App.Production = {
       const checkedColorQtys = this._axisScopedCheckedColorQtys(tableAxisKey);
       table.querySelectorAll('.pool-group-qty').forEach(input => {
         const inputColorLower = String(input.dataset.color || '').trim().toLowerCase();
-        if (!inputColorLower) return;
+        if (!inputColorLower || this._isManualQty(input)) return;
         const qtyPerUnit = input.dataset.qtyPerUnit;
         if (qtyPerUnit === undefined || qtyPerUnit === '') return;
         const total = this._checkedQtyForPoolColor(inputColorLower, checkedColorQtys);
@@ -5940,7 +6193,12 @@ App.Production = {
         // bucket it came out of, and is only ever set when the operator
         // picked a specific one; blank means "the same color", which is
         // how every component written before this behaved and still does.
-        components.push({ itemName, size, narration, color: '', sourceType, qty, colorGroup: color, poolColor: sourceType === 'POOL' ? poolColor : '' });
+        //
+        // unit: what the quantity is measured in, as the recipe row (or the
+        // saved line) had it -- see _setMergedCellItem. Blank means "the
+        // item's base unit", exactly as before.
+        const unit = (isMerged ? cell?.dataset.unit : row.dataset.unit) || '';
+        components.push({ itemName, size, narration, color: '', sourceType, qty, colorGroup: color, poolColor: sourceType === 'POOL' ? poolColor : '', unit });
       });
     });
     return components;
@@ -5956,16 +6214,58 @@ App.Production = {
       if (!itemName) return;
       const size = row.querySelector('.prod-comp-size')?.value.trim() || '';
       const narration = row.querySelector('.prod-comp-narration')?.value.trim() || '';
+      // The recipe row's unit, as serializeColorMatrix sends one -- see there.
+      const unit = row.dataset.unit || '';
 
       row.querySelectorAll('.pool-group-qty').forEach(input => {
         const qty = toNumber(input.value);
         if (qty <= 0) return;
         const color = input.dataset.color || '';
         if (!color) return;
-        components.push({ itemName, size, narration, color: '', sourceType: 'POOL', qty, colorGroup: color });
+        components.push({ itemName, size, narration, color: '', sourceType: 'POOL', qty, colorGroup: color, unit });
       });
     });
     return components;
+  },
+
+  // The quantity a saved per-colour line was scaled from: its colour's own
+  // breakdown quantity. Exact name first -- and when a name sits on two axes
+  // (a Purple frame and a Purple rim), the COUNTING entry, the same rule
+  // _totalQtyForColorName scales these lines by afterwards; a bare find()
+  // took whichever came first, so a Purple rim of 20 halved the frame
+  // parts' rate. Failing an exact name, every entry the line's colour is one
+  // part of (a line saved under "Blue-White" on a "Blue-White / BCP" lot).
+  // 0 when nothing matches.
+  //
+  // sameColor rather than a raw toLowerCase() compare, and entries with no
+  // colour skipped: a malformed entry once crashed the whole Edit-Lot reopen
+  // here, and colour equality is decided in one place only.
+  _breakdownQtyForColorGroup(breakdown, colorGroup) {
+    const entries = (breakdown || []).filter(e => e && e.color);
+    const sumOf = list => {
+      const counting = list.filter(e => e.countsTowardTotal !== false);
+      return (counting.length > 0 ? counting : list).reduce((sum, e) => sum + (Number(e.qty) || 0), 0);
+    };
+    const exact = entries.filter(e => App.Utils.sameColor(e.color, colorGroup));
+    if (exact.length > 0) return sumOf(exact);
+    const partOf = entries.filter(e => this._matchedColorToken(colorGroup, e.color));
+    return partOf.length > 0 ? sumOf(partOf) : 0;
+  },
+
+  // col -> the part of `qty` that column carries: all of it for one column;
+  // across several, in proportion to each column's own quantity (evenly when
+  // none has one). Rounded like every other quantity in this form, with the
+  // last column taking the remainder, so the parts always add back up to the
+  // saved figure exactly. `cols` must name each column once.
+  _shareAcrossColumns(qty, cols, breakdown) {
+    if (cols.length <= 1) return () => qty;
+    const weights = cols.map(col => Math.max(0, this._breakdownQtyForColorGroup(breakdown, col)));
+    const weightTotal = weights.reduce((sum, w) => sum + w, 0);
+    const shares = cols.map((_, i) => Number(this.formatQty(
+      weightTotal > 0 ? qty * weights[i] / weightTotal : qty / cols.length)));
+    const allButLast = shares.slice(0, -1).reduce((sum, s) => sum + s, 0);
+    shares[shares.length - 1] = Number(this.formatQty(qty - allButLast));
+    return col => shares[cols.indexOf(col)];
   },
 
   // ── Edit-mode restoration for a lot whose saved Components Consumed
@@ -5983,6 +6283,7 @@ App.Production = {
   // Common-tagged row) is upgraded on the fly: its quantity is split
   // evenly across this lot's colors as a starting point, with a toast
   // telling the operator to adjust and re-save.
+
   async populateComponentsConsumedDirect(components, breakdown) {
     // `breakdown` is a colorBreakdown array -- {color, qty} objects, NOT
     // color-name strings. filter(Boolean) because an entry can legitimately
@@ -6016,18 +6317,19 @@ App.Production = {
     (components || []).forEach(c => {
       const colorGroup = c.colorGroup || 'COMMON';
 
-      let derivedQtyPerUnit = 1;
+      // The rate this saved line is rescaled by when a checklist quantity
+      // changes later in the edit: its saved qty per unit of the quantity it
+      // was scaled from. Left undefined when that quantity is unknown or not
+      // positive, so the line keeps its saved figure. It used to be 0 there --
+      // and the next checklist edit multiplied the saved figure by 0, which
+      // the serializers then dropped as "nothing consumed": the lot lost the
+      // line on its next save, silently.
+      let derivedQtyPerUnit;
       if (App.Utils.isCommonColorGroup(colorGroup)) {
-        derivedQtyPerUnit = lotTotalQty > 0 ? (c.qty / lotTotalQty) : 0;
+        if (lotTotalQty > 0) derivedQtyPerUnit = c.qty / lotTotalQty;
       } else {
-        // sameColor, not raw .toLowerCase() === : that crashed outright on a
-        // breakdown entry with no color (see the filter above), and bypassed
-        // the one place color equality is allowed to be decided. sameColor
-        // is null-safe, so a malformed entry now simply fails to match
-        // instead of taking down the whole Edit-Lot reopen.
-        const b = (breakdown || []).find(entry => App.Utils.sameColor(entry.color, colorGroup));
-        const colorQty = b ? b.qty : 0;
-        derivedQtyPerUnit = colorQty > 0 ? (c.qty / colorQty) : 0;
+        const colorQty = this._breakdownQtyForColorGroup(breakdown, colorGroup);
+        if (colorQty > 0) derivedQtyPerUnit = c.qty / colorQty;
       }
 
       const isPoolColorAware = c.sourceType === 'POOL'
@@ -6043,18 +6345,25 @@ App.Production = {
           // (a brand-new column checked mid-edit), not the value actually
           // used to redisplay/recompute any color that DOES have its own
           // entry below.
-          entry = { itemName: c.itemName, size: c.size, narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration), sourceType: c.sourceType, colorsQty: {}, colorsQtyPerUnit: {}, qtyPerUnit: derivedQtyPerUnit };
+          // `unit` is the saved line's own, carried back out unchanged by
+          // serializePoolColorGroups -- reopening and re-saving a lot must not
+          // rewrite what its recorded quantities are measured in.
+          entry = { itemName: c.itemName, size: c.size, narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration), sourceType: c.sourceType, colorsQty: {}, colorsQtyPerUnit: {}, qtyPerUnit: derivedQtyPerUnit, unit: c.unit || '' };
           poolGroupAccum.set(key, entry);
         } else if (entry.qtyPerUnit === undefined) {
           entry.qtyPerUnit = derivedQtyPerUnit;
         }
+        // null, not undefined, for a colour whose rate cannot be derived: it
+        // tells _poolCellQtyPerUnit "keep this figure as saved" rather than
+        // "no history, fall back to the row's rate".
+        const colorRate = derivedQtyPerUnit === undefined ? null : derivedQtyPerUnit;
 
         if (App.Utils.isCommonColorGroup(colorGroup)) {
           upgradedAny = true;
           const perColorQty = colors.length > 0 ? c.qty / colors.length : c.qty;
           colors.forEach(color => {
             entry.colorsQty[color.toLowerCase()] = perColorQty;
-            entry.colorsQtyPerUnit[color.toLowerCase()] = derivedQtyPerUnit;
+            entry.colorsQtyPerUnit[color.toLowerCase()] = colorRate;
           });
           entry.qtyPerUnit = derivedQtyPerUnit;
         } else {
@@ -6065,7 +6374,7 @@ App.Production = {
           // consumed at different rates (rounding, partial batches), and a
           // shared row-level ratio previously made editing one color's
           // checklist Qty silently recompute using a DIFFERENT color's rate.
-          entry.colorsQtyPerUnit[colorGroup.toLowerCase()] = derivedQtyPerUnit;
+          entry.colorsQtyPerUnit[colorGroup.toLowerCase()] = colorRate;
         }
         return;
       }
@@ -6086,7 +6395,7 @@ App.Production = {
           const colIndex = this.getMatrixColumnIndex(col);
           if (colIndex === -1) return;
           const cell = row.children[colIndex];
-          this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType, poolColor: c.poolColor }, perColorQty, derivedQtyPerUnit);
+          this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType, poolColor: c.poolColor, unit: c.unit }, perColorQty, derivedQtyPerUnit);
         });
         return;
       }
@@ -6159,11 +6468,29 @@ App.Production = {
       if (!row) row = this.addMergedMatrixRow({ itemName: displayName, size: rowData.size, narration: this._resolveDisplayNarration(primary.itemName, rowData.size, rowData.narration), sourceType: primary.__src.comp.sourceType });
       rowData.cells.forEach(cell => {
         const src = cell.__src;
-        src.matchedColors.forEach(col => {
-          const colIndex = this.getMatrixColumnIndex(col);
-          if (colIndex === -1) return;
-          const cellEl = row.children[colIndex];
-          this._setMergedCellItem(cellEl, { itemName: src.comp.itemName, size: src.comp.size, sourceType: src.comp.sourceType, poolColor: src.comp.poolColor }, src.comp.qty, src.derivedQtyPerUnit);
+        // A line saved under one PART of a composite colour ("BCP" on a lot
+        // of "Blue-White / BCP" and "Pink-White / BCP" frames) belongs to
+        // every column carrying that part -- but it recorded ONE quantity for
+        // all of them. Writing that full figure into each column counted it
+        // once per column when the lot was saved again, untouched. It is
+        // shared out in proportion to each column's own quantity instead,
+        // which is what the line's rate gives each column anyway the first
+        // time a quantity changes. A line that lands in one column -- every
+        // line desktop and the phone save today -- is written as saved.
+        // One entry per COLUMN: a colour name on two axes (a Purple frame and
+        // a Purple rim) appears twice in the breakdown but is one shared
+        // column, and must not be counted as two columns to share across.
+        const seenColumns = new Set();
+        const cols = src.matchedColors.filter(col => {
+          const index = this.getMatrixColumnIndex(col);
+          if (index === -1 || seenColumns.has(index)) return false;
+          seenColumns.add(index);
+          return true;
+        });
+        const shareOf = this._shareAcrossColumns(src.comp.qty, cols, breakdown);
+        cols.forEach(col => {
+          const cellEl = row.children[this.getMatrixColumnIndex(col)];
+          this._setMergedCellItem(cellEl, { itemName: src.comp.itemName, size: src.comp.size, sourceType: src.comp.sourceType, poolColor: src.comp.poolColor, unit: src.comp.unit }, shareOf(col), src.derivedQtyPerUnit);
         });
       });
     });
@@ -6188,7 +6515,12 @@ App.Production = {
             // starting estimate via _poolCellQtyPerUnit's row-level
             // fallback, instead of staying permanently blank until the
             // operator types directly into the pool cell.
-            poolGroupAccum.set(key, { itemName: c.itemName, size: c.size, narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration), sourceType: c.sourceType, colorsQty: {}, colorsQtyPerUnit: {}, qtyPerUnit: c.qtyPerUnit });
+            poolGroupAccum.set(key, { itemName: c.itemName, size: c.size, narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration), sourceType: c.sourceType, colorsQty: {}, colorsQtyPerUnit: {}, qtyPerUnit: c.qtyPerUnit, unit: c.unit || '' });
+          } else {
+            // A saved item whose own lines gave no usable rate still needs
+            // one for a colour ticked mid-edit -- the recipe's, as above.
+            const existing = poolGroupAccum.get(key);
+            if (existing.qtyPerUnit === undefined) existing.qtyPerUnit = c.qtyPerUnit;
           }
         });
     }
@@ -6332,6 +6664,7 @@ App.Production = {
     tbody.insertAdjacentHTML('beforeend', rowHtml);
     this.initComponentItemSelect2(document.getElementById(rowId));
     this._initRowSorting(tbody);
+    this._ensureManualQtyTracking();
   },
 
   removeComponentRow(rowId) {
@@ -6744,7 +7077,7 @@ App.Production = {
         hintEl.innerText = `No rate card entry for "${App.Utils.formatNameCase(contractorName)}" / ${process.processType || 'General'} / ${size} — Payable will be 0.`;
         return;
       }
-      let text = `Payable: ${formatCurrency(qty * (rate + extraChargeAmount))} (${qty} x ${rate}/unit`;
+      let text = `Payable: ${formatCurrency(qty * (rate + extraChargeAmount))} (${this.formatQty(qty)} x ${rate}/unit`;
       if (extraChargeType) text += ` + ${extraChargeType} ${formatCurrency(extraChargeAmount)}/unit`;
       text += ')';
       hintEl.innerText = text;
@@ -6950,6 +7283,10 @@ App.Production = {
       const breakdown = (p.colorBreakdown && p.colorBreakdown.length > 0)
         ? p.colorBreakdown
         : (p.color ? [{ color: p.color, qty: p.qty }] : []);
+
+      // Before any row is restored, so rows re-created below for a saved
+      // entry with no live row land with the right role too.
+      this._restoreLotPrimaryAxis(breakdown);
 
       const claimedRows = new Set();
       const touchedGroups = new Set();
@@ -8002,7 +8339,10 @@ document.addEventListener('DOMContentLoaded', function () {
       }
       // Stopped here, with the grid still on screen and the numbers still
       // editable, rather than by the equivalent server-side check in
-      // production_service._validate_color_splits.
+      // production_service._validate_color_splits. Redrawn first, from the
+      // checklist exactly as it is about to be saved, so a grid the last
+      // edit made necessary is on screen when the check below asks for it.
+      App.Production.refreshAllocationGrid();
       const allocationError = App.Production.allocationBlockingError();
       if (allocationError) {
         App.Utils.showToast(allocationError, true);
@@ -8023,7 +8363,13 @@ document.addEventListener('DOMContentLoaded', function () {
       formData.colorBreakdown = JSON.stringify(App.Production.getCheckedColorQtys());
       delete formData.qty;
       const primaryAxisRadio = document.querySelector('#productionColorChecklist input[name="productionPrimaryAxisPick"]:checked');
-      if (primaryAxisRadio) formData.primaryColorAxis = primaryAxisRadio.dataset.axisLabel || '';
+      if (primaryAxisRadio) {
+        formData.primaryColorAxis = primaryAxisRadio.dataset.axisLabel || '';
+        // The key is what identifies the group: two groups can share a label,
+        // and the own-output group has no server-side axis at all. The label
+        // still goes too -- it is what the process stores as its default.
+        formData.primaryColorAxisKey = primaryAxisRadio.value || '';
+      }
       formData.componentsConsumed = JSON.stringify([
         ...App.Production.serializeComponentsConsumed(),
         ...App.Production.serializeColorMatrix(),
