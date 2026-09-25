@@ -30,6 +30,7 @@ sudo /opt/mtc/src/Project-root/deploy/deploy.sh      # every release
 | `provision.sh` | — | Packages, timezone, PostgreSQL 17, Redis, nginx, unit. Idempotent. |
 | `deploy.sh` | — | Pull, sync venv, verify runtime, migrate, restart, health-check. |
 | `health.py` | `/usr/local/bin/mtc-health` | `/health` as a readable panel, plus unit states, disk, memory, load. |
+| `backup.sh` | `/usr/local/bin/mtc-backup` | One verified snapshot, now. Local dump only — not the Sheets sync. |
 | `mtc.service` | `/etc/systemd/system/` | gunicorn under systemd |
 | `wait-for-deps.sh` | — | Startup gate: blocks until Postgres and Redis actually accept connections. |
 | `offsite-pull.sh` | — | Runs on the laptop/NAS, not the server: fetches and verifies snapshots over Tailscale or a LAN. |
@@ -61,6 +62,28 @@ Exits 0 healthy · 1 wants attention · 2 the app is not answering, so it also
 works from cron. It reads `/health` for the application's own vitals and the
 host for unit states, root disk, memory and load — and still draws when the
 application is down, which is when it is worth having.
+
+### Take a snapshot before you touch something
+
+```bash
+sudo ln -sf /opt/mtc/src/Project-root/deploy/backup.sh /usr/local/bin/mtc-backup
+
+sudo mtc-backup            # one verified snapshot, now
+sudo mtc-backup --quiet     # silent unless it fails, for cron
+```
+
+The local dump only — `pg_dump`, verified by `pg_restore`, with its sha256
+sidecar — not the Google Sheets sync the nightly job also runs. It holds the
+same advisory lock as that job, so the two can never overlap, and it runs in
+its own process, so it cannot disturb the running workers' connection pool
+the way the in-app trigger does.
+
+Restoring one is `pg_restore`; the snapshot is a custom-format archive:
+
+```bash
+pg_restore --clean --if-exists --no-owner --no-privileges \
+    -d "$DATABASE_URL" /opt/mtc/backups/mtc_<stamp>.dump
+```
 
 ### Getting the code onto the server without GitHub
 
