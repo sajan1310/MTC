@@ -4150,14 +4150,18 @@ MApp.LotModel = {
     return matched !== null ? matched : this.primaryAxisTotal();
   },
 
-  // production.js#_matchingPrimaryColorQty
+  // production.js#_matchingPrimaryColorQty -- every checked primary colour
+  // this one pairs with, not the first found (White rims under Blue-White 10
+  // and Red-White 5 frames are 15), and an exact name ahead of a word match
+  // ("Blue" belongs with the Blue frames, not the Sky Blue ones).
   matchingPrimaryColorQty(color) {
     const target = String(color || '').trim();
     if (!target) return null;
-    for (const r of this.rows.filter(x => x.isPrimary === true && x.checked)) {
-      if (this.colorNamesMatch(r.color, target)) return this.num(r.qty) || 0;
-    }
-    return null;
+    const primaries = this.rows.filter(x => x.isPrimary === true && x.checked);
+    const exact = primaries.filter(r => this.sameText(r.color, target));
+    const matched = exact.length > 0 ? exact : primaries.filter(r => this.colorNamesMatch(r.color, target));
+    if (matched.length === 0) return null;
+    return matched.reduce((sum, r) => sum + (this.num(r.qty) || 0), 0);
   },
 
   // production.js#_rawCheckedColorQtys
@@ -4218,7 +4222,14 @@ MApp.LotModel = {
     const target = String(primaryColor || '').trim();
     if (!target) return;
     this.rows.filter(r => r.isPrimary === false && this.colorNamesMatch(r.color, target))
-      .forEach(r => { if (r.checked !== checked) this._setChecked(r, checked); });
+      .forEach(r => {
+        if (r.checked === checked) return;
+        // Unticking only undoes the cascade's own ticks: a row the operator
+        // typed into is theirs, and one another still-ticked primary colour
+        // pairs with is still needed (production.js, same rule).
+        if (!checked && (!r.autoSynced || this.matchingPrimaryColorQty(r.color) !== null)) return;
+        this._setChecked(r, checked);
+      });
   },
 
   // production.js#toggleColorGroup
@@ -4374,6 +4385,14 @@ MApp.LotModel = {
   allocationError() {
     const shape = this.allocationShape();
     if (!shape || shape.tooMany) return '';
+    // A cell below zero can still leave its row adding up, and would put a
+    // negative into a real pool bucket; the server refuses it too.
+    const negative = shape.primaries.filter(p => shape.columns.some(c =>
+      (this.num(this.allocationValues[this.cellKey(p.color, c.color)]) || 0) < 0));
+    if (negative.length > 0) {
+      return 'Colour allocation has a negative quantity for ' + negative.map(p => `"${p.color}"`).join(', ')
+        + ' — each cell is how many of that colour went with that column, so it cannot be below zero.';
+    }
     const bad = shape.primaries.filter(p => Math.abs(this.allocationRowTotal(shape, p.color) - p.qty) >= 0.0001);
     if (bad.length === 0) return '';
     return 'Colour allocation is incomplete: ' + bad.map(p => `"${p.color}"`).join(', ')
@@ -4798,10 +4817,24 @@ MApp.LotModel = {
       // Which group this lot counted is recorded on it. A process whose
       // Primary is still only the recipe-order default would otherwise ask
       // again on every edit, with the lot's own answer sitting right there.
-      if (!this.primaryKey && this.hasRadio()) {
-        const recorded = breakdown.find(b => b && b.countsTowardTotal !== false && b.axisKey
-          && this.groups.some(g => g.radio && g.key === b.axisKey));
-        if (recorded) this.setPrimary(recorded.axisKey);
+      //
+      // Read whenever the lot has a clear record, not only while the process
+      // has no Primary of its own: every save writes its pick back onto the
+      // process, so a later lot that picked differently moved the default,
+      // and this lot then opened totalled on the other group. Only counting
+      // rows that all name ONE pickable group are a clear record -- history
+      // from before one group had to be chosen keeps the process default
+      // (production.js#_restoreLotPrimaryAxis, same rule).
+      if (this.hasRadio()) {
+        const sameKey = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+        const recorded = new Set(breakdown
+          .filter(b => b && b.countsTowardTotal !== false && b.axisKey)
+          .map(b => this.groups.find(g => g.radio && sameKey(g.key, b.axisKey)))
+          .filter(Boolean));
+        if (recorded.size === 1) {
+          const [group] = recorded;
+          if (!sameKey(group.key, this.primaryKey)) this.setPrimary(group.key);
+        }
       }
       const claimed = new Set();
       breakdown.forEach(entry => {
@@ -6538,7 +6571,14 @@ MApp.Production = {
     } else {
       formData.colorBreakdown = JSON.stringify(m.checkedColorQtys());
       const primary = m.primaryLabel();
-      if (primary) formData.primaryColorAxis = primary;
+      if (primary) {
+        formData.primaryColorAxis = primary;
+        // The key identifies the group; a label can be shared by two groups,
+        // and the own-output group has no server-side axis (production.js,
+        // same pair). Outbox entries queued before this send the label alone,
+        // and the server still resolves those as it always has.
+        formData.primaryColorAxisKey = m.primaryKey || '';
+      }
     }
 
     if (process.isFinalStage || this.selection.productId) {

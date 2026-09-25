@@ -248,6 +248,24 @@ describe('quantities', () => {
     expect($('.mapp-lot-group-title').textContent).toContain('Color Group (Primary)');
   });
 
+  test('the save names the Primary group by its key as well as its label', async () => {
+    // Two groups can share a label, and the colours a process paints have no
+    // server-side axis at all -- the key is what says which group counted.
+    await openWithProcess('Assembly Kalpi 20');
+    await tap($('[data-primary-key="pool:painted frame"]'));
+    MApp.Production.selectedAssignedTo = 'rakesh';
+    await tap(rowFor('Red-White').querySelector('[data-row-toggle]'));
+    type(rowFor('Red-White').querySelector('.mapp-lot-color-qty'), 5);
+
+    await MApp.Production.saveLot();
+    await flush();
+
+    const [method, , form] = mutate.mock.calls[0];
+    expect(method).toBe('saveProduction');
+    expect(form.primaryColorAxis).toBe('Painted Frame');
+    expect(form.primaryColorAxisKey).toBe('pool:painted frame');
+  });
+
   test('a secondary colour follows the lot until someone types into it', async () => {
     await openWithProcess('Assembly Kalpi 20');
     await tap($('[data-primary-key="pool:painted frame"]'));

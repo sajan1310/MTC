@@ -3263,6 +3263,13 @@
     padding: 4px 6px;
   }
 
+  /* A component quantity typed by hand (production.js, _markManualQty). It
+     no longer follows the lot's colours and quantities, so it is marked
+     apart from the recipe-derived figures beside it. */
+  input.prod-qty-manual {
+    box-shadow: inset 3px 0 0 var(--warning-color);
+  }
+
   .prod-color-table .prod-comp-display-name,
   .prod-color-table .prod-comp-size,
   .prod-color-table .prod-comp-narration {

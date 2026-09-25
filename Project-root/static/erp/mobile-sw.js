@@ -101,7 +101,13 @@
 // long-press selection -- and the size/model/type cascade went back to
 // being only the operator's filter, so the process picker no longer comes
 // back holding just the process the last lot was logged under.
-const CACHE_NAME = 'erp-mobile-shell-v68';
+// v69: the lot model follows desktop's checklist repairs. A secondary colour
+// pairs with every primary it names, unticking a primary leaves a secondary
+// another primary still needs (or one typed by hand), an edited lot opens on
+// the Primary it was saved with even after the process default moved, a
+// negative allocation cell is refused, and the save names the Primary group
+// by its key as well as its label.
+const CACHE_NAME = 'erp-mobile-shell-v69';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

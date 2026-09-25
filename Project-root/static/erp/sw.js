@@ -363,7 +363,16 @@
 // bill's remarks went there and Update Bill saved a blank over them.
 // bill.js is precached; without the bump an installed client runs the old
 // lookup for one more load, and one edit in it is enough to wipe a bill.
-const CACHE_NAME = 'erp-shell-v76';
+// v77: the Colors to Produce checklist saves what it shows. production.js
+// sends the Primary group's key (the server counted a different group when
+// two shared a label, and double-counted a sequence-1 lot), reopens a lot on
+// the Primary it was saved with, redraws the allocation grid after "Select
+// all" and a Primary change (and refuses a negative cell), pairs a secondary
+// colour with every primary it names, keeps a typed component quantity, and
+// sends each per-colour line's unit. styles.css marks a typed quantity. Both
+// are precached; without the bump an installed tablet keeps the old form for
+// one more load, and one save in it is enough to record the old totals.
+const CACHE_NAME = 'erp-shell-v77';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
