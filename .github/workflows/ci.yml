@@ -343,6 +343,13 @@ jobs:
       SECRET_KEY: test-secret-key-for-ci
       RATELIMIT_STORAGE_URL: memory://
       PYTHONIOENCODING: utf-8
+      # The server's clock: deploy/provision.sh sets Asia/Kolkata, and
+      # database.py pins every DB session to the same zone (DB_TIMEZONE). The
+      # runner defaults to UTC, which puts a moment the app takes from its own
+      # clock 5.5 hours behind the database's NOW() -- an opening balance
+      # entered "today" then sorts before a count taken seconds earlier, and
+      # the Warehouse Pool tests fail on a calendar no deployment runs on.
+      TZ: Asia/Kolkata
 
     steps:
       - name: Checkout repository

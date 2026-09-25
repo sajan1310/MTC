@@ -141,6 +141,8 @@ jobs:
       SECRET_KEY: test-secret-integration
       RATELIMIT_STORAGE_URL: memory://
       PYTHONIOENCODING: utf-8
+      # The server's clock -- see the same line in ci.yml's test job.
+      TZ: Asia/Kolkata
       DB_USER: postgres
       DB_PASS: testpass
       DB_NAME: testdb
@@ -249,6 +251,8 @@ jobs:
       SECRET_KEY: test-secret-full-suite
       RATELIMIT_STORAGE_URL: memory://
       PYTHONIOENCODING: utf-8
+      # The server's clock -- see the same line in ci.yml's test job.
+      TZ: Asia/Kolkata
       DB_USER: postgres
       DB_PASS: testpass
       DB_NAME: testdb
