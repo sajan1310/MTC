@@ -82,7 +82,7 @@ Restoring one is `pg_restore`; the snapshot is a custom-format archive:
 
 ```bash
 pg_restore --clean --if-exists --no-owner --no-privileges \
-    -d "$DATABASE_URL" /opt/mtc/backups/mtc_<stamp>.dump
+    -d "$DATABASE_URL" /opt/mtc/src/backups/mtc_<stamp>.dump
 ```
 
 ### Getting the code onto the server without GitHub
