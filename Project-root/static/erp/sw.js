@@ -372,7 +372,11 @@
 // sends each per-colour line's unit. styles.css marks a typed quantity. Both
 // are precached; without the bump an installed tablet keeps the old form for
 // one more load, and one save in it is enough to record the old totals.
-const CACHE_NAME = 'erp-shell-v77';
+// v78: the Process editor offers "merged" colour axes (pool axes paired by a
+// Process Color Link) as Primary Axis choices. process.js dropped them, so a
+// process with 2+ axes hid the picker while saveProcess still demanded a
+// choice. process.js is precached; 8a33e2f7 shipped it without a bump.
+const CACHE_NAME = 'erp-shell-v78';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
