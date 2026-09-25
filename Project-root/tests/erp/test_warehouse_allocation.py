@@ -244,3 +244,38 @@ def test_half_filled_allocation_is_rejected(erp_client):
     assert body["success"] is False
     assert "incomplete" in body["message"].lower(), body["message"]
     assert "Blue" in body["message"], body["message"]
+
+
+def test_allocation_cell_against_its_colours_sign_is_rejected(erp_client):
+    """A row can add up and still be impossible: Black's 6 split as -2 Red
+    and 8 Green passes the sum check, and Pass 1 credits each cell as it
+    stands -- a -2 in a real bucket from a lot that produced 6. That reads
+    as a recount owed when it is a mistyped cell, so it is refused at save.
+    """
+    _, down_id, upstream = _three_axis_setup(erp_client)
+
+    breakdown = _ambiguous_breakdown(upstream, black_split=(-2, 8), blue_split=(1, 3))
+    assert breakdown[0]["qty"] == 6  # the row still adds up
+
+    body = _save_lot_raw(erp_client, down_id, upstream[0], breakdown)
+    assert body["success"] is False
+    assert "Black" in body["message"], body["message"]
+    assert "-2" in body["message"], body["message"]
+
+
+def test_allocation_zero_cell_is_accepted(erp_client):
+    """Zero is how a grid says "none of this colour went there" -- the sign
+    rule must not catch it.
+    """
+    down_payload, down_id, upstream = _three_axis_setup(erp_client)
+
+    _save_lot(
+        erp_client,
+        down_id,
+        upstream[0],
+        _ambiguous_breakdown(upstream, black_split=(6, 0), blue_split=(1, 3)),
+    )
+
+    credited = _credited_buckets(erp_client, down_payload["outputItemName"])
+    assert credited["Black / Red"] == 6, credited
+    assert credited.get("Black / Green", 0) == 0, credited

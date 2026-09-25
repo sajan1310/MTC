@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import uuid
 
+import database
 from app.erp.services import bom_service
 
 
@@ -2251,3 +2252,257 @@ def test_save_production_logged_color_stays_valid_after_color_master_removal(
     # Only the primary axis counts toward the lot total; the point here is
     # simply that "RetiredShade" was not rejected out of the save.
     assert row["qty"] == 7
+
+
+# ── Which group is Primary, as the operator picked it ─────────────────────
+# The form sends the Primary radio's label AND its axis key. A label is not
+# unique, and the form also offers a group the server has no axis for (the
+# colours a sequence-1 process produces), so resolving by label alone saved
+# a different total from the one the form showed.
+
+
+def _own_output_process(client):
+    """A sequence-1 shape: the process consumes a 2-colour pool rib -- the
+    ONLY axis the server can resolve -- and produces frame colours of its
+    own, which the Production form offers as a pickable group keyed
+    "own:<output item>". Returns (frame_payload, frame_id, rib_axis_key).
+    """
+    rib_payload, rib_id = _save_process(client)
+    _seed_pool(client, rib_id, 50, color="Blue")
+    _seed_pool(client, rib_id, 50, color="Pink")
+    frame_payload, frame_id = _save_process(
+        client,
+        components=[
+            {
+                "itemName": rib_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            }
+        ],
+    )
+    for color in ("Blue-White", "Pink-White"):
+        body = _rpc(
+            client, "includeWarehousePoolColor", [frame_id, color], mutation=True
+        ).get_json()
+        assert body["success"] is True, body["message"]
+    axes = _rpc(client, "getProcessColorAxes", [frame_id]).get_json()["data"]["axes"]
+    assert len(axes) == 1
+    return frame_payload, frame_id, axes[0]["key"]
+
+
+def _own_output_lot(frame_payload, rib_axis_key, **extra):
+    own_key = "own:" + frame_payload["outputItemName"].lower()
+    return {
+        "assignedTo": "Worker A",
+        "primaryColorAxis": frame_payload["outputItemName"],
+        "colorBreakdown": [
+            {
+                "color": "Blue",
+                "qty": 20,
+                "isCustom": False,
+                "countsTowardTotal": False,
+                "axisKey": rib_axis_key,
+            },
+            {
+                "color": "Blue-White",
+                "qty": 20,
+                "isCustom": False,
+                "countsTowardTotal": True,
+                "axisKey": own_key,
+            },
+        ],
+        "componentsConsumed": [_item_component()],
+        **extra,
+    }
+
+
+def test_save_production_own_output_group_as_primary_is_not_double_counted(
+    erp_app, erp_client
+):
+    """The label-only payload older clients (and queued mobile outbox
+    entries) send. The label names no real axis, which used to fall back to
+    the rib axis -- counted by identity ON TOP of the frame rows: 20 frames
+    saved as 40, and a contractor payable for 40.
+    """
+    frame_payload, frame_id, rib_axis_key = _own_output_process(erp_client)
+    # A blank cell is the case the old fallback also wrote into, filling it
+    # with the rib -- a choice the operator did not make.
+    with erp_app.app_context(), database.get_conn() as (_conn, cur):
+        cur.execute(
+            "UPDATE erp.process_master SET primary_color_axis = '' WHERE lower(process_id) = lower(%s)",
+            (frame_id,),
+        )
+
+    body = _rpc(
+        erp_client,
+        "saveProduction",
+        [{"processId": frame_id, **_own_output_lot(frame_payload, rib_axis_key)}],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+    assert body["data"]["row"]["qty"] == 20
+
+    # Nothing was written back: the own-output group is not an axis the
+    # process has, and the rib is not what the operator picked.
+    axes_data = _rpc(erp_client, "getProcessColorAxes", [frame_id]).get_json()["data"]
+    assert axes_data["savedPrimaryColorAxis"] == ""
+
+
+def test_save_production_own_output_group_picked_by_key(erp_client):
+    frame_payload, frame_id, rib_axis_key = _own_output_process(erp_client)
+    lot = _own_output_lot(
+        frame_payload,
+        rib_axis_key,
+        primaryColorAxisKey="own:" + frame_payload["outputItemName"].lower(),
+    )
+
+    body = _rpc(
+        erp_client, "saveProduction", [{"processId": frame_id, **lot}], mutation=True
+    ).get_json()
+    assert body["success"] is True, body["message"]
+    assert body["data"]["row"]["qty"] == 20
+
+
+def test_save_production_own_output_group_needs_a_counting_row(erp_client):
+    """Same guard the primary-axis branch applies: picking a group and
+    checking nothing under it is not a deliberate zero."""
+    frame_payload, frame_id, rib_axis_key = _own_output_process(erp_client)
+    lot = _own_output_lot(frame_payload, rib_axis_key)
+    lot["colorBreakdown"] = lot["colorBreakdown"][:1]  # only the rib row
+
+    body = _rpc(
+        erp_client, "saveProduction", [{"processId": frame_id, **lot}], mutation=True
+    ).get_json()
+    assert body["success"] is False
+    assert frame_payload["outputItemName"] in body["message"], body["message"]
+
+
+def test_save_production_primary_axis_key_picks_between_same_label_axes(
+    erp_client,
+):
+    """A tag axis named after the pool item it sits beside carries the same
+    label as that pool axis. The operator picks the SECOND group; its key
+    says which, where the shared label resolved to the first."""
+    frame_payload, frame_id = _save_process(erp_client)
+    _seed_pool(erp_client, frame_id, 10, color="Black")
+    _seed_pool(erp_client, frame_id, 10, color="Blue")
+    label = frame_payload["outputItemName"]
+    _down_payload, down_id = _save_process(
+        erp_client,
+        primaryColorAxis=label,
+        components=[
+            {
+                "itemName": label,
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
+            {
+                "itemName": _unique_name("Sticker"),
+                "qtyPerUnit": 1,
+                "sourceType": "ITEM",
+                "colorGroup": "Red",
+                "colorAxis": label,
+            },
+            {
+                "itemName": _unique_name("Sticker"),
+                "qtyPerUnit": 1,
+                "sourceType": "ITEM",
+                "colorGroup": "Green",
+                "colorAxis": label,
+            },
+        ],
+    )
+    axes = _rpc(erp_client, "getProcessColorAxes", [down_id]).get_json()["data"]["axes"]
+    assert len(axes) == 2 and axes[0]["label"] == axes[1]["label"]
+    first, picked = axes
+
+    body = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "primaryColorAxis": picked["label"],
+                "primaryColorAxisKey": picked["key"],
+                "colorBreakdown": [
+                    {
+                        "color": first["colors"][0],
+                        "qty": 4,
+                        "countsTowardTotal": False,
+                        "axisKey": first["key"],
+                    },
+                    {
+                        "color": picked["colors"][0],
+                        "qty": 10,
+                        "countsTowardTotal": True,
+                        "axisKey": picked["key"],
+                    },
+                ],
+                "componentsConsumed": [_item_component()],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+    assert body["data"]["row"]["qty"] == 10
+
+
+def test_save_production_primary_axis_key_still_writes_the_pick_back(erp_client):
+    """Picking by key keeps the write-back: the process adopts the pick as
+    its default, stored as the axis label the Process editor reads."""
+    frame_payload, frame_id = _save_process(erp_client)
+    _seed_pool(erp_client, frame_id, 10, color="Black")
+    _seed_pool(erp_client, frame_id, 10, color="Blue")
+    rim_payload, rim_id = _save_process(erp_client)
+    _seed_pool(erp_client, rim_id, 10, color="Red")
+    _seed_pool(erp_client, rim_id, 10, color="Green")
+    frame, rim = frame_payload["outputItemName"], rim_payload["outputItemName"]
+    _down_payload, down_id = _save_process(
+        erp_client,
+        primaryColorAxis=frame,
+        components=[
+            {
+                "itemName": name,
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            }
+            for name in (frame, rim)
+        ],
+    )
+
+    body = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "primaryColorAxis": rim,
+                "primaryColorAxisKey": "pool:" + rim.lower(),
+                "colorBreakdown": [
+                    {
+                        "color": "Black",
+                        "qty": 12,
+                        "countsTowardTotal": False,
+                        "axisKey": "pool:" + frame.lower(),
+                    },
+                    {
+                        "color": "Red",
+                        "qty": 12,
+                        "countsTowardTotal": True,
+                        "axisKey": "pool:" + rim.lower(),
+                    },
+                ],
+                "componentsConsumed": [_item_component()],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+    assert body["data"]["row"]["qty"] == 12
+    axes_data = _rpc(erp_client, "getProcessColorAxes", [down_id]).get_json()["data"]
+    assert axes_data["savedPrimaryColorAxis"] == rim

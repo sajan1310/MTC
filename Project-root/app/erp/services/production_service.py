@@ -154,6 +154,25 @@ def _validate_color_splits(color_breakdown: list) -> None:
         )
 
     for c in with_splits:
+        # A cell says how many of THIS colour's units went with one value of
+        # the other axis, so it cannot run against the colour's own sign. A
+        # row of 10 split as -5 and 15 adds up and would pass the sum check
+        # below, and Pass 1 credits each cell as it stands: the lot put -5
+        # into a real bucket -- a negative that reads as a recount owed when
+        # it is only a mistyped cell. A correction lot (a negative colour
+        # quantity) is the mirror image and is held to the mirror rule.
+        for cell in c["splits"]:
+            if (
+                (c["qty"] > 0 and cell["qty"] < 0)
+                or (c["qty"] < 0 and cell["qty"] > 0)
+                or (c["qty"] == 0 and cell["qty"] != 0)
+            ):
+                against = ", ".join(cell["axes"].values())
+                raise ValueError(
+                    f'Colour allocation for "{c["color"]}" puts {cell["qty"]:g} against {against}, '
+                    f"but that colour's quantity is {c['qty']:g}. "
+                    "Each cell must run the same way as its colour's quantity -- correct it before saving."
+                )
         total = sum(cell["qty"] for cell in c["splits"])
         if abs(total - c["qty"]) > 0.0001:
             raise ValueError(
@@ -794,12 +813,61 @@ def save_production(conn, cur, form_data):
         submitted_primary_color_axis = str(
             form_data.get("primaryColorAxis") or ""
         ).strip()
+        # The Primary radio's own axis KEY, sent beside the label by clients
+        # that know to. A label is not unique: a tag axis named after the
+        # pool item it sits beside carries that item's name too, and a label
+        # then resolves to whichever of the two comes first in recipe order --
+        # the lot saved the OTHER group's quantity as its total. A key cannot
+        # collide. Older clients, and mobile outbox entries queued before
+        # them, send only the label and keep resolving exactly as before.
+        submitted_primary_axis_key = str(
+            form_data.get("primaryColorAxisKey") or ""
+        ).strip()
         stored_primary_color_axis = str(process.get("primaryColorAxis") or "").strip()
         requested_primary_color_axis = (
             submitted_primary_color_axis or stored_primary_color_axis
         )
         axes = process_service._compute_color_axes_for_process(
             process_id, color_components, pool_rows, color_links
+        )
+
+        # The real axis the operator picked on THIS lot, when the pick names one.
+        if submitted_primary_axis_key:
+            picked_axis = next(
+                (
+                    a
+                    for a in axes
+                    if a["key"].lower() == submitted_primary_axis_key.lower()
+                ),
+                None,
+            )
+        elif submitted_primary_color_axis:
+            picked_axis = next(
+                (
+                    a
+                    for a in axes
+                    if a["label"].lower() == submitted_primary_color_axis.lower()
+                ),
+                None,
+            )
+        else:
+            picked_axis = None
+
+        # A pick that names NO real axis is the form's own-output group. A
+        # sequence-1 process (Painted Frame consuming Mudguard ribs) resolves
+        # only the rib it consumes as an axis, so the form offers the colours
+        # the lot PRODUCES as a group of its own, keyed "own:<output item>"
+        # (production.js#_outputItemColorAxis). Falling back to the first real
+        # axis here, as an unresolved pick used to, made that axis primary by
+        # identity -- and counted its rows ON TOP of the own-output rows the
+        # operator's flags already counted: 20 frames saved as a lot of 40,
+        # and the contractor paid for 40. No real axis is primary for such a
+        # lot, so the rows the operator marked as counting ARE the lot,
+        # exactly as the form totalled it.
+        picked_unmodelled_group = (
+            bool(axes)
+            and picked_axis is None
+            and bool(submitted_primary_axis_key or submitted_primary_color_axis)
         )
 
         # 2+ axes with NEITHER a per-lot pick NOR a process-level default is
@@ -813,24 +881,37 @@ def save_production(conn, cur, form_data):
         # the Production Lot form -- after which the write-back below
         # persists their pick as the process's default, so this only ever
         # blocks a given process's first lot post-migration.
-        if not requested_primary_color_axis and len(axes) >= 2:
+        if (
+            picked_axis is None
+            and not picked_unmodelled_group
+            and not requested_primary_color_axis
+            and len(axes) >= 2
+        ):
             raise ValueError(
                 'This process has more than one independent Color Axis. Pick which group is "Primary" on this '
                 "lot (or set a default Primary Axis for this process in the Process editor) before saving."
             )
 
-        primary_axis = (
-            next(
-                (
-                    a
-                    for a in axes
-                    if a["label"].lower() == requested_primary_color_axis.lower()
-                ),
-                None,
+        if picked_unmodelled_group:
+            primary_axis = None
+        else:
+            primary_axis = (
+                picked_axis
+                or (
+                    next(
+                        (
+                            a
+                            for a in axes
+                            if a["label"].lower()
+                            == requested_primary_color_axis.lower()
+                        ),
+                        None,
+                    )
+                    if requested_primary_color_axis
+                    else None
+                )
+                or (axes[0] if axes else None)
             )
-            if requested_primary_color_axis
-            else None
-        ) or (axes[0] if axes else None)
         primary_color_axis = primary_axis["label"] if primary_axis else ""
 
         primary_axis_colors_lower = None
@@ -873,6 +954,17 @@ def save_production(conn, cur, form_data):
                     f'At least one "{primary_color_axis}" color is required for this lot.'
                 )
         else:
+            # The own-output group gets the same guard the primary-axis branch
+            # above applies: a pick with nothing checked under it is an
+            # operator who has not addressed the group they chose, not a
+            # deliberate zero.
+            if picked_unmodelled_group and not any(
+                c["countsTowardTotal"] for c in color_breakdown
+            ):
+                raise ValueError(
+                    f'At least one "{submitted_primary_color_axis or submitted_primary_axis_key}" '
+                    "color is required for this lot."
+                )
             qty = sum(c["qty"] for c in color_breakdown if c["countsTowardTotal"])
 
         # Write the resolved axis back onto the process when it isn't what's
@@ -886,12 +978,10 @@ def save_production(conn, cur, form_data):
         # stored label that no longer resolves is deliberately NOT
         # overwritten here: this lot falls back to the default for its own
         # quantity, but a stale client payload shouldn't silently rewrite a
-        # configured choice.
-        submitted_resolved = (
-            bool(submitted_primary_color_axis)
-            and bool(primary_axis)
-            and (submitted_primary_color_axis.lower() == primary_color_axis.lower())
-        )
+        # configured choice. An own-output pick writes nothing back either:
+        # it is not an axis the process has, and filling a blank cell with the
+        # first real axis would record a choice nobody made.
+        submitted_resolved = picked_axis is not None
         if (
             primary_axis
             and primary_color_axis.lower() != stored_primary_color_axis.lower()
