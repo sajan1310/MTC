@@ -2520,14 +2520,22 @@
   /* Sticky header for the 3 biggest ledgers (PO, Bill, Stock) -- long lists
      otherwise lose column context while scrolling. thead's own background
      is transparent (rule above), so an opaque one is set here too, or
-     scrolled rows would show through the stuck header text. */
+     scrolled rows would show through the stuck header text.
+
+     The colour must be the header's own --bs-table-bg, not a page surface.
+     All three heads are thead.table-dark, which sets that variable to
+     #212529 and the text to white; this rule outranks Bootstrap's cell rule
+     on background only, so it used to paint --bg-light -- #fff in the light
+     theme -- under that white text, and every column title vanished. The
+     dark theme's --bg-light happened to be dark, which is why only light
+     mode showed it. */
   #poLedger .table-responsive thead th,
   #billLedger .table-responsive thead th,
   #stockTab .table-responsive thead th {
     position: sticky;
     top: 0;
     z-index: 2;
-    background-color: var(--bg-light);
+    background-color: var(--bs-table-bg);
   }
 
   th {
@@ -2561,26 +2569,63 @@
     border-bottom: none;
   }
 
-  /* Low Stock row highlight (Stock list) — bold white text on a dark
-     background so understocked items jump out at a glance. Bootstrap's
-     text-* utility classes (text-dark/text-danger/text-success) ship with
-     !important, so they need matching !important here to be overridden. */
-  .low-stock-row,
-  .low-stock-row td {
-    background-color: #1a1a1a !important;
-    color: #fff !important;
-    font-weight: 700 !important;
+  /* Low Stock row highlight (Stock list) -- a red tint with a solid red
+     edge, so understocked items read as a warning at a glance and the row
+     stays readable. It used to be near-black with white text: loud in the
+     light theme without saying "warning", and all but invisible in the dark
+     one, where #1a1a1a sits a shade off the page itself.
+
+     The fill goes in through Bootstrap's own table variables, the way
+     .table-danger does it, so .table-hover still deepens the row under the
+     pointer. The edge is an inset shadow on the first cell rather than a
+     border, so the bordered grid stays aligned; Bootstrap's 9999px state
+     shadow is repeated after it because that shadow is what paints the
+     hover tint, and replacing the property would drop it from this cell.
+
+     The text colours need !important only because Bootstrap's .text-dark
+     and .text-danger utilities carry it. The stock figure steps down to
+     red-700: the stock .text-danger red is 3.7:1 on this tint, under AA for
+     14px text. */
+  .low-stock-row {
+    --bs-table-bg: #fee2e2;
+    --bs-table-color: #7f1d1d;
+    --bs-table-hover-bg: rgb(220 38 38 / 10%);
+    --bs-table-hover-color: #7f1d1d;
   }
 
-  .low-stock-row td strong,
-  .low-stock-row td .text-danger,
-  .low-stock-row td .text-success {
-    color: #fff !important;
+  .low-stock-row > td:first-child {
+    box-shadow: inset 4px 0 0 #dc2626,
+      inset 0 0 0 9999px var(--bs-table-bg-state, var(--bs-table-bg-type, var(--bs-table-accent-bg)));
   }
 
-  .low-stock-row:hover,
-  .low-stock-row:hover td {
-    background-color: #000 !important;
+  .low-stock-row td .text-dark {
+    color: #7f1d1d !important;
+  }
+
+  .low-stock-row td.text-danger {
+    color: #b91c1c !important;
+  }
+
+  /* Same signal on the dark surface: a translucent red over the card, with
+     the lighter end of the red ramp for the edge and text. */
+  [data-theme="dark"] .low-stock-row {
+    --bs-table-bg: rgb(248 113 113 / 14%);
+    --bs-table-color: #fecaca;
+    --bs-table-hover-bg: rgb(248 113 113 / 10%);
+    --bs-table-hover-color: #fecaca;
+  }
+
+  [data-theme="dark"] .low-stock-row > td:first-child {
+    box-shadow: inset 4px 0 0 #f87171,
+      inset 0 0 0 9999px var(--bs-table-bg-state, var(--bs-table-bg-type, var(--bs-table-accent-bg)));
+  }
+
+  [data-theme="dark"] .low-stock-row td .text-dark {
+    color: #fecaca !important;
+  }
+
+  [data-theme="dark"] .low-stock-row td.text-danger {
+    color: #fca5a5 !important;
   }
 
   /* ─────────────────────────────────────────────────────────────────────

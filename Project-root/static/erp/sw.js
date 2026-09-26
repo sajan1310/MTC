@@ -376,7 +376,13 @@
 // Process Color Link) as Primary Axis choices. process.js dropped them, so a
 // process with 2+ axes hid the picker while saveProcess still demanded a
 // choice. process.js is precached; 8a33e2f7 shipped it without a bump.
-const CACHE_NAME = 'erp-shell-v78';
+// v79: the Stock, PO Ledger and Bill Ledger column titles are readable in
+// the light theme again -- the sticky-header rule painted --bg-light (#fff)
+// under .table-dark's white text -- and low-stock rows are a red tint with
+// a red edge instead of near-black (which was all but invisible in dark).
+// styles.css is precached; without the bump an installed client shows the
+// blank header for one more load.
+const CACHE_NAME = 'erp-shell-v79';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
