@@ -382,7 +382,15 @@
 // a red edge instead of near-black (which was all but invisible in dark).
 // styles.css is precached; without the bump an installed client shows the
 // blank header for one more load.
-const CACHE_NAME = 'erp-shell-v79';
+// v80: the UI audit's quick fixes. styles.css makes outline-warning/-info
+// buttons readable (Bootstrap's were 1.6:1 and 1.9:1 on white), lays the
+// dashboard's Quick Actions out as two sets with no empty slot, and gives
+// the dark theme readable placeholders, dropdowns, input-group labels and
+// .table-warning headers. dispatch.js spans Ready to Dispatch's loading row
+// across all seven columns. Both are precached, and the matching markup is
+// network-first, so without the bump an installed client pairs the new
+// dashboard sets with the old grid rule for one load.
+const CACHE_NAME = 'erp-shell-v80';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

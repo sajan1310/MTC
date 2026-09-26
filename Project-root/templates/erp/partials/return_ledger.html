@@ -64,7 +64,7 @@
         <i class="bi bi-exclamation-triangle me-2"></i>
         Log Wastage
       </button>
-      <button class="btn btn-outline-warning fw-bold shadow-sm text-dark"
+      <button class="btn btn-outline-warning fw-bold shadow-sm"
               type="button"
               onclick="App.Wastage.toggleReview()"
               id="btnToggleWastageReview"
@@ -192,7 +192,12 @@
 
     <div class="table-responsive" style="border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
       <table class="table table-hover table-bordered align-middle mb-0">
-        <thead style="background:#fff3cd;">
+        <!-- table-warning, not an inline background: Bootstrap paints each
+             header cell over the thead, so the inline yellow never showed in
+             the light theme, and in the dark theme the cells went transparent
+             over it with near-white text -- the titles vanished. The dark
+             theme's .table-warning is in styles.css. -->
+        <thead class="table-warning">
           <tr>
             <th scope="col" style="width:4%; text-align:center;">
               <input type="checkbox" id="selectAllWastage" class="form-check-input" onclick="App.Wastage.toggleSelectAll(this)">

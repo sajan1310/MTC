@@ -26,11 +26,16 @@
   <!-- PRODUCTION LOG SUB-TAB -->
   <div id="productionLogSubTab" class="production-sub-tab">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
-      <div class="d-flex w-50 align-items-center gap-2">
+      <!-- No w-50 here. The date range below is fixed-width, and inside a
+           half-width wrapper it took all of it: at 1366px the search and
+           sort were squeezed to empty slivers. The search grows instead,
+           as on the Issued Stock sub-tab, and the buttons wrap below. -->
+      <div class="d-flex flex-wrap gap-2 align-items-center flex-grow-1">
         <input type="text" id="searchProduction" class="form-control"
+          style="flex: 1 1 240px; min-width: 200px;"
           placeholder="Search Lot #, Date, Product, Assigned By/To, or Status..." aria-label="Search production log" autocomplete="off"
           oninput="App.Utils.debouncedFilter(this, () => App.Production.filterData(this.value))">
-        <select id="productionSortBy" class="form-select" style="max-width: 220px;" aria-label="Sort Production Logs"
+        <select id="productionSortBy" class="form-select" style="flex: 0 0 auto; width: auto; max-width: 220px;" aria-label="Sort Production Logs"
           onchange="App.Production.sortBy(this.value)">
           <option value="dateDesc">Date (Newest first)</option>
           <option value="dateAsc">Date (Oldest first)</option>

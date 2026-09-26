@@ -46,7 +46,7 @@
         </thead>
         <tbody id="readyToDispatchTableBody">
           <tr>
-            <td colspan="6" class="text-center p-4">Loading Ready to Dispatch Data...</td>
+            <td colspan="7" class="text-center p-4">Loading Ready to Dispatch Data...</td>
           </tr>
         </tbody>
       </table>
@@ -81,9 +81,12 @@
   <!-- DISPATCHED GOODS SUB-TAB -->
   <div id="dispatchedGoodsSubTab" class="dispatch-sub-tab" style="display: none;">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
-      <div class="d-flex w-50 align-items-center gap-2">
-        <input type="text" id="searchDispatchedGoods" class="form-control" placeholder="Search Dispatch #, Order #, Client, or Product..." aria-label="Search dispatched goods" autocomplete="off" oninput="App.Utils.debouncedFilter(this, () => App.Dispatch.filterDispatch(this.value))">
-        <select id="dispatchSortBy" class="form-select" style="max-width: 220px;" aria-label="Sort Dispatched Goods" onchange="App.Dispatch.sortDispatchBy(this.value)">
+      <!-- No w-50 here, for the same reason as Production's toolbar: the
+           fixed-width date range filled a half-width wrapper and left the
+           search and sort as empty slivers at 1366px. -->
+      <div class="d-flex flex-wrap gap-2 align-items-center flex-grow-1">
+        <input type="text" id="searchDispatchedGoods" class="form-control" style="flex: 1 1 240px; min-width: 200px;" placeholder="Search Dispatch #, Order #, Client, or Product..." aria-label="Search dispatched goods" autocomplete="off" oninput="App.Utils.debouncedFilter(this, () => App.Dispatch.filterDispatch(this.value))">
+        <select id="dispatchSortBy" class="form-select" style="flex: 0 0 auto; width: auto; max-width: 220px;" aria-label="Sort Dispatched Goods" onchange="App.Dispatch.sortDispatchBy(this.value)">
           <option value="dateDesc">Date (Newest first)</option>
           <option value="dateAsc">Date (Oldest first)</option>
           <option value="clientAsc">Client (A&ndash;Z)</option>
