@@ -90,7 +90,7 @@ App.Dispatch = {
   // ── Ready to Dispatch ──────────────────────────────────────
   async loadReadyData() {
     const tbody = document.getElementById('readyToDispatchTableBody');
-    if (tbody) App.Utils.tableLoading(tbody, 6, 'Loading Ready to Dispatch Data...');
+    if (tbody) App.Utils.tableLoading(tbody, 7, 'Loading Ready to Dispatch Data...');
 
     try {
       const response = await Api.call('getReadyToDispatchData');

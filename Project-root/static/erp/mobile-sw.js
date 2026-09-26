@@ -112,7 +112,11 @@
 // after each lot while staying open (date and "Assigned by" carry over),
 // keeps working offline by rebuilding a process already loaded, and its
 // Add material list says how much of each Stock item is on hand.
-const CACHE_NAME = 'erp-mobile-shell-v70';
+// v71: a low-stock quantity on a Stock card is red, as its mb-alert class
+// always asked (only the Home stat tile had the rule, so only the chip was
+// red), and text buttons lose the browser's default border. Both are
+// mobile_styles.css, which rides on this version's ?v= like mobile.js.
+const CACHE_NAME = 'erp-mobile-shell-v71';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

@@ -569,6 +569,44 @@
     border-color: var(--border-color) !important;
   }
 
+  /* .table-warning keeps its pale #fff3cd fill in the dark theme, and the
+     header text over it turns near-white -- the Wastage Records titles and
+     the Vendor profile's Pending Qty heading all but vanished. An amber
+     tint on the dark card carries the same meaning and stays readable. */
+  [data-theme="dark"] .table-warning {
+    --bs-table-bg: rgb(251 191 36 / 14%) !important;
+    --bs-table-color: var(--warning-color) !important;
+
+    border-color: var(--border-color) !important;
+  }
+
+  /* Bootstrap's own dark mode keys off data-bs-theme, which this app never
+     sets, so three of its controls kept their light-theme colours here:
+     placeholders stayed near-black on the dark field (every search box lost
+     its hint), .form-select stayed white, and .input-group-text (the
+     On / From / To beside date fields) stayed light grey. The arrow is
+     Bootstrap's own dark-mode one. */
+  [data-theme="dark"] .form-control::placeholder,
+  [data-theme="dark"] input::placeholder,
+  [data-theme="dark"] textarea::placeholder {
+    color: var(--text-muted);
+    opacity: 1;
+  }
+
+  [data-theme="dark"] .form-select {
+    --bs-form-select-bg-img: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23adb5bd' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+
+    background-color: var(--bg-light);
+    border-color: var(--border-color);
+    color: var(--text-primary);
+  }
+
+  [data-theme="dark"] .input-group-text {
+    background-color: var(--bg-muted);
+    border-color: var(--border-color);
+    color: var(--text-secondary);
+  }
+
   [data-theme="dark"] table.table {
     --bs-table-bg: transparent !important;
     --bs-table-color: var(--text-primary) !important;
@@ -632,6 +670,24 @@
 
   [data-theme="dark"] .btn-outline-danger:hover:not(:disabled) {
     background-color: var(--danger-color) !important;
+    color: #0d1117 !important;
+  }
+
+  /* The light theme's amber-700 is only 3.4:1 on the dark card; the dark
+     palette's own warning tone is the readable one here. Both fills are
+     light in this theme, so the hover label goes dark like its siblings. */
+  [data-theme="dark"] .btn-outline-warning {
+    border-color: var(--warning-color);
+    color: var(--warning-color);
+  }
+
+  [data-theme="dark"] .btn-outline-warning:hover:not(:disabled) {
+    background-color: var(--warning-color) !important;
+    color: #0d1117 !important;
+  }
+
+  [data-theme="dark"] .btn-outline-info:hover:not(:disabled) {
+    background-color: var(--info-color) !important;
     color: #0d1117 !important;
   }
 
@@ -1536,6 +1592,35 @@
     color: white;
   }
 
+  /* Bootstrap's own outline-warning and outline-info draw #ffc107 and
+     #0dcaf0 text on white -- 1.6:1 and 1.9:1, unreadable -- and unlike the
+     variants above they were never restyled. They carry Merge Duplicates,
+     the Stock row's correction pencil and the bill double-count dialog's
+     "Ledger Only" answer, among others. amber-700 (the dashboard's warn
+     tone) and --info-color are both 5:1 on white, and so is white on
+     either as the hover fill. */
+  .btn-outline-warning {
+    border: 1px solid #b45309;
+    background-color: transparent;
+    color: #b45309;
+  }
+
+  .btn-outline-warning:hover:not(:disabled) {
+    background-color: #b45309;
+    color: white;
+  }
+
+  .btn-outline-info {
+    border: 1px solid var(--info-color);
+    background-color: transparent;
+    color: var(--info-color);
+  }
+
+  .btn-outline-info:hover:not(:disabled) {
+    background-color: var(--info-color);
+    color: white;
+  }
+
   /* Brand Toggle and Outline Button Styling */
   .btn-outline-brand {
     border: 1px solid var(--border-color);
@@ -1908,10 +1993,29 @@
     letter-spacing: 0.4px;
   }
 
+  /* Two sets on one line where seven tiles fit, the wider column gap
+     marking where purchasing ends; below that the second set wraps whole
+     onto its own line, so no set is ever split and no slot is left empty. */
   .dash-action-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+  }
+
+  /* --dash-tiles is the set's tile count (set inline on each set). It sizes
+     the set's columns and its flex share alike, so while both sets share a
+     line every tile comes out the same width whichever set it is in. */
+  .dash-action-set {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    grid-template-columns: repeat(var(--dash-tiles, 3), minmax(0, 1fr));
     gap: 8px;
+    flex: var(--dash-tiles, 3) 1 calc(var(--dash-tiles, 3) * 140px + (var(--dash-tiles, 3) - 1) * 8px);
+  }
+
+  @media (max-width: 576px) {
+    .dash-action-set {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
   }
 
   .dash-action-tile {
@@ -2520,14 +2624,22 @@
   /* Sticky header for the 3 biggest ledgers (PO, Bill, Stock) -- long lists
      otherwise lose column context while scrolling. thead's own background
      is transparent (rule above), so an opaque one is set here too, or
-     scrolled rows would show through the stuck header text. */
+     scrolled rows would show through the stuck header text.
+
+     The colour must be the header's own --bs-table-bg, not a page surface.
+     All three heads are thead.table-dark, which sets that variable to
+     #212529 and the text to white; this rule outranks Bootstrap's cell rule
+     on background only, so it used to paint --bg-light -- #fff in the light
+     theme -- under that white text, and every column title vanished. The
+     dark theme's --bg-light happened to be dark, which is why only light
+     mode showed it. */
   #poLedger .table-responsive thead th,
   #billLedger .table-responsive thead th,
   #stockTab .table-responsive thead th {
     position: sticky;
     top: 0;
     z-index: 2;
-    background-color: var(--bg-light);
+    background-color: var(--bs-table-bg);
   }
 
   th {
@@ -2561,26 +2673,63 @@
     border-bottom: none;
   }
 
-  /* Low Stock row highlight (Stock list) — bold white text on a dark
-     background so understocked items jump out at a glance. Bootstrap's
-     text-* utility classes (text-dark/text-danger/text-success) ship with
-     !important, so they need matching !important here to be overridden. */
-  .low-stock-row,
-  .low-stock-row td {
-    background-color: #1a1a1a !important;
-    color: #fff !important;
-    font-weight: 700 !important;
+  /* Low Stock row highlight (Stock list) -- a red tint with a solid red
+     edge, so understocked items read as a warning at a glance and the row
+     stays readable. It used to be near-black with white text: loud in the
+     light theme without saying "warning", and all but invisible in the dark
+     one, where #1a1a1a sits a shade off the page itself.
+
+     The fill goes in through Bootstrap's own table variables, the way
+     .table-danger does it, so .table-hover still deepens the row under the
+     pointer. The edge is an inset shadow on the first cell rather than a
+     border, so the bordered grid stays aligned; Bootstrap's 9999px state
+     shadow is repeated after it because that shadow is what paints the
+     hover tint, and replacing the property would drop it from this cell.
+
+     The text colours need !important only because Bootstrap's .text-dark
+     and .text-danger utilities carry it. The stock figure steps down to
+     red-700: the stock .text-danger red is 3.7:1 on this tint, under AA for
+     14px text. */
+  .low-stock-row {
+    --bs-table-bg: #fee2e2;
+    --bs-table-color: #7f1d1d;
+    --bs-table-hover-bg: rgb(220 38 38 / 10%);
+    --bs-table-hover-color: #7f1d1d;
   }
 
-  .low-stock-row td strong,
-  .low-stock-row td .text-danger,
-  .low-stock-row td .text-success {
-    color: #fff !important;
+  .low-stock-row > td:first-child {
+    box-shadow: inset 4px 0 0 #dc2626,
+      inset 0 0 0 9999px var(--bs-table-bg-state, var(--bs-table-bg-type, var(--bs-table-accent-bg)));
   }
 
-  .low-stock-row:hover,
-  .low-stock-row:hover td {
-    background-color: #000 !important;
+  .low-stock-row td .text-dark {
+    color: #7f1d1d !important;
+  }
+
+  .low-stock-row td.text-danger {
+    color: #b91c1c !important;
+  }
+
+  /* Same signal on the dark surface: a translucent red over the card, with
+     the lighter end of the red ramp for the edge and text. */
+  [data-theme="dark"] .low-stock-row {
+    --bs-table-bg: rgb(248 113 113 / 14%);
+    --bs-table-color: #fecaca;
+    --bs-table-hover-bg: rgb(248 113 113 / 10%);
+    --bs-table-hover-color: #fecaca;
+  }
+
+  [data-theme="dark"] .low-stock-row > td:first-child {
+    box-shadow: inset 4px 0 0 #f87171,
+      inset 0 0 0 9999px var(--bs-table-bg-state, var(--bs-table-bg-type, var(--bs-table-accent-bg)));
+  }
+
+  [data-theme="dark"] .low-stock-row td .text-dark {
+    color: #fecaca !important;
+  }
+
+  [data-theme="dark"] .low-stock-row td.text-danger {
+    color: #fca5a5 !important;
   }
 
   /* ─────────────────────────────────────────────────────────────────────

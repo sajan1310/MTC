@@ -376,7 +376,21 @@
 // Process Color Link) as Primary Axis choices. process.js dropped them, so a
 // process with 2+ axes hid the picker while saveProcess still demanded a
 // choice. process.js is precached; 8a33e2f7 shipped it without a bump.
-const CACHE_NAME = 'erp-shell-v78';
+// v79: the Stock, PO Ledger and Bill Ledger column titles are readable in
+// the light theme again -- the sticky-header rule painted --bg-light (#fff)
+// under .table-dark's white text -- and low-stock rows are a red tint with
+// a red edge instead of near-black (which was all but invisible in dark).
+// styles.css is precached; without the bump an installed client shows the
+// blank header for one more load.
+// v80: the UI audit's quick fixes. styles.css makes outline-warning/-info
+// buttons readable (Bootstrap's were 1.6:1 and 1.9:1 on white), lays the
+// dashboard's Quick Actions out as two sets with no empty slot, and gives
+// the dark theme readable placeholders, dropdowns, input-group labels and
+// .table-warning headers. dispatch.js spans Ready to Dispatch's loading row
+// across all seven columns. Both are precached, and the matching markup is
+// network-first, so without the bump an installed client pairs the new
+// dashboard sets with the old grid rule for one load.
+const CACHE_NAME = 'erp-shell-v80';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

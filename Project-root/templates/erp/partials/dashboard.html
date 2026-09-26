@@ -117,48 +117,52 @@
 
   <!-- 2. QUICK ACTIONS
        Kept high because these are the highest-frequency controls on the
-       page, and kept to ONE row so they cost one band of vertical space
-       rather than three. "Receive Bill" (a purchase bill arriving from a
-       vendor) and "Record New Bill" (a dispatch bill going out to a client)
-       are both established domain vocabulary here -- see dispatch.js's own
-       "Record New Bill" comment -- so the separator and the tooltips are
-       what disambiguate them. Neither label was renamed: that is a
-       business call, not a layout one. -->
+       page, and kept to one row on a wide screen so they cost one band of
+       vertical space rather than three. "Receive Bill" (a purchase bill
+       arriving from a vendor) and "Record New Bill" (a dispatch bill going
+       out to a client) are both established domain vocabulary here -- see
+       dispatch.js's own "Record New Bill" comment -- so the split into two
+       sets and the tooltips are what disambiguate them. Neither label was
+       renamed: that is a business call, not a layout one. -->
   <section class="dash-section mb-4" aria-labelledby="dashActionsHeading">
     <h2 class="dash-section-title" id="dashActionsHeading">Quick Actions</h2>
 
-    <!-- One row, all seven. The Inbound / Outbound split that used to be two
-         stacked labelled rows collapses to a single hairline separator after
-         "Return Goods": it still marks where purchasing ends and production
-         begins -- which is what keeps "Receive Bill" (a purchase bill coming
-         in from a vendor) readable next to "Record New Bill" (a dispatch
-         bill going out to a client) -- without spending a second row on it.
-         The tooltips carry the full disambiguation. -->
+    <!-- Two sets, purchasing then production & dispatch -- which is what
+         keeps "Receive Bill" (a purchase bill coming in from a vendor)
+         readable next to "Record New Bill" (a dispatch bill going out to a
+         client). Where the row holds all seven they sit on one line with a
+         wider gap between the sets; where it cannot, the second set wraps
+         whole onto its own line. This replaced a separator <span> that had
+         no CSS, so it took a tile's grid cell and, at 1366px, left an empty
+         slot after "Return Goods". Each set is a named group for screen
+         readers, and the tooltips carry the full disambiguation. -->
     <div class="dash-action-row">
-      <button class="btn btn-success dash-action-tile" onclick="App.PO.openCreateModal()" title="Raise a purchase order to a vendor">
-        <i class="bi bi-plus-circle" aria-hidden="true"></i><span>Create PO</span>
-      </button>
-      <button class="btn btn-primary dash-action-tile" onclick="App.Bill.openReceiveModal()" title="Record a purchase bill received from a vendor (stock in)">
-        <i class="bi bi-receipt" aria-hidden="true"></i><span>Receive Bill</span>
-      </button>
-      <button class="btn btn-outline-danger dash-action-tile" onclick="App.Return.openReturnModal()" title="Return goods to a vendor">
-        <i class="bi bi-arrow-return-left" aria-hidden="true"></i><span>Return Goods</span>
-      </button>
+      <div class="dash-action-set" role="group" aria-label="Purchasing" style="--dash-tiles: 3;">
+        <button class="btn btn-success dash-action-tile" onclick="App.PO.openCreateModal()" title="Raise a purchase order to a vendor">
+          <i class="bi bi-plus-circle" aria-hidden="true"></i><span>Create PO</span>
+        </button>
+        <button class="btn btn-primary dash-action-tile" onclick="App.Bill.openReceiveModal()" title="Record a purchase bill received from a vendor (stock in)">
+          <i class="bi bi-receipt" aria-hidden="true"></i><span>Receive Bill</span>
+        </button>
+        <button class="btn btn-outline-danger dash-action-tile" onclick="App.Return.openReturnModal()" title="Return goods to a vendor">
+          <i class="bi bi-arrow-return-left" aria-hidden="true"></i><span>Return Goods</span>
+        </button>
+      </div>
 
-      <span class="dash-action-sep" aria-hidden="true"></span>
-
-      <button class="btn btn-dark dash-action-tile" onclick="App.Production.openCreateModal()" title="Log a new production lot">
-        <i class="bi bi-play-circle" aria-hidden="true"></i><span>Log Production</span>
-      </button>
-      <button class="btn btn-dark dash-action-tile" onclick="App.Issue.openIssueModal()" title="Issue stock to a contractor or process">
-        <i class="bi bi-box-arrow-up" aria-hidden="true"></i><span>Issue Stock</span>
-      </button>
-      <button class="btn btn-success dash-action-tile" data-action="dash-new-dispatch" title="Record a dispatch bill going out to a client (stock out)">
-        <i class="bi bi-truck" aria-hidden="true"></i><span>Record New Bill</span>
-      </button>
-      <button class="btn btn-secondary dash-action-tile" onclick="App.Wastage.openWastageModal()" title="Log wasted or scrapped material">
-        <i class="bi bi-trash3" aria-hidden="true"></i><span>Log Wastage</span>
-      </button>
+      <div class="dash-action-set" role="group" aria-label="Production and dispatch" style="--dash-tiles: 4;">
+        <button class="btn btn-dark dash-action-tile" onclick="App.Production.openCreateModal()" title="Log a new production lot">
+          <i class="bi bi-play-circle" aria-hidden="true"></i><span>Log Production</span>
+        </button>
+        <button class="btn btn-dark dash-action-tile" onclick="App.Issue.openIssueModal()" title="Issue stock to a contractor or process">
+          <i class="bi bi-box-arrow-up" aria-hidden="true"></i><span>Issue Stock</span>
+        </button>
+        <button class="btn btn-success dash-action-tile" data-action="dash-new-dispatch" title="Record a dispatch bill going out to a client (stock out)">
+          <i class="bi bi-truck" aria-hidden="true"></i><span>Record New Bill</span>
+        </button>
+        <button class="btn btn-secondary dash-action-tile" onclick="App.Wastage.openWastageModal()" title="Log wasted or scrapped material">
+          <i class="bi bi-trash3" aria-hidden="true"></i><span>Log Wastage</span>
+        </button>
+      </div>
     </div>
 
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 dash-quick-secondary">
