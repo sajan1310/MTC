@@ -933,6 +933,13 @@ textarea:focus-visible,
 
 .mb-stat-tile-value.mb-alert { color: var(--mb-enamel-red-ink); }
 
+/* The same red for every other figure marked as an alert: a Stock card's
+   low quantity, a stock group row's. Only the tile above had a rule, so
+   those rendered in plain ink and the small chip beside them carried the
+   whole warning. Placed after .mb-card-number on purpose -- the two are
+   equal in specificity, so source order is what makes the red win. */
+.mb-alert { color: var(--mb-enamel-red-ink); }
+
 /* ── Enamel chips / badges — the signature element ──────────────────── */
 .mb-chip {
   display: inline-flex;
@@ -1752,8 +1759,12 @@ textarea:focus-visible,
 
 .mb-btn-danger { background: var(--mb-enamel-red-bg); color: var(--mb-enamel-red-ink); }
 
+/* border: 0 because the base button rule only sets the font: without it
+   each text button (Download / print, Expand all, a row's Edit and Delete)
+   drew the browser's default grey box -- white in the dark theme. */
 .mb-btn-text {
   background: none;
+  border: 0;
   color: var(--mb-enamel-blue-ink);
   min-height: var(--mb-tap-min);
   width: auto;
