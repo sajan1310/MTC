@@ -107,7 +107,12 @@
 // the Primary it was saved with even after the process default moved, a
 // negative allocation cell is refused, and the save names the Primary group
 // by its key as well as its label.
-const CACHE_NAME = 'erp-mobile-shell-v69';
+// v70: the Log Lot sheet fills in a picked process's size, model and type
+// again (shown, never filtered on, so the process list stays whole), clears
+// after each lot while staying open (date and "Assigned by" carry over),
+// keeps working offline by rebuilding a process already loaded, and its
+// Add material list says how much of each Stock item is on hand.
+const CACHE_NAME = 'erp-mobile-shell-v70';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

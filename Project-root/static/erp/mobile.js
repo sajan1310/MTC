@@ -1602,8 +1602,10 @@ MApp.Sheet.initHistory();
 // ================================================================
 // PICKER — generic full-screen searchable picker (replaces Select2).
 // Usage: const picked = await MApp.Picker.open({ title, items }); items:
-// [{ value, label, sublabel }]. Resolves the chosen item, or null if
-// dismissed.
+// [{ value, label, sublabel, detail }]. Resolves the chosen item, or null
+// if dismissed. `detail` is optional: shown after the sublabel, but NOT
+// searched -- for a live figure such as stock on hand, which in the
+// searched text would make "rim 20" match every rim holding 20-something.
 // ================================================================
 MApp.Picker = {
   _resolve: null,
@@ -1703,8 +1705,9 @@ MApp.Picker = {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'mb-picker-option' + (item.value === this._selectedValue ? ' selected' : '');
-      const sub = item.sublabel
-        ? `<br><span class="mb-text-sm mb-text-steel">${MApp.Util.escapeHtml(item.sublabel)}</span>`
+      const subText = [item.sublabel, item.detail].filter(Boolean).join(' · ');
+      const sub = subText
+        ? `<br><span class="mb-text-sm mb-text-steel">${MApp.Util.escapeHtml(subText)}</span>`
         : '';
       btn.innerHTML = `<span>${MApp.Util.escapeHtml(item.label)}${sub}</span>`;
       btn.addEventListener('click', () => {
@@ -5101,6 +5104,8 @@ MApp.Production = {
   editingLot: null,
   _procSelectSeq: 0,
   _materialsOpen: false,
+  // The process the last lot from this sheet was logged under; see pickProcess.
+  _lastLoggedProcessId: '',
 
   mount() {
     this.bomProducts = null;
@@ -5129,7 +5134,11 @@ MApp.Production = {
 
       const procRes = await procPromise;
       this.lots = lotsRes.data || [];
-      this.allProcesses = (procRes && procRes.success) ? (procRes.data || []) : [];
+      // A failed read keeps the processes already loaded rather than
+      // emptying them. load() runs after every lot is logged, so offline
+      // an empty list meant the cleared sheet's process picker offered
+      // nothing at all -- not even the process just logged.
+      if (procRes && procRes.success) this.allProcesses = procRes.data || [];
       this.activeProcesses = this.allProcesses.filter(p => p.active);
       this.processById = {};
       this.allProcesses.forEach(p => { this.processById[p.processId] = p; });
@@ -5577,6 +5586,7 @@ MApp.Production = {
     const e = MApp.Util.escapeHtml;
     const status = this.selectedStatus || 'Pending';
     const process = this.selection.process;
+    const shown = this._cascadeShown();
     const processBlock = lot
       ? `
       <div class="mb-field">
@@ -5593,15 +5603,15 @@ MApp.Production = {
       <div class="mapp-lot-cascade">
         <div class="mb-field">
           <label>Size</label>
-          ${this._pickerFieldHtml('lot-size-field', this.selection.size, 'Any size', false)}
+          ${this._pickerFieldHtml('lot-size-field', shown.size, 'Any size', false)}
         </div>
         <div class="mb-field">
           <label>Model</label>
-          ${this._pickerFieldHtml('lot-model-field', this.selection.model, this.selection.size ? 'Any model' : 'Choose a size first', !this.selection.size)}
+          ${this._pickerFieldHtml('lot-model-field', shown.model, shown.size ? 'Any model' : 'Choose a size first', !shown.size)}
         </div>
         <div class="mb-field">
           <label>Process type</label>
-          ${this._pickerFieldHtml('lot-type-field', this.selection.type, this.selection.model ? 'Any type' : 'Choose a model first', !this.selection.model)}
+          ${this._pickerFieldHtml('lot-type-field', shown.type, shown.model ? 'Any type' : 'Choose a model first', !shown.model)}
         </div>
       </div>`;
 
@@ -5698,17 +5708,13 @@ MApp.Production = {
     return [size, model, p.processType || 'General', p.sequence != null ? `Stage ${p.sequence}` : ''].filter(Boolean).join(' · ');
   },
 
-  // The three cascade fields are a FILTER the operator sets, and nothing
-  // else. They used to double as a readout of whichever process was
-  // picked, which quietly turned that process's own size, model and type
-  // into the filter -- so re-opening the process picker offered only the
-  // processes that matched all three, which for most lots is the one
-  // process just chosen. On a fresh form that was merely confusing; after
-  // logging a lot, where the form stays open on the same process for the
-  // next one, it meant the list came back holding a single entry and the
-  // form could not be reused for anything else. The process's size, model
-  // and type are already on screen, in the hint under the Process field
-  // (_processSublabel), which is where a readout belongs.
+  // selection.size/model/type are the FILTER the operator sets, and the
+  // process picker offers only what matches it. They used to double as a
+  // readout of whichever process was picked -- the pick wrote that
+  // process's own size, model and type INTO the filter, so re-opening the
+  // process picker offered only the processes matching all three, which
+  // for most lots is the one process just chosen. The readout lives in
+  // _cascadeShown() instead: the fields show it, and nothing filters on it.
   _cascadeMatches() {
     return this.activeProcesses
       .filter(p => !this.selection.size || this.getSizeFromOutputItemName(p.outputItemName) === this.selection.size)
@@ -5716,14 +5722,30 @@ MApp.Production = {
       .filter(p => !this.selection.type || (p.processType || 'General') === this.selection.type);
   },
 
+  // What the Size, Model and Process type fields SHOW: the operator's own
+  // narrowing wherever they set one, and otherwise the chosen process's
+  // own size, model and type -- so picking a process by name fills all
+  // three in, as the sheet always did, without any of it narrowing the
+  // process list (see _cascadeMatches).
+  _cascadeShown() {
+    const s = this.selection;
+    const p = s.process;
+    return {
+      size: s.size || (p ? this.getSizeFromOutputItemName(p.outputItemName) : ''),
+      model: s.model || (p ? this.getModelFromOutputItemName(p.outputItemName) : ''),
+      type: s.type || (p ? (p.processType || 'General') : '')
+    };
+  },
+
   _applyCascadeEnabledStates() {
+    const shown = this._cascadeShown();
     const modelBtn = document.getElementById('lot-model-field');
     const typeBtn = document.getElementById('lot-type-field');
-    if (modelBtn) modelBtn.disabled = !this.selection.size;
-    if (typeBtn) typeBtn.disabled = !this.selection.model;
-    this._updateFieldLabel('lot-size-field', this.selection.size, 'Any size');
-    this._updateFieldLabel('lot-model-field', this.selection.model, this.selection.size ? 'Any model' : 'Choose a size first');
-    this._updateFieldLabel('lot-type-field', this.selection.type, this.selection.model ? 'Any type' : 'Choose a model first');
+    if (modelBtn) modelBtn.disabled = !shown.size;
+    if (typeBtn) typeBtn.disabled = !shown.model;
+    this._updateFieldLabel('lot-size-field', shown.size, 'Any size');
+    this._updateFieldLabel('lot-model-field', shown.model, shown.size ? 'Any model' : 'Choose a size first');
+    this._updateFieldLabel('lot-type-field', shown.type, shown.model ? 'Any type' : 'Choose a model first');
   },
 
   // Disables every picker + Save while a process's colour groups and
@@ -5740,9 +5762,11 @@ MApp.Production = {
   },
 
   // Narrowing the cascade drops a chosen process that no longer fits it.
+  // Compared by id: load() replaces the process objects, so the chosen one
+  // can be an earlier copy of a process that still fits.
   _cascadeChanged() {
     const p = this.selection.process;
-    if (p && !this._cascadeMatches().includes(p)) this._clearProcess();
+    if (p && !this._cascadeMatches().some(m => m.processId === p.processId)) this._clearProcess();
     this._applyCascadeEnabledStates();
   },
 
@@ -5767,7 +5791,7 @@ MApp.Production = {
     if (sizesPresent.has('General')) ordered.push('General');
     const items = [{ value: '', label: 'Any size' }, ...ordered.map(s => ({ value: s, label: s }))];
 
-    const picked = await MApp.Picker.open({ title: 'Choose a size', items, selectedValue: this.selection.size, searchable: false });
+    const picked = await MApp.Picker.open({ title: 'Choose a size', items, selectedValue: this._cascadeShown().size, searchable: false });
     if (!picked) return;
     this.selection.size = picked.value;
     this.selection.model = '';
@@ -5775,35 +5799,48 @@ MApp.Production = {
     this._cascadeChanged();
   },
 
+  // Model and type are chosen WITHIN what the fields above them show. When
+  // that is a chosen process's own size (or size and model) rather than a
+  // filter the operator set, picking a specific model (or type) makes it
+  // part of the filter -- a model is only ever offered for the size on
+  // screen, so narrowing by it is narrowing by that size too. "Any"
+  // narrows by nothing, so it adopts nothing.
   async pickModel() {
-    if (!this.selection.size) return;
-    const matches = this.activeProcesses.filter(p => this.getSizeFromOutputItemName(p.outputItemName) === this.selection.size);
+    const { size } = this._cascadeShown();
+    if (!size) return;
+    const matches = this.activeProcesses.filter(p => this.getSizeFromOutputItemName(p.outputItemName) === size);
     const modelsPresent = new Set(matches.map(p => this.getModelFromOutputItemName(p.outputItemName)));
     const masterNames = (this.models || []).map(m => m.name);
     const ordered = masterNames.filter(n => modelsPresent.has(n));
     if (modelsPresent.has('General')) ordered.push('General');
     const items = [{ value: '', label: 'Any model' }, ...ordered.map(m => ({ value: m, label: m }))];
 
-    const picked = await MApp.Picker.open({ title: 'Choose a model', items, selectedValue: this.selection.model });
+    const picked = await MApp.Picker.open({ title: 'Choose a model', items, selectedValue: this._cascadeShown().model });
     if (!picked) return;
+    if (picked.value) this.selection.size = size;
     this.selection.model = picked.value;
     this.selection.type = '';
     this._cascadeChanged();
   },
 
   async pickProcessType() {
-    if (!this.selection.model) return;
+    const { size, model } = this._cascadeShown();
+    if (!model) return;
     const matches = this.activeProcesses
-      .filter(p => this.getSizeFromOutputItemName(p.outputItemName) === this.selection.size)
-      .filter(p => this.getModelFromOutputItemName(p.outputItemName) === this.selection.model);
+      .filter(p => this.getSizeFromOutputItemName(p.outputItemName) === size)
+      .filter(p => this.getModelFromOutputItemName(p.outputItemName) === model);
     const typesPresent = new Set(matches.map(p => p.processType || 'General'));
     const masterNames = (this.processTypes || []).map(t => t.name);
     const ordered = masterNames.filter(t => typesPresent.has(t));
     if (typesPresent.has('General')) ordered.push('General');
     const items = [{ value: '', label: 'Any type' }, ...ordered.map(t => ({ value: t, label: t }))];
 
-    const picked = await MApp.Picker.open({ title: 'Choose a process type', items, selectedValue: this.selection.type });
+    const picked = await MApp.Picker.open({ title: 'Choose a process type', items, selectedValue: this._cascadeShown().type });
     if (!picked) return;
+    if (picked.value) {
+      this.selection.size = size;
+      this.selection.model = model;
+    }
     this.selection.type = picked.value;
     this._cascadeChanged();
   },
@@ -5811,9 +5848,14 @@ MApp.Production = {
   // Every active process the cascade allows -- all of them when nothing
   // is narrowed -- searchable by any word of its name or of its size,
   // model and type. The processes logged most recently come first: the
-  // one a supervisor wants is nearly always one they logged today.
+  // one a supervisor wants is nearly always one they logged today. The one
+  // logged from THIS sheet leads, whatever the lot list says: the sheet
+  // clears after each lot, the next lot is most often the same process for
+  // someone else, and the list may not have reloaded yet -- offline it
+  // cannot, so the lot just queued is not in it at all.
   async pickProcess() {
     const recentRank = new Map();
+    if (this._lastLoggedProcessId) recentRank.set(this._lastLoggedProcessId, 0);
     (this.lots || []).forEach(l => {
       if (l.processId && !recentRank.has(l.processId) && recentRank.size < 6) recentRank.set(l.processId, recentRank.size);
     });
@@ -5851,9 +5893,11 @@ MApp.Production = {
     // colour groups. Same mySeq idiom as Bills/Vendors openForm().
     const mySeq = ++this._procSelectSeq;
 
-    // Deliberately does NOT write the cascade fields -- see _cascadeMatches.
+    // Deliberately does NOT write the cascade FILTER -- see _cascadeMatches.
     // Whatever the operator narrowed by stays narrowed by exactly that, and
-    // a process picked from the full list leaves the filter open.
+    // a process picked from the full list leaves the filter open. The
+    // fields still fill in with this process's size, model and type, as a
+    // readout (_cascadeShown), painted here rather than once the loads land.
     this.selection.processId = processId;
     this.selection.process = process;
     if (!opts.lot) {
@@ -5867,6 +5911,7 @@ MApp.Production = {
     this._updateFieldLabel('lot-process-field', process.processName, 'Search all processes…');
     const hint = document.getElementById('lot-process-hint');
     if (hint) hint.textContent = this._processSublabel(process);
+    this._applyCascadeEnabledStates();
 
     this._setCascadeBusy(true);
     const qtySection = document.getElementById('lot-qty-section');
@@ -5892,7 +5937,7 @@ MApp.Production = {
         this.bomProducts = ok(bomRes) ? (bomRes.data || []) : [];
       }
 
-      this.model = MApp.LotModel.using({
+      const ctx = {
         process,
         outputItemName: this.outputItemName || process.outputItemName || '',
         colors: ok(groupsRes) ? (groupsRes.data || []) : [],
@@ -5902,17 +5947,50 @@ MApp.Production = {
         stock: ok(stockRes) ? (stockRes.data || []) : [],
         items: this.items,
         colorMaster: this.colorMaster
-      });
+      };
+      // Only a process whose own three reads all came back is kept for the
+      // offline rebuild below: rebuilt from a half load, it would come back
+      // missing its colours or its recipe.
+      if (ok(groupsRes) && ok(axesRes) && ok(compRes)) this._rememberProcessCtx(processId, ctx);
+      this.model = MApp.LotModel.using(ctx);
       if (opts.lot) this.model.restore(opts.lot);
       this._applyProcessVisibility();
       this._renderLotSections();
       this._showContractorRate();
     } catch (err) {
       if (mySeq !== this._procSelectSeq) return;
+      // No network to read the process from. The sheet clears after every
+      // lot, so logging a run of lots into the outbox means picking the
+      // same process again -- and that process was loaded for the lot just
+      // logged. It is rebuilt from what that load brought back, which is
+      // what kept the sheet usable offline back when it stayed on the
+      // process instead of clearing -- and said so, because its recipe,
+      // stock and pool figures are as of that load, not now. A process
+      // never loaded here still fails, as it always has.
+      const kept = (err && err.isNetworkError && !opts.lot) ? this._processCtx.get(processId) : null;
+      if (kept) {
+        this._reseedFromContext(process, kept.ctx);
+        MApp.Toast.show(`You're offline — ${process.processName} as loaded ${MApp.Util.relativeTime(kept.loadedAt)}. Stock and pool figures are from then.`);
+        return;
+      }
       MApp.Toast.error('Could not load this process: ' + (err.message || ''));
       if (qtySection) qtySection.innerHTML = '';
     } finally {
       if (mySeq === this._procSelectSeq) this._setCascadeBusy(false);
+    }
+  },
+
+  // Each process's reference data as last loaded, and when, newest last,
+  // for the offline rebuild in onProcessSelected. A handful is plenty: it
+  // is the processes of the run being logged, not a cache of the factory.
+  _processCtx: new Map(),
+  PROCESS_CTX_KEEP: 8,
+
+  _rememberProcessCtx(processId, ctx) {
+    this._processCtx.delete(processId);
+    this._processCtx.set(processId, { ctx, loadedAt: Date.now() });
+    while (this._processCtx.size > this.PROCESS_CTX_KEEP) {
+      this._processCtx.delete(this._processCtx.keys().next().value);
     }
   },
 
@@ -6468,12 +6546,34 @@ MApp.Production = {
   // Desktop's "+ Add Component": any Items Master item, or a Warehouse
   // Pool bucket (item and colour), for the whole lot or one colour. It
   // starts at one per unit of what it is for.
+  //
+  // Every option says what it holds -- a pool bucket its balance, a Stock
+  // item its stock on hand in its own unit -- because this is the moment
+  // the material is chosen. The Stock items used to say only "Stock", so
+  // one with nothing on the shelf looked no different from one with
+  // plenty. The figure rides in `detail`, which the picker shows but does
+  // not search (see MApp.Picker).
   async addMaterial() {
     const m = this.model;
     if (!m) return;
-    const items = (this.items || []).map((it, i) => ({
-      value: `item:${i}`, label: it.size ? `${it.name} [${it.size}]` : it.name, sublabel: 'Stock', src: 'ITEM', name: it.name, size: it.size || '', unit: ''
-    }));
+    const fq = v => MApp.LotModel.formatQty(v);
+    // One pass over Stock, keyed as Items Master names the item and size.
+    // An item with no Stock row gets no figure, rather than a zero that
+    // would claim a count nobody made.
+    const key = (name, size) => `${String(name || '').trim().toLowerCase()}|${String(size || '').trim().toLowerCase()}`;
+    const onHand = new Map();
+    (m.ctx.stock || []).forEach(s => {
+      const k = key(s.name, s.size);
+      if (!onHand.has(k)) onHand.set(k, Number(s.currentStock) || 0);
+    });
+    const items = (this.items || []).map((it, i) => {
+      const qty = onHand.get(key(it.name, it.size));
+      return {
+        value: `item:${i}`, label: it.size ? `${it.name} [${it.size}]` : it.name, sublabel: 'Stock',
+        detail: qty === undefined ? '' : `${fq(qty)} ${it.baseUnit || 'Pcs'} avail.`,
+        src: 'ITEM', name: it.name, size: it.size || '', unit: ''
+      };
+    });
     const avail = m.poolAvailByItemColor();
     const pool = [];
     avail.forEach((colors, itemLower) => {
@@ -6481,7 +6581,7 @@ MApp.Production = {
       colors.forEach((qty, colorLower) => {
         const color = ((m.ctx.poolRows || []).find(r => String(r.outputItemName || '').trim().toLowerCase() === itemLower
           && String(r.color || '').trim().toLowerCase() === colorLower) || {}).color || '';
-        pool.push({ value: `pool:${pool.length}`, label: color ? `${name} · ${color}` : name, sublabel: `Warehouse Pool · ${MApp.LotModel.formatQty(qty)} avail.`, src: 'POOL', name, size: '', poolColor: color });
+        pool.push({ value: `pool:${pool.length}`, label: color ? `${name} · ${color}` : name, sublabel: 'Warehouse Pool', detail: `${fq(qty)} avail.`, src: 'POOL', name, size: '', poolColor: color });
       });
     });
     const picked = await MApp.Picker.open({ title: 'Add material', items: pool.concat(items), allowCustom: true });
@@ -6598,9 +6698,6 @@ MApp.Production = {
     const idleLabel = isEdit ? 'Save Changes' : 'Log Lot';
 
     MApp.Util.setSheetBusy('log-lot-body', 'log-lot-save-btn', true, busyLabel);
-    // This process's reference data, kept for the reset below to re-seed
-    // from. Read here because _resetFormState() nulls this.model.
-    const savedCtx = this.model ? this.model.ctx : null;
     let saved = null;
     try {
       const res = await Api.mutateWithId('saveProduction', mutationId, formData);
@@ -6640,15 +6737,17 @@ MApp.Production = {
     // failure while rebuilding the form must not fall into the catch above
     // and be reported as "Could not save this lot. Please try again." --
     // that reads as a failed save, and gets the same lot logged twice.
-    await this._onLotSaved(saved.message, { ctx: savedCtx, offline: saved.offline });
+    await this._onLotSaved(saved.message);
   },
 
-  // An edit closes the sheet. A new lot keeps it open on the same process,
-  // date and supervisor, with the quantities, contractor and remarks
-  // cleared -- the next lot is nearly always the same process for someone
-  // else, and re-picking the process four levels deep for every one of
-  // them was the slowest part of logging a run of lots.
-  async _onLotSaved(message, opts = {}) {
+  // An edit closes the sheet. A new lot leaves it OPEN and cleared, ready
+  // for the next one. It used to stay on the process just logged, with
+  // that process's colours and materials still on screen -- a form that
+  // read as though the lot had not been logged at all. Picking the next
+  // process is one search (pickProcess), the one just used is first on
+  // its list, and offline it comes back from what its load brought
+  // (onProcessSelected).
+  async _onLotSaved(message) {
     const toast = String(message || '').includes('Warning') ? MApp.Toast.error : MApp.Toast.success;
     toast.call(MApp.Toast, message);
     const saveBtn = document.getElementById('log-lot-save-btn');
@@ -6656,8 +6755,10 @@ MApp.Production = {
       this.editingLot = null;
       this.closeLogLotSheet();
     } else {
+      // Read before the reset clears the selection -- see pickProcess.
+      this._lastLoggedProcessId = this.selection.processId || '';
       try {
-        await this.resetLogLotForm({ keepProcess: true, ctx: opts.ctx, reuseContext: !!opts.offline });
+        await this.resetLogLotForm({ keepDateAndSupervisor: true });
       } catch (err) {
         // The lot is saved; only the form for the NEXT one failed to
         // rebuild. Close it rather than leave a half-built sheet behind,
@@ -6670,12 +6771,15 @@ MApp.Production = {
     this.load();
   },
 
-  async resetLogLotForm(opts = {}) {
-    const keep = opts.keepProcess ? this.selection.process : null;
-    // Read before _resetFormState() nulls this.model.
-    const ctx = opts.ctx || (this.model ? this.model.ctx : null);
-    this._keepDate = keep ? (document.getElementById('lot-date')?.value || '') : '';
-    this._keepAssignedBy = keep ? (document.getElementById('lot-assignedby')?.value || '') : '';
+  // A blank create form: process, size/model/type, colours, quantities,
+  // materials, contractor, extra charge, status and remarks all cleared.
+  // After a lot is logged the date and "Assigned by" carry over -- they
+  // say when, and by whom, a run of lots is being logged, not anything
+  // about the lot just logged, and a run logged for a past date would
+  // otherwise slip back to today on the second lot without anyone seeing.
+  async resetLogLotForm({ keepDateAndSupervisor = false } = {}) {
+    this._keepDate = keepDateAndSupervisor ? (document.getElementById('lot-date')?.value || '') : '';
+    this._keepAssignedBy = keepDateAndSupervisor ? (document.getElementById('lot-assignedby')?.value || '') : '';
     this._resetFormState();
     const body = document.getElementById('log-lot-body');
     if (!body) return;
@@ -6683,27 +6787,20 @@ MApp.Production = {
     this._wireForm();
     this._keepDate = '';
     this._keepAssignedBy = '';
-    if (!keep) return;
-
-    // onProcessSelected re-reads five endpoints. After a save that went to
-    // the outbox there is no network to read them from, so the form came
-    // back naming a process but with no quantity and no materials section
-    // -- unusable for the next lot, exactly when the queue matters most.
-    // This process's reference data is already in hand, so re-seed from it.
-    if (opts.reuseContext && ctx && ctx.process && ctx.process.processId === keep.processId) {
-      this._reseedFromContext(keep, ctx);
-      return;
-    }
-    await this.onProcessSelected(keep.processId);
+    // Back to the top, where the next lot starts: Log Lot is pressed at
+    // the bottom of a long form, and the cleared one is much shorter.
+    body.scrollTop = 0;
   },
 
   // The half of onProcessSelected that needs no network: restore the
   // selection this process implies and build a blank lot model from
   // reference data already loaded for it. Synchronous, so it cannot be
-  // overtaken -- no seq guard needed beyond the one _resetFormState took.
+  // overtaken -- its one caller, onProcessSelected's offline path, has
+  // already checked that its own load is still the current one.
   _reseedFromContext(process, ctx) {
     // Same as onProcessSelected: the cascade filter is the operator's and
-    // is left where they left it.
+    // is left where they left it; the fields show this process through
+    // _cascadeShown (painted by _applyCascadeEnabledStates below).
     this.selection.processId = process.processId;
     this.selection.process = process;
     this.outputItemName = process.outputItemName || '';

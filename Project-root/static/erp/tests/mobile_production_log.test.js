@@ -3,13 +3,14 @@
  *
  * What the lot records is mobile_lot_model_parity.test.js's business --
  * that suite holds the phone's model to desktop's form. This one is the
- * screen: that a process can be found without climbing four pickers, that
- * a colour's quantity is typed rather than stepped one tap at a time, that
- * what the lot consumes is on screen and correctable (and a correction
- * stays put), that saving sends the model's payload and keeps the sheet
- * ready for the next lot of the same process, that an edit sends back what
- * the lot saved when nothing that feeds it changed, and that deleting
- * carries desktop's concurrency guard.
+ * screen: that a process can be found without climbing four pickers, and
+ * fills in its size, model and type when it is, that a colour's quantity
+ * is typed rather than stepped one tap at a time, that what the lot
+ * consumes is on screen and correctable (and a correction stays put), that
+ * saving sends the model's payload and leaves a cleared sheet, still open,
+ * for the next lot, that an edit sends back what the lot saved when nothing
+ * that feeds it changed, and that deleting carries desktop's concurrency
+ * guard.
  */
 
 'use strict';
@@ -180,25 +181,87 @@ describe('finding the process', () => {
     expect(MApp.Production.selection).toMatchObject({ size: '', model: '', type: '' });
   });
 
-  // The regression this cascade-as-readout caused: the form stays open on
-  // the same process after a lot is logged, so the process picker came back
-  // narrowed to that process's own size AND model AND type -- in practice
-  // the one process just used, with every other process gone from a list
-  // whose field still said "Search all processes…".
-  test('the process picker still offers every process after a lot is logged', async () => {
-    await openWithProcess('Frame Painting 20');
-    await tap(rowFor('Red').querySelector('[data-row-toggle]'));
-    type(rowFor('Red').querySelector('.mapp-lot-color-qty'), 20);
-    picks.push('Rakesh');
-    await tap($('#lot-assignedto-field'));
-    await MApp.Production.saveLot();
-    await flush(); await flush();
+  // Typing a process's name and picking it fills in the three fields below
+  // it, as the sheet always did before they were emptied on 25 Sept.
+  test('picking a process fills in its size, model and type', async () => {
+    await openWithProcess('Assembly Kalpi 20');
+    expect($('#lot-size-field').textContent).toBe('20 inch');
+    expect($('#lot-model-field').textContent).toBe('Kalpi');
+    expect($('#lot-type-field').textContent).toBe('Assembly');
+    expect($('#lot-model-field').disabled).toBe(false);
+    expect($('#lot-type-field').disabled).toBe(false);
+    expect($$('.mapp-lot-cascade .mb-placeholder')).toEqual([]);
 
-    expect($('#lot-process-field').textContent).toBe('Frame Painting 20');
+    // Another process, and the three fields follow it.
+    picks.push('Tube Cutting');
+    await tap($('#lot-process-field'));
+    expect($('#lot-size-field').textContent).toBe('26 inch');
+    expect($('#lot-model-field').textContent).toBe('General');
+    expect($('#lot-type-field').textContent).toBe('Cutting');
+  });
+
+  // Why the fill was taken out: it was written INTO the filter, so the
+  // process picker then offered only the processes matching the chosen
+  // one's size AND model AND type -- in practice that one process, under a
+  // field still reading "Search all processes…". What the fields show for
+  // a chosen process must never narrow the list; only what the operator
+  // picks in them does.
+  test('a chosen process\'s size, model and type do not narrow the process list', async () => {
+    await openWithProcess('Frame Painting 20');
+    expect($('#lot-size-field').textContent).toBe('20 inch');
     MApp.Picker.open.mockClear();
     await tap($('#lot-process-field'));
     const offered = MApp.Picker.open.mock.calls[0][0].items.map(i => i.label);
     expect(offered).toEqual(expect.arrayContaining(['Frame Painting 20', 'Assembly Kalpi 20', 'Tube Cutting']));
+  });
+
+  test('narrowing by model narrows within the size on screen', async () => {
+    await openWithProcess('Frame Painting 20');
+    picks.push('Kalpi');
+    await tap($('#lot-model-field'));
+    expect(MApp.Production.selection).toMatchObject({ size: '20 inch', model: 'Kalpi', type: '' });
+    // Still a Kalpi 20-inch process, so it stays chosen, type and all.
+    expect(MApp.Production.selection.process.processId).toBe('PRC-PNT');
+    expect($('#lot-type-field').textContent).toBe('Painting');
+
+    MApp.Picker.open.mockClear();
+    await tap($('#lot-process-field'));
+    const offered = MApp.Picker.open.mock.calls[0][0].items.map(i => i.label);
+    expect(offered).toEqual(expect.arrayContaining(['Frame Painting 20', 'Assembly Kalpi 20']));
+    expect(offered).not.toContain('Tube Cutting');
+  });
+
+  test('"Any model" narrows by nothing, not even the size on screen', async () => {
+    await openWithProcess('Frame Painting 20');
+    picks.push('Any model');
+    await tap($('#lot-model-field'));
+    expect(MApp.Production.selection).toMatchObject({ size: '', model: '', type: '' });
+    expect(MApp.Production.selection.process.processId).toBe('PRC-PNT');
+    expect($('#lot-model-field').textContent).toBe('Kalpi');
+
+    MApp.Picker.open.mockClear();
+    await tap($('#lot-process-field'));
+    expect(MApp.Picker.open.mock.calls[0][0].items.map(i => i.label)).toContain('Tube Cutting');
+  });
+
+  // load() replaces every process object, and runs after each save and on
+  // a pull to refresh. A chosen process that still fits the filter must
+  // stay chosen even though it is now an older copy of itself.
+  test('a chosen process that still fits survives the list being reloaded under it', async () => {
+    await openWithProcess('Frame Painting 20');
+    // The server answers every read with new objects; the fixture's own
+    // array would hand back the very same ones.
+    const original = MApp.Api.call;
+    MApp.Api.call = jest.fn(async (method, ...args) => (method === 'getProcessData'
+      ? { success: true, data: PROCESSES.map(p => ({ ...p })) }
+      : original(method, ...args)));
+    await MApp.Production.load();
+    expect(MApp.Production.activeProcesses).not.toContain(MApp.Production.selection.process);
+    picks.push('20 inch');
+    await tap($('#lot-size-field'));
+    expect(MApp.Production.selection.process).not.toBeNull();
+    expect(MApp.Production.selection.process.processId).toBe('PRC-PNT');
+    expect(MApp.Production.model).not.toBeNull();
   });
 
   test('the processes logged most recently come first', async () => {
@@ -215,6 +278,11 @@ describe('finding the process', () => {
     picks.push('26 inch');
     await tap($('#lot-size-field'));
     expect(MApp.Production.selection.process).toBeNull();
+    // With no process chosen, the fields show only the operator's own filter.
+    expect($('#lot-size-field').textContent).toBe('26 inch');
+    expect($('#lot-model-field').textContent).toBe('Any model');
+    expect($('#lot-type-field').textContent).toBe('Choose a model first');
+    expect($('#lot-type-field').disabled).toBe(true);
     await tap($('#lot-process-field'));
     expect(MApp.Picker.open.mock.calls.pop()[0].items.map(i => i.label)).toEqual(['Tube Cutting']);
   });
@@ -319,6 +387,40 @@ describe('what the lot consumes', () => {
     expect(bell.querySelector('input').value).toBe('8');
     expect(MApp.Production.model.payloadLines().find(l => l.itemName === 'Bell')).toMatchObject({ colorGroup: 'Red', qty: 8, sourceType: 'ITEM' });
   });
+
+  // The pool buckets on this list always said what they held; the Stock
+  // items said only "Stock", so a material could be picked with none of
+  // it on the shelf and the shortfall only showed once it was on the lot.
+  test('the item list says how much of each item is in stock', async () => {
+    await openWithProcess('Frame Painting 20');
+    MApp.Production.items.push({ name: 'Grip Tape', size: '', baseUnit: 'Mtr', narration: '' });
+    MApp.Picker.open.mockClear();
+    await tap($('[data-mat-add]'));   // nothing queued: looked at, then dismissed
+    const offered = MApp.Picker.open.mock.calls[0][0].items;
+    const byLabel = label => offered.find(i => i.label === label);
+    expect(byLabel('Bell [GENERAL]')).toMatchObject({ sublabel: 'Stock', detail: '500 Pcs avail.' });
+    expect(byLabel('Primer [5 L]')).toMatchObject({ sublabel: 'Stock', detail: '3 Ltr avail.' });
+    // An item with no Stock row says nothing, rather than a zero it doesn't know.
+    expect(byLabel('Grip Tape')).toMatchObject({ sublabel: 'Stock' });
+    expect(byLabel('Grip Tape').detail || '').toBe('');
+    expect(byLabel('Painted Frame · Red-White')).toMatchObject({ sublabel: 'Warehouse Pool', detail: '30 avail.' });
+  });
+
+  // A figure is shown with the sublabel but kept out of the search: sizes
+  // are searched by number ("rim 20"), and a stock figure in the searched
+  // text would pull in every other size that happens to hold 20-something.
+  test('a picker shows an option\'s figure without searching it', () => {
+    document.body.insertAdjacentHTML('beforeend', '<div id="mapp-picker-list"></div>');
+    const items = [
+      { value: 'a', label: 'Rim [20 inch]', sublabel: 'Stock', detail: '14 Pcs avail.' },
+      { value: 'b', label: 'Rim [14 inch]', sublabel: 'Stock', detail: '20 Pcs avail.' }
+    ];
+    MApp.Picker._renderList(items, '');
+    expect($('#mapp-picker-list').textContent).toContain('Stock · 14 Pcs avail.');
+    expect($('#mapp-picker-list').textContent).toContain('Stock · 20 Pcs avail.');
+    const found = MApp.Search.run(MApp.Search.index(items, MApp.Picker.SEARCH), 'rim 20');
+    expect(found.map(i => i.value)).toEqual(['a']);
+  });
 });
 
 describe('saving', () => {
@@ -343,15 +445,79 @@ describe('saving', () => {
     expect(form.qty).toBeUndefined();
   });
 
-  test('keeps the sheet on the same process for the next lot', async () => {
+  // A logged lot leaves a blank sheet, still open, ready for the next lot:
+  // it used to stay filled in with the process, colours and materials of
+  // the lot just logged, which read as though it had not been logged.
+  test('clears the sheet for the next lot, and keeps it open', async () => {
+    await logRed(20);
+    $('#lot-date').value = '2026-09-20';
+    $('#lot-remarks').value = 'rush job';
+    MApp.Production.setStatus('In Progress');
+    picks.push('Rush');
+    await tap($('#lot-extracharge-field'));
+    await MApp.Production.saveLot();
+    await flush(); await flush();
+
+    expect($('#mapp-toast-stack').textContent).toContain('LOT-PNT-0032');
+    expect($('#sheet-log-lot').classList.contains('open')).toBe(true);
+    // Everything about the lot just logged is gone...
+    expect(MApp.Production.selection.process).toBeNull();
+    expect(MApp.Production.model).toBeNull();
+    expect($('#lot-process-field').textContent).toBe('Search all processes…');
+    expect($('#lot-size-field').textContent).toBe('Any size');
+    expect($('#lot-model-field').disabled).toBe(true);
+    expect($('#lot-qty-section').innerHTML).toBe('');
+    expect($('#lot-materials-section').innerHTML).toBe('');
+    expect($$('.mapp-lot-color')).toEqual([]);
+    expect($('#lot-output-wrap').classList.contains('mb-hidden')).toBe(true);
+    expect(MApp.Production.selectedAssignedTo).toBe('');
+    expect($('#lot-assignedto-field').textContent).toBe('Choose or add a name...');
+    expect($('#lot-extracharge-field').textContent).toBe('None');
+    expect($('#lot-remarks').value).toBe('');
+    expect($('[data-status="Pending"]').getAttribute('aria-pressed')).toBe('true');
+    // ...while when, and by whom, the run is being logged carry over.
+    expect($('#lot-date').value).toBe('2026-09-20');
+    expect($('#lot-assignedby').value).toBe('Gurmeet');
+    expect($('#log-lot-save-btn').disabled).toBe(false);
+    expect($('#log-lot-save-btn').textContent).toBe('Log Lot');
+  });
+
+  test('the cleared sheet logs the next lot, of any process', async () => {
     await logRed(20);
     await MApp.Production.saveLot();
     await flush(); await flush();
-    expect($('#lot-process-field').textContent).toBe('Frame Painting 20');
-    expect($('#lot-assignedby').value).toBe('Gurmeet');
-    expect(rowFor('Red').classList.contains('is-checked')).toBe(false);
-    expect(MApp.Production.selectedAssignedTo).toBe('');
-    expect($('#mapp-toast-stack').textContent).toContain('LOT-PNT-0032');
+
+    MApp.Picker.open.mockClear();
+    picks.push('Tube Cutting');
+    await tap($('#lot-process-field'));
+    const offered = MApp.Picker.open.mock.calls[0][0].items.map(i => i.label);
+    expect(offered).toEqual(expect.arrayContaining(['Frame Painting 20', 'Assembly Kalpi 20', 'Tube Cutting']));
+    expect($('#lot-size-field').textContent).toBe('26 inch');
+
+    type($('#lot-qty'), 40);
+    picks.push('Sanjay');
+    await tap($('#lot-assignedto-field'));
+    await MApp.Production.saveLot();
+    await flush();
+    expect(mutate).toHaveBeenCalledTimes(2);
+    expect(mutate.mock.calls[1][2]).toMatchObject({ processId: 'PRC-CUT', qty: 40, assignedTo: 'sanjay', assignedBy: 'Gurmeet' });
+  });
+
+  // The next lot is most often the same process for someone else, so the
+  // process just logged leads the list -- ahead of the lot list's own
+  // order, which here still puts Frame Painting 20 first.
+  test('the process just logged heads the list for the next lot', async () => {
+    await openWithProcess('Tube Cutting');
+    type($('#lot-qty'), 40);
+    MApp.Production.selectedAssignedTo = 'sanjay';
+    await MApp.Production.saveLot();
+    await flush(); await flush();
+
+    MApp.Picker.open.mockClear();
+    await tap($('#lot-process-field'));
+    const items = MApp.Picker.open.mock.calls[0][0].items;
+    expect(items.map(i => i.label).slice(0, 2)).toEqual(['Tube Cutting', 'Frame Painting 20']);
+    expect(items[0].sublabel).toMatch(/^Recent · 26 inch/);
   });
 
   test('shows what this lot will pay once contractor and quantity are known', async () => {
@@ -404,7 +570,11 @@ describe('reusing the sheet', () => {
     });
     Api.mutateWithId = fail;
     MApp.Api.call = fail;
-    MApp.Api.callCached = fail;
+    // As the real callCached does offline: the lot list comes back from
+    // the copy IndexedDB kept, and everything live fails.
+    MApp.Api.callCached = jest.fn(async method => (method === 'getProductionData'
+      ? { success: true, data: LOTS, _offlineCachedAt: '2026-09-26T09:00:00Z' }
+      : fail()));
   }
 
   test('a process load left in flight cannot paint the form that replaced it', async () => {
@@ -435,7 +605,7 @@ describe('reusing the sheet', () => {
     expect($('#log-lot-save-btn').disabled).toBe(false);
   });
 
-  test('a lot queued to the outbox still leaves a form the next lot can be typed into', async () => {
+  test('a lot queued to the outbox clears the sheet, and its process can be picked again offline', async () => {
     await enterRedLot(20);
     goOffline();
 
@@ -444,19 +614,55 @@ describe('reusing the sheet', () => {
 
     expect(OfflineCache.outbox.enqueue).toHaveBeenCalled();
     expect($('#mapp-toast-stack').textContent).toContain('will sync when back online');
-    // The reset cannot reach the five reads onProcessSelected makes, so it
-    // rebuilds from the reference data this process already had: the
-    // process, its colours and its recipe are all still on screen.
-    expect($('#lot-process-field').textContent).toBe('Frame Painting 20');
-    expect(MApp.Production.selection.process).not.toBeNull();
+    // Cleared exactly as a lot that reached the server clears it.
+    expect($('#lot-process-field').textContent).toBe('Search all processes…');
+    expect(MApp.Production.model).toBeNull();
+
+    // The five reads a process needs cannot be made, but this one was
+    // loaded for the lot just queued: it comes back from what that load
+    // brought, colours, recipe and all, cleared for the next lot.
+    picks.push('Frame Painting 20');
+    await tap($('#lot-process-field'));
+    await flush();
+    expect(MApp.Production.selection.process.processId).toBe('PRC-PNT');
     expect(MApp.Production.model).not.toBeNull();
     expect(rowFor('Red')).toBeTruthy();
-    expect($('#lot-materials-section').textContent).toContain('Primer');
-    // Cleared for the next lot, not carried over from the one just queued.
     expect(rowFor('Red').classList.contains('is-checked')).toBe(false);
+    expect($('#lot-materials-section').textContent).toContain('Primer');
+    expect($('#lot-size-field').textContent).toBe('20 inch');
     expect(MApp.Production.selectedAssignedTo).toBe('');
+    expect($('#mapp-toast-stack').textContent).not.toContain('Could not load this process');
+    // ...and says it is working from an earlier load, not the live one.
+    expect($('#mapp-toast-stack').textContent).toContain('Frame Painting 20 as loaded just now');
     expect($('#log-lot-save-btn').disabled).toBe(false);
     expect($('#lot-process-field').disabled).toBe(false);
+  });
+
+  test('offline, a process never loaded still says it cannot be loaded', async () => {
+    await enterRedLot(20);
+    goOffline();
+    await MApp.Production.saveLot();
+    await flush(); await flush();
+
+    picks.push('Tube Cutting');
+    await tap($('#lot-process-field'));
+    await flush();
+    expect($('#mapp-toast-stack').textContent).toContain('Could not load this process');
+    expect(MApp.Production.model).toBeNull();
+    expect($('#lot-process-field').disabled).toBe(false);
+  });
+
+  // load() runs after every save. Offline its process read fails, and it
+  // used to answer that by emptying the process list -- so the cleared
+  // sheet's process picker came back holding nothing at all.
+  test('the process list survives a reload that could not reach the server', async () => {
+    await MApp.Production.load();
+    expect(MApp.Production.activeProcesses.map(p => p.processId)).toEqual(['PRC-PNT', 'PRC-ASM', 'PRC-CUT']);
+    goOffline();
+    await MApp.Production.load();
+    expect(MApp.Production.activeProcesses.map(p => p.processId)).toEqual(['PRC-PNT', 'PRC-ASM', 'PRC-CUT']);
+    expect(MApp.Production.processById['PRC-OLD']).toBeTruthy();
+    expect($$('#production-list .mb-card').length).toBe(2);
   });
 
   test('the next lot queued offline sends its own numbers, not the previous lot\'s', async () => {
@@ -465,6 +671,9 @@ describe('reusing the sheet', () => {
     await MApp.Production.saveLot();
     await flush(); await flush();
 
+    picks.push('Frame Painting 20');
+    await tap($('#lot-process-field'));
+    await flush();
     await tap(rowFor('Blue').querySelector('[data-row-toggle]'));
     type(rowFor('Blue').querySelector('.mapp-lot-color-qty'), 7);
     MApp.Production.selectedAssignedTo = 'sanjay';
