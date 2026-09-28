@@ -390,7 +390,15 @@
 // across all seven columns. Both are precached, and the matching markup is
 // network-first, so without the bump an installed client pairs the new
 // dashboard sets with the old grid rule for one load.
-const CACHE_NAME = 'erp-shell-v80';
+// v81: desktop documents can be shared, not only downloaded. print.js grows
+// the share path (desktop had none); Issued Stock rows gain Download PDF and
+// Share, PO rows Share (core.js routes the button), and Issued Stock, PO and
+// Production lots a toolbar Share Selected; production.js adds Share to the
+// Production Sheet and Work Order dialogs. items.js stops requiring a vendor
+// name in the item dialog and keeps a vendor saved without a rate. All are
+// precached and their markup is network-first, so without the bump an
+// installed client renders the new buttons over scripts with no handler.
+const CACHE_NAME = 'erp-shell-v81';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

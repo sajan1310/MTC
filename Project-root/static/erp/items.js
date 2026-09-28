@@ -261,15 +261,21 @@ App.Item = {
     );
   },
 
+  // Every vendor mapped to the item, with a rate or without. `vendors` holds
+  // only the priced ones -- the rate lookups read each entry as a price --
+  // so anything asking "who supplies this" has to read both lists.
+  vendorNames(item) {
+    return [...(item.vendors || []).map(v => v.vendor), ...(item.unpricedVendors || [])]
+      .filter(Boolean);
+  },
+
   getColumnFilterOptions(key) {
     if (key === 'metadata') return this.METADATA_FILTER_OPTIONS;
 
     const values = new Set();
     App.State.globalItems.forEach(item => {
       if (key === 'vendor') {
-        (item.vendors || []).forEach(v => {
-          if (v.vendor) values.add(v.vendor);
-        });
+        this.vendorNames(item).forEach(name => values.add(name));
       } else if (item[key]) {
         values.add(item[key]);
       }
@@ -404,9 +410,7 @@ App.Item = {
       if (item.name) itemNames.add(item.name);
       if (item.size) sizes.add(item.size);
       if (item.narration) narrations.add(item.narration);
-      (item.vendors || []).forEach(v => {
-        if (v.vendor) vendorNames.add(v.vendor);
-      });
+      this.vendorNames(item).forEach(name => vendorNames.add(name));
     });
 
     const fill = (id, values) => {
@@ -450,7 +454,7 @@ App.Item = {
     } else {
       base = term
         ? App.State.globalItems.filter(item => {
-          const vendorNames = (item.vendors || []).map(v => v.vendor || '').join(' ');
+          const vendorNames = this.vendorNames(item).join(' ');
           return App.Utils.matchesKeywords(`${item.name || ''} ${item.size || ''} ${vendorNames}`, term);
         })
         : [...App.State.globalItems];
@@ -488,7 +492,7 @@ App.Item = {
       if (size.length && !size.includes(item.size || '')) return false;
       if (narration.length && !narration.includes(item.narration || '')) return false;
       if (vendor.length) {
-        const itemVendors = (item.vendors || []).map(v => v.vendor || '');
+        const itemVendors = this.vendorNames(item);
         if (!vendor.some(v => itemVendors.includes(v))) return false;
       }
       if (metadata.length) {
@@ -584,6 +588,11 @@ App.Item = {
           <i class="text-secondary">${escapeHtml(v.vendor)}:</i>
           <strong>${formatCurrency(v.rate)}</strong>
         </span>`)
+      .concat((item.unpricedVendors || []).map(name => `
+        <span class="badge border border-secondary text-dark me-1 mb-1 fs-6 fw-normal">
+          <i class="text-secondary">${escapeHtml(name)}:</i>
+          <span class="text-muted">no rate</span>
+        </span>`))
       .join('');
 
     const { parts: metaParts } = this.getMetaInfo(item, pendingMap, stockMap);
@@ -970,9 +979,15 @@ App.Item = {
     const thresholdInput = document.getElementById('formItemThreshold');
     if (thresholdInput) thresholdInput.value = stockEntry ? (stockEntry.threshold ?? '') : '';
 
+    // Vendors saved without a rate come back with a blank rate. Leaving them
+    // off the form is how they were lost: Save replaces the whole list.
+    const vendorRows = [
+      ...(item.vendors || []),
+      ...(item.unpricedVendors || []).map(vendor => ({ vendor, rate: '' }))
+    ];
     const tbody = document.getElementById('itemVendorsBody');
     if (tbody) {
-      tbody.innerHTML = (item.vendors || []).length ? item.vendors.map(v => this.getVendorRowHtml(v)).join('') : this.getVendorRowHtml();
+      tbody.innerHTML = vendorRows.length ? vendorRows.map(v => this.getVendorRowHtml(v)).join('') : this.getVendorRowHtml();
     }
 
     App.Utils.setFormButtonsForMode('itemCancelBtn', 'itemExitBtn', 'itemSubmitBtn', true, 'Update Item Record');
@@ -2046,14 +2061,20 @@ App.Item = {
     document.getElementById('itemVendorsBody')?.insertAdjacentHTML('beforeend', this.getVendorRowHtml());
   },
 
+  // Vendor and rate are both optional: a vendor with no rate is kept, and a
+  // row left empty is skipped. A rate does need a vendor to belong to --
+  // saved without one it would be dropped without a word -- so the name is
+  // required while its row has a rate. The input listener at the bottom of
+  // this file keeps that in step as a rate is typed or cleared.
   getVendorRowHtml(vendor = {}) {
     const hint = (vendor.ratePerBaseUnit && Math.abs(vendor.ratePerBaseUnit - (vendor.rate || 0)) > 0.0001)
       ? `<div class="form-text">≈ ₹${Number(vendor.ratePerBaseUnit).toFixed(4)} per Base Unit</div>`
       : '';
+    const rate = String(vendor.rate ?? '');
     return `
     <tr>
-      <td><input type="text"   class="form-control item-vendor-name" list="vendorList" value="${escapeHtml(vendor.vendor || '')}" placeholder="e.g. Avon Cycles" required></td>
-      <td><input type="number" class="form-control item-vendor-rate" step="0.01"        value="${escapeHtml(String(vendor.rate ?? ''))}" placeholder="0.00 (optional)" min="0">${hint}</td>
+      <td><input type="text"   class="form-control item-vendor-name" list="vendorList" value="${escapeHtml(vendor.vendor || '')}" placeholder="e.g. Avon Cycles"${rate !== '' ? ' required' : ''}></td>
+      <td><input type="number" class="form-control item-vendor-rate" step="0.01"        value="${escapeHtml(rate)}" placeholder="0.00" min="0">${hint}</td>
       <td><button type="button" class="btn btn-outline-danger btn-sm" data-action="remove-row">✕</button></td>
     </tr>`;
   },
@@ -2189,6 +2210,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.target.closest('.item-cell-ledger')) {
       App.Item.openLedgerModal(name, size);
     }
+  });
+
+  // A vendor name is required only while its row has a rate (getVendorRowHtml).
+  document.getElementById('itemVendorsBody')?.addEventListener('input', e => {
+    if (!e.target.matches('.item-vendor-rate')) return;
+    const name = e.target.closest('tr')?.querySelector('.item-vendor-name');
+    if (name) name.required = e.target.value !== '';
   });
 
   document.getElementById('itemPhotoFileInput')?.addEventListener('change', e => {

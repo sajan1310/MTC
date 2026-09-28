@@ -151,7 +151,8 @@ describe('names', () => {
     { type: 'PO', key: '1206', party: 'ਗੁਰੂ ਨਾਨਕ ਟ੍ਰੇਡਰਜ਼' },
     { type: 'PO', key: '1207', party: '' },
     { type: 'PRD', date: '2026-09-28' },
-    { type: 'DC', key: 'DC-1041', party: 'Sharma & Sons (Ludhiana)' }
+    { type: 'DC', key: 'DC-1041', party: 'Sharma & Sons (Ludhiana)' },
+    { type: 'ISS', key: 'ISS-20260928-101530', party: 'Ramesh Kumar' }
   ];
 
   test.each(SPECS)('the phone names %o as desktop does', spec => {
@@ -289,6 +290,102 @@ describe('purchase orders', () => {
   test('one PO printed from a selection is named as that PO', async () => {
     const opts = await choose(() => MApp.PO.printMany([POS[1]]));
     expect(opts.filename).toBe('PO_1205_ShriBalaji');
+  });
+});
+
+describe('stock issue receipts', () => {
+  const ISSUES = [
+    { issueId: 'ISS-20260928-101530', date: '28/09/2026', dateRaw: '2026-09-28', issuedTo: 'Ramesh Kumar',
+      reference: 'LOT-PNT-0041', remarks: '', totalQty: 12, totalValue: 0,
+      items: [{ name: 'Primer', size: '5 L', qty: 12, unit: 'Ltr', rate: 0 }] },
+    { issueId: 'ISS-20260928-111204', date: '28/09/2026', dateRaw: '2026-09-28', issuedTo: 'Painting Dept',
+      reference: '', remarks: 'rework', totalQty: 30, totalValue: 0,
+      items: [{ name: 'Poly Bag', size: 'GENERAL', qty: 30, unit: 'Pcs', rate: 0 }] }
+  ];
+  const NAMES = ['ISS_20260928-101530_RameshKumar.pdf', 'ISS_20260928-111204_PaintingDept.pdf'];
+
+  test('are named as desktop names them', () => {
+    const desktop = desktopPrint();
+    ISSUES.forEach(rec => {
+      expect(MApp.Issue.docName(rec)).toBe(
+        desktop.docName({ type: 'ISS', key: rec.issueId, party: rec.issuedTo }));
+    });
+    expect(MApp.Issue.docName(ISSUES[0])).toBe('ISS_20260928-101530_RameshKumar');
+  });
+
+  test('the selection bar offers them', async () => {
+    expect(MApp.Issue.SELECT.documents.label).toBe('Print / Share');
+    const many = jest.spyOn(MApp.Issue, 'printMany').mockResolvedValue(undefined);
+    await MApp.Issue.SELECT.documents.run(ISSUES);
+    expect(many).toHaveBeenCalledWith(ISSUES);
+  });
+
+  test('Download: one PDF per receipt, each its own receipt', async () => {
+    await choose(() => MApp.Issue.printMany(ISSUES), 'download');
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe('/erp/render-pdf-batch');
+    expect(requests[0].body.zipName).toBe(MApp.Print.bulkZipName('ISS'));
+    const docs = requests[0].body.documents;
+    expect(docs.map(d => d.filename)).toEqual(NAMES);
+    expect(docs[0].html).toContain('Stock Issue Receipt');
+    expect(docs[0].html).toContain('ISS-20260928-101530');
+    expect(docs[0].html).not.toContain('ISS-20260928-111204');
+    expect(docs[1].html).toContain('Poly Bag');
+    expect(docs[1].html).not.toContain('Primer');
+    expect(saved).toEqual(NAMES);
+  });
+
+  test('each file is the document that receipt\'s own Download sends', async () => {
+    await choose(() => MApp.Issue.printNote(ISSUES[1]), 'download');
+    const single = requests[0];
+    expect(single.url).toBe('/erp/render-pdf');
+    expect(single.body.filename).toBe(NAMES[1]);
+
+    await choose(() => MApp.Issue.printMany(ISSUES), 'download');
+    const fromBatch = requests[1].body.documents[1];
+    expect(fromBatch.html).toBe(single.body.html);
+    expect(fromBatch.filename).toBe(single.body.filename);
+  });
+
+  test('Share hands the phone one file per receipt, named as the downloads are', async () => {
+    navigator.canShare = jest.fn(() => true);
+    navigator.share = jest.fn(async () => {});
+    await choose(() => MApp.Issue.printMany(ISSUES), 'share');
+
+    expect(navigator.share).toHaveBeenCalledTimes(1);
+    const { files } = navigator.share.mock.calls[0][0];
+    expect(files.map(f => f.name)).toEqual(NAMES);
+    expect(files.every(f => f.type === 'application/pdf')).toBe(true);
+  });
+
+  test('Print is one job, a page per receipt', async () => {
+    const opts = await choose(() => MApp.Issue.printMany(ISSUES));
+    expect(opts.filename).toBe('Stock_Issue_Receipts_Selected');
+    await opts.populate();
+
+    const pages = document.querySelectorAll('#print-bulk-body .bulk-print-page');
+    expect(pages).toHaveLength(2);
+    expect(pages[0].textContent).toContain('ISS-20260928-101530');
+    expect(pages[1].textContent).toContain('ISS-20260928-111204');
+  });
+
+  test('a card\'s Print / Share opens the chooser on that receipt', async () => {
+    document.body.insertAdjacentHTML('beforeend', '<div id="issue-log-list"></div>');
+    MApp.Issue.records = ISSUES;
+    MApp.Issue.filtered = ISSUES;
+    MApp.Issue.render();
+    const spy = jest.spyOn(MApp.Print, 'chooseAction').mockResolvedValue(undefined);
+
+    const buttons = document.querySelectorAll('#issue-log-list [data-issue-action="document"]');
+    expect([...buttons].map(b => b.textContent)).toEqual(['Print / Share', 'Print / Share']);
+    buttons[1].click();
+
+    const opts = spy.mock.calls[0][0];
+    expect(opts.filename).toBe('ISS_20260928-111204_PaintingDept');
+    await opts.populate();
+    expect(document.getElementById('print-bulk-body').textContent).toContain('ISS-20260928-111204');
+    expect(document.getElementById('print-bulk-body').textContent).not.toContain('ISS-20260928-101530');
   });
 });
 

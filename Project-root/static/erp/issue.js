@@ -154,6 +154,10 @@ App.Issue = {
                   onclick="App.Issue.openEditModal('${escapeHtml(key)}')">Edit</button>
           <button class="btn btn-sm btn-outline-dark w-100 mb-1"
                   onclick="App.Issue.print('${escapeHtml(key)}')">Print</button>
+          <button class="btn btn-sm btn-outline-success w-100 mb-1"
+                  onclick="App.Issue.downloadPDF('${escapeHtml(key)}', this)">Download PDF</button>
+          <button class="btn btn-sm btn-outline-secondary w-100 mb-1"
+                  onclick="App.Issue.share('${escapeHtml(key)}', this)">Share</button>
           <button class="btn btn-sm btn-danger w-100"
                   onclick="App.Issue.deleteSingle('${escapeHtml(key)}')">Delete</button>
         </td>
@@ -179,6 +183,7 @@ App.Issue = {
     App.Selection.updateButton('btnBulkDeleteIssue', count, '<i class="bi bi-trash"></i> Delete Selected');
     App.Selection.updateButton('btnBulkPrintIssue', count, '<i class="bi bi-printer"></i> Print Selected');
     App.Selection.updateButton('btnBulkDownloadPdfIssue', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
+    App.Selection.updateButton('btnBulkShareIssue', count, '<i class="bi bi-share"></i> Share Selected');
   },
 
   bulkPrint() {
@@ -199,26 +204,57 @@ App.Issue = {
     App.Print.triggerBulk(issues, iss => this.buildIssuePrintPageHtml(iss), 'Stock_Issue_Receipts_Selected');
   },
 
-  // "Download PDFs" -- one separately-named receipt per selected stock issue.
-  async bulkDownloadPDF() {
+  // One name for a receipt, whichever button saves or sends it, and the name
+  // the phone gives it too: "ISS_20260928-101530_RameshKumar". The person it
+  // was issued to is in it because a receipt shared into a chat is picked
+  // out by who it is for.
+  docName(iss) {
+    return App.Print.docName({ type: 'ISS', key: iss.issueId, party: iss.issuedTo });
+  },
+
+  // The selected receipts as separately-named documents -- what Download
+  // PDFs saves and Share Selected sends.
+  _selectedDocuments() {
     const selected = App.State.selectedIssues;
     if (!selected.length) {
       App.Utils.showToast('No issues selected.', true);
-      return;
+      return [];
     }
-
-    const issues = App.State.globalIssues.filter(iss => App.Selection.isSelected(selected, String(iss.issueId)));
-    if (!issues.length) return;
-
-    await App.Print.downloadMany(
-      issues.map(iss => ({
-        filename: App.Print.docFilename({ type: 'ISS', key: iss.issueId }),
-        html: this.buildIssuePrintPageHtml(iss)
-      })),
-      App.Print.bulkZipName('ISS'),
-      { buttonId: 'btnBulkDownloadPdfIssue' }
-    );
+    return App.State.globalIssues
+      .filter(iss => App.Selection.isSelected(selected, String(iss.issueId)))
+      .map(iss => ({ filename: `${this.docName(iss)}.pdf`, html: this.buildIssuePrintPageHtml(iss) }));
   },
+
+  // "Download PDFs" -- one separately-named receipt per selected stock issue.
+  async bulkDownloadPDF() {
+    const documents = this._selectedDocuments();
+    if (!documents.length) return;
+    await App.Print.downloadMany(documents, App.Print.bulkZipName('ISS'),
+      { buttonId: 'btnBulkDownloadPdfIssue' });
+  },
+
+  // "Share Selected" -- the same files, handed to the share sheet.
+  async bulkShare() {
+    const documents = this._selectedDocuments();
+    if (!documents.length) return;
+    await App.Print.shareMany(documents, App.Print.bulkZipName('ISS'),
+      { buttonId: 'btnBulkShareIssue' });
+  },
+
+  // A row's own Download PDF and Share. `button` is the row's button, which
+  // shows it is working while the PDF renders.
+  async downloadPDF(issueId, button) {
+    const iss = App.State.globalIssues.find(i => String(i.issueId) === String(issueId));
+    if (!iss) return;
+    await App.Print.downloadOne(this.buildIssuePrintPageHtml(iss), this.docName(iss), { buttonId: button });
+  },
+
+  async share(issueId, button) {
+    const iss = App.State.globalIssues.find(i => String(i.issueId) === String(issueId));
+    if (!iss) return;
+    await App.Print.shareOne(this.buildIssuePrintPageHtml(iss), this.docName(iss), { buttonId: button });
+  },
+
   // Single-record print for the per-row "Print" button -- reuses the
   // shared bulk-print container with a one-element array, same approach
   // as App.Return.print (Issue has no dedicated static single-print

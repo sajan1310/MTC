@@ -2381,6 +2381,9 @@ function bindGlobalEvents() {
       case 'po-pdf':
         App.PO.downloadPDF(toNumber(btn.dataset.index));
         break;
+      case 'po-share':
+        App.PO.share(toNumber(btn.dataset.index), btn);
+        break;
       case 'po-delete':
         App.PO.delete(decodeURIComponent(btn.dataset.ponumber || ''));
         break;

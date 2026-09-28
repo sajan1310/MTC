@@ -625,8 +625,11 @@ App.Print = {
   // back. Reuses the element the user is already looking at rather than
   // adding markup, and keeps progress out of showToast -- which also feeds
   // App.Notify and would leave a notification behind for every export.
+  //
+  // `buttonId` may be the button element itself: a table row's own buttons
+  // have no id to look up.
   async _whileBusy(buttonId, label, work) {
-    const btn = buttonId ? document.getElementById(buttonId) : null;
+    const btn = typeof buttonId === 'string' ? document.getElementById(buttonId) : (buttonId || null);
     const html = btn ? btn.innerHTML : null;
     const disabled = btn ? btn.disabled : false;
     if (btn) {
@@ -698,6 +701,18 @@ App.Print = {
     const { buttonId = null } = options;
     if (!documents || !documents.length) return false;
 
+    const files = await this._renderMany(documents, zipName, buttonId);
+    if (!files) return false;
+
+    files.forEach(file => this.saveBlob(file.blob, file.name));
+    App.Utils.showToast(
+      `${files.length} PDF${files.length === 1 ? '' : 's'} downloaded.`, false);
+    return true;
+  },
+
+  // The batch render behind downloadMany and shareMany: [{ name, blob }] per
+  // document, or null once the reader has been told why not.
+  async _renderMany(documents, zipName, buttonId) {
     // Per document, not per batch: a 40-challan export is uniform, but an
     // export mixing a 6-column challan with a 16-column pivot is not, and
     // shrinking the challan to match the pivot would be wrong.
@@ -712,19 +727,180 @@ App.Print = {
 
     if (!blob) {
       this.reportDownloadUnavailable();
-      return false;
+      return null;
     }
 
     const files = await this.unzip(blob);
     if (!files.length) {
       App.Utils.showToast('The renderer returned nothing to download.', true);
+      return null;
+    }
+    return files;
+  },
+
+  // ── Sharing a file ───────────────────────────────────────────
+  //
+  // The same PDF Download saves, handed to the operating system's share
+  // sheet instead -- on Windows, the Share panel that sends it on to
+  // WhatsApp, Outlook or a nearby phone. navigator.share() exists only on a
+  // page loaded over https (or from localhost), and takes files only in
+  // browsers that support it, so a Share button that cannot share says
+  // which of the two stopped it rather than doing nothing.
+
+  // Chrome refuses a share of more than ten files, so a longer selection
+  // goes in tens.
+  SHARE_MAX_FILES: 10,
+
+  // Probed with a real File: canShare({ files }) is the only reliable test --
+  // navigator.share exists in browsers that cannot take files at all.
+  canShareFiles() {
+    try {
+      if (!navigator.share || !navigator.canShare) return false;
+      const probe = new File([new Blob([''], { type: 'application/pdf' })], 'p.pdf',
+        { type: 'application/pdf' });
+      return navigator.canShare({ files: [probe] });
+    } catch {
+      return false;
+    }
+  },
+
+  reportShareUnavailable() {
+    App.Utils.showToast(
+      window.isSecureContext === false
+        ? 'Sharing needs the ERP opened at its https address — browsers do not ' +
+          'allow it on a page loaded over http. Use Download PDF instead.'
+        : 'This browser cannot share files. Use Download PDF instead, or open ' +
+          'the ERP in Chrome or Edge.',
+      true
+    );
+  },
+
+  // One document, rendered as Download renders it and shared as one file.
+  async shareOne(bodyHtml, filename, options = {}) {
+    if (!this.canShareFiles()) {
+      this.reportShareUnavailable();
+      return false;
+    }
+    const { landscape = false, buttonId = null } = options;
+    const name = filename.toLowerCase().endsWith('.pdf') ? filename : `${filename}.pdf`;
+
+    const blob = await this._whileBusy(buttonId, 'Preparing…', () =>
+      this._postForBlob(this.SERVER_PDF_URL, {
+        html: bodyHtml, landscape, density: this.fitDensityFor(bodyHtml), filename: name
+      })
+    );
+    if (!blob) {
+      this.reportDownloadUnavailable();
       return false;
     }
 
-    files.forEach(file => this.saveBlob(file.blob, file.name));
-    App.Utils.showToast(
-      `${files.length} PDF${files.length === 1 ? '' : 's'} downloaded.`, false);
+    const file = new File([blob], name, { type: 'application/pdf' });
+    return (await this._shareFiles([file], name, false, 'Share PDF')) === 'shared';
+  },
+
+  // Shares whatever is currently inside a print container -- downloadContainer's
+  // counterpart, for the documents populated into print.html's templates.
+  async shareContainer(containerId, filename, options = {}) {
+    const el = document.getElementById(containerId);
+    if (!el) {
+      console.warn('[PDF] Print container not found:', containerId);
+      return false;
+    }
+    return this.shareOne(el.innerHTML, filename, options);
+  },
+
+  // N documents, shared as N separately-named PDFs -- the files Download
+  // PDFs would save, in one batch render.
+  async shareMany(documents, zipName, options = {}) {
+    const { buttonId = null } = options;
+    if (!documents || !documents.length) return false;
+    if (!this.canShareFiles()) {
+      this.reportShareUnavailable();
+      return false;
+    }
+
+    const rendered = await this._renderMany(documents, zipName, buttonId);
+    if (!rendered) return false;
+
+    const files = rendered.map(f => new File([f.blob], f.name, { type: 'application/pdf' }));
+    const title = String(zipName || '').replace(/\.zip$/i, '') || 'Documents';
+    for (let i = 0; i < files.length; i += this.SHARE_MAX_FILES) {
+      const batch = files.slice(i, i + this.SHARE_MAX_FILES);
+      const range = files.length > this.SHARE_MAX_FILES
+        ? ` (${i + 1}–${i + batch.length} of ${files.length})`
+        : '';
+      const label = `Share ${batch.length} PDF${batch.length === 1 ? '' : 's'}${range}`;
+      if ((await this._shareFiles(batch, title, i > 0, label)) !== 'shared') return false;
+    }
     return true;
+  },
+
+  // A share sheet opens only within a few seconds of a click. A render that
+  // outlasts that is refused (NotAllowedError), and so is every batch after
+  // the first, whose click opened the one before -- so each is offered a
+  // Share button of its own, and the share rides on that press.
+  async _shareFiles(files, title, askFirst, label) {
+    const ask = () => this._askToShare(label, files.map(f => f.name));
+    if (askFirst && !(await ask())) return 'cancelled';
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (navigator.canShare && !navigator.canShare({ files })) {
+          App.Utils.showToast(
+            'This browser cannot share these files together. Use Download PDFs instead.', true);
+          return 'failed';
+        }
+        await navigator.share({ files, title });
+        return 'shared';
+      } catch (err) {
+        // Closing the share sheet is the commonest way out of it, not a
+        // failure, and must not be reported as one.
+        if (err && err.name === 'AbortError') return 'cancelled';
+        if (err && err.name === 'NotAllowedError' && attempt === 0) {
+          if (!(await ask())) return 'cancelled';
+          continue;
+        }
+        App.Utils.showToast('Could not share. Use Download PDF instead.', true);
+        return 'failed';
+      }
+    }
+    return 'failed';
+  },
+
+  // The "Ready to share" dialog in index.html. Resolves true when its Share
+  // button is pressed -- the fresh click the share sheet needs -- and false
+  // when it is dismissed.
+  async _askToShare(label, names) {
+    const el = document.getElementById('shareReadyModal');
+    if (!el || typeof bootstrap === 'undefined') return false;
+
+    // Still fading out after the previous batch: Bootstrap ignores show()
+    // mid-transition, and the next hidden event would read as a dismissal.
+    if (el.style.display === 'block') {
+      await new Promise(done => el.addEventListener('hidden.bs.modal', done, { once: true }));
+    }
+
+    const list = document.getElementById('shareReadyFiles');
+    if (list) list.innerHTML = names.map(n => `<li>${escapeHtml(n)}</li>`).join('');
+    const btn = document.getElementById('shareReadyBtn');
+
+    return new Promise(resolve => {
+      let answered = false;
+      const answer = value => {
+        if (answered) return;
+        answered = true;
+        resolve(value);
+      };
+      if (btn) {
+        btn.innerHTML = `<i class="bi bi-share me-1"></i>${escapeHtml(label)}`;
+        btn.onclick = () => {
+          answer(true);
+          bootstrap.Modal.getInstance(el)?.hide();
+        };
+      }
+      el.addEventListener('hidden.bs.modal', () => answer(false), { once: true });
+      bootstrap.Modal.getOrCreateInstance(el).show();
+    });
   },
 
   // Reads a store-only ZIP into [{ name, blob }].
