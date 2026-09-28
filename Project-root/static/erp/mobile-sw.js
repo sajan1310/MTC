@@ -120,7 +120,9 @@
 // rate (a bill's from the PO it is billed against, first); editing a PO
 // keeps its narrations, and editing a bill keeps each untouched line on
 // the PO it was saved against.
-const CACHE_NAME = 'erp-mobile-shell-v72';
+// v73: several production sheets or POs download and share as one PDF
+// each, under desktop's names, and the PO list's selection prints them.
+const CACHE_NAME = 'erp-mobile-shell-v73';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

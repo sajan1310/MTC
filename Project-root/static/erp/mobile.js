@@ -2087,6 +2087,82 @@ MApp.Print = {
     return `${name === 'Document' ? fallback : name}_${stamp}`;
   },
 
+  // ── Document names: CODE_KEY_PARTY[_YYMMDD] ──────────────────────────
+  // Desktop's App.Print.docName and the helpers under it -- "PO_1204_Mahadev"
+  // -- ported so a PO saved from the phone and the same PO saved at a desk
+  // are the same file. The phone named it "PO_1204_Mahadev_Industries", and
+  // a folder holding both had the one purchase order twice under two names.
+  // The reasoning behind each rule is in print.js; mobile_bulk_documents
+  // .test.js runs desktop's copy on the same inputs and fails on any drift.
+  DOC_KEY_MAX: 18,
+  DOC_PARTY_MAX: 16,
+  // Characters, in one sanitised filename segment.
+  DOC_SEGMENT_MAX: 50,
+
+  sanitizeFilename(text = '', allowSpaces = true) {
+    const pattern = allowSpaces ? /[^a-zA-Z0-9\s_-]/g : /[^a-zA-Z0-9_-]/g;
+    return (
+      String(text)
+        .replace(pattern, '')
+        .trim()
+        .replace(/\s+/g, '_')
+        .slice(0, this.DOC_SEGMENT_MAX) || 'Document'
+    );
+  },
+
+  _docTag(text) {
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) {
+      hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+    }
+    return (hash >>> 0).toString(16).slice(-4).padStart(4, '0');
+  },
+
+  _docParty(text) {
+    const raw = String(text || '').trim();
+    const words = raw
+      .replace(/[^a-zA-Z0-9\s]/g, ' ')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+
+    if (!words.length) return raw ? `x${this._docTag(raw)}` : '';
+
+    const first = words[0].slice(0, this.DOC_PARTY_MAX);
+    if (words[1] && first.length + words[1].length <= this.DOC_PARTY_MAX) {
+      return first + words[1];
+    }
+    return first;
+  },
+
+  docName({ type, key = '', party = '', date = null } = {}) {
+    const segments = [type || 'DOC'];
+
+    let cleanKey = this.sanitizeFilename(String(key), false);
+    const repeated = new RegExp(`^${type}[-_]?`, 'i');
+    if (type && repeated.test(cleanKey)) cleanKey = cleanKey.replace(repeated, '');
+    cleanKey = cleanKey.slice(0, this.DOC_KEY_MAX);
+
+    if (key && cleanKey && cleanKey !== 'Document') segments.push(cleanKey);
+
+    const cleanParty = this._docParty(party);
+    if (cleanParty) segments.push(cleanParty);
+
+    if (date) segments.push(this._docDate(date === true ? null : date));
+
+    return segments.join('_');
+  },
+
+  docFilename(spec) {
+    return `${this.docName(spec)}.pdf`;
+  },
+
+  // Named like the documents inside it, CODE_YYMMDD -- desktop's
+  // bulkZipName. It is also the title of a multi-file share.
+  bulkZipName(type) {
+    return `${type}_${this._docDate()}.zip`;
+  },
+
   // options.landscape -- true, or 'auto' to rotate only past
   // AUTO_LANDSCAPE_COLUMNS, exactly as desktop's trigger() reads it.
   trigger(containerId, documentTitle, options = {}) {
@@ -2179,12 +2255,12 @@ MApp.Print = {
   // these five happened decides what the operator is told, and "could not
   // reach the renderer" covers four situations that need different
   // answers.
-  async _postForBlob(body) {
+  async _postForBlob(body, url = '/erp/render-pdf') {
     if (this.serverPdfAvailable === false) return null;
 
     let res;
     try {
-      res = await fetch('/erp/render-pdf', {
+      res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': this._csrfToken() },
         credentials: 'same-origin',
@@ -2294,7 +2370,11 @@ MApp.Print = {
     const name = this._pdfName(filename);
     const blob = await this._pdfFor(containerId, name, opts && opts.landscape);
     if (!blob) { this.reportPdfUnavailable(); return false; }
+    this.saveBlob(blob, name);
+    return true;
+  },
 
+  saveBlob(blob, name) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -2305,7 +2385,6 @@ MApp.Print = {
     // Revoked on a later turn: revoking synchronously cancels the
     // download in some browsers before they have read the blob.
     setTimeout(() => URL.revokeObjectURL(url), 10000);
-    return true;
   },
 
   // Feature-detected with a real File, because canShare({files}) is the
@@ -2342,6 +2421,169 @@ MApp.Print = {
     }
   },
 
+  // ── Many documents, one file each ────────────────────────────────────
+  // A stack of lots or purchase orders went out of the phone as ONE PDF --
+  // every sheet a page of "Production_Sheets_4.pdf" -- where desktop's
+  // Download PDFs gives one file per record, each under the name that
+  // record always gets. Four lots for four contractors cannot be sent as
+  // one attachment. This is desktop's path: the same POST
+  // /erp/render-pdf-batch, which renders every document in one request and
+  // answers with a ZIP of separately-named PDFs, unpacked here.
+  //
+  // `documents` is [{ filename, html, landscape }] -- the html already in
+  // the self-contained form _pdfFor sends, one document per entry.
+  async _renderMany(documents, zipName) {
+    const sized = documents.map(doc => ({
+      ...doc,
+      landscape: doc.landscape === true,
+      density: doc.density || this.fitDensityFor(doc.html)
+    }));
+    const blob = await this._postForBlob({ documents: sized, zipName }, '/erp/render-pdf-batch');
+    if (!blob) { this.reportPdfUnavailable(); return null; }
+    const files = await this.unzip(blob);
+    if (!files.length) {
+      MApp.Toast.error('The server returned nothing to download.');
+      return null;
+    }
+    return files;
+  },
+
+  async downloadMany(documents, zipName) {
+    if (!documents || !documents.length) return false;
+    MApp.Toast.show(`Preparing ${documents.length} PDF${documents.length === 1 ? '' : 's'}…`);
+    const files = await this._renderMany(documents, zipName);
+    if (!files) return false;
+    files.forEach(f => this.saveBlob(f.blob, f.name));
+    MApp.Toast.success(`${files.length} PDF${files.length === 1 ? '' : 's'} downloaded.`);
+    return true;
+  },
+
+  // Chrome turns down a share of more than ten files, so a longer stack
+  // goes in tens.
+  SHARE_MAX_FILES: 10,
+
+  async shareMany(documents, zipName) {
+    if (!documents || !documents.length) return false;
+    MApp.Toast.show(`Preparing ${documents.length} PDF${documents.length === 1 ? '' : 's'}…`);
+    const rendered = await this._renderMany(documents, zipName);
+    if (!rendered) return false;
+
+    const files = rendered.map(f => new File([f.blob], f.name, { type: 'application/pdf' }));
+    const title = String(zipName || '').replace(/\.zip$/i, '') || 'Documents';
+    const batches = [];
+    for (let i = 0; i < files.length; i += this.SHARE_MAX_FILES) {
+      batches.push(files.slice(i, i + this.SHARE_MAX_FILES));
+    }
+
+    for (let b = 0; b < batches.length; b++) {
+      const batch = batches[b];
+      const first = b * this.SHARE_MAX_FILES + 1;
+      const range = batches.length > 1 ? ` (${first}–${first + batch.length - 1} of ${files.length})` : '';
+      const outcome = await this._shareFiles(batch, title, b > 0, `Share ${batch.length} PDF${batch.length === 1 ? '' : 's'}${range}`);
+      if (outcome !== 'shared') return false;
+    }
+    return true;
+  },
+
+  // A share sheet opens only inside the few seconds after a tap. The tap
+  // that chose Share has usually lapsed by the time the server has
+  // rendered a stack, and one share sheet uses its tap up, so every later
+  // batch needs one too. Either way the operator is offered a button to
+  // press -- the share then rides on that press.
+  async _shareFiles(files, title, askFirst, label) {
+    const ask = async () => {
+      const picked = await MApp.Picker.open({
+        title: 'Ready to share',
+        searchable: false,
+        items: [{ value: 'share', label, sublabel: files.map(f => f.name).join(', ') }]
+      });
+      return !!picked;
+    };
+
+    if (askFirst && !(await ask())) return 'cancelled';
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (navigator.canShare && !navigator.canShare({ files })) {
+          MApp.Toast.error('This phone cannot share these files together. Use Download PDFs instead.');
+          return 'failed';
+        }
+        await navigator.share({ files, title });
+        return 'shared';
+      } catch (err) {
+        if (err && err.name === 'AbortError') return 'cancelled';
+        if (err && err.name === 'NotAllowedError' && attempt === 0) {
+          if (!(await ask())) return 'cancelled';
+          continue;
+        }
+        MApp.Toast.error('Could not share these documents. They can still be downloaded.');
+        return 'failed';
+      }
+    }
+    return 'failed';
+  },
+
+  // Desktop's App.Print.unzip: the batch endpoint writes its archive with
+  // ZIP_STORED (a PDF's streams are compressed already), so reading it
+  // needs no inflate -- a DEFLATEd entry is skipped rather than handed
+  // over as corrupt bytes.
+  async unzip(blob) {
+    const view = new DataView(await blob.arrayBuffer());
+    const bytes = new Uint8Array(view.buffer);
+    const decoder = new TextDecoder();
+    const files = [];
+
+    let i = 0;
+    while (i + 30 <= bytes.length && view.getUint32(i, true) === 0x04034B50) {
+      const method = view.getUint16(i + 8, true);
+      const size = view.getUint32(i + 18, true);
+      const nameLen = view.getUint16(i + 26, true);
+      const extraLen = view.getUint16(i + 28, true);
+      const nameAt = i + 30;
+      const dataAt = nameAt + nameLen + extraLen;
+
+      if (method === 0) {
+        files.push({
+          name: decoder.decode(bytes.subarray(nameAt, nameAt + nameLen)),
+          blob: new Blob([bytes.subarray(dataAt, dataAt + size)], { type: 'application/pdf' })
+        });
+      }
+      i = dataAt + size;
+    }
+    return files;
+  },
+
+  // A populated print container as the self-contained document the PDF
+  // renderer is sent -- what _pdfFor sends for one, captured so a batch can
+  // hold many.
+  capturePdfDocument(containerId, filename, landscape) {
+    const el = document.getElementById(containerId);
+    if (!el) return null;
+    this.injectLogo();
+    return {
+      filename: this._pdfName(filename),
+      html: this.pdfDocumentHtml(el),
+      landscape: landscape === true,
+      density: this.fitDensityFor(el.innerHTML)
+    };
+  },
+
+  // A populated print container lifted out as one page of a bulk print job.
+  // It sheds its id and every id inside it (two pages in one document would
+  // duplicate each, and shadow the real container on the next render), its
+  // .print-container class (@media print hides every print container that
+  // is not the one printing, and this one now sits INSIDE the bulk
+  // container), and its inline display:none.
+  liftPage(containerId) {
+    const host = document.getElementById(containerId);
+    if (!host) return '';
+    const page = host.cloneNode(true);
+    page.removeAttribute('id');
+    page.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+    page.classList.remove('print-container');
+    page.style.display = 'block';
+    return page.outerHTML;
+  },
+
   // One button per card rather than three. Three icons on a list row is
   // most of the row, and two of the three are occasional; the picker is
   // already this app's way of choosing one of a few things.
@@ -2356,15 +2598,22 @@ MApp.Print = {
   // of choosing rather than buried in a settings screen. The choice is
   // remembered (MApp.Prefs), because somebody who prints POs without rates
   // prints every PO without rates.
-  async chooseAction({ containerId, filename, title, populate, landscape, toggles }) {
+  //
+  // `separate` makes a stack of records Download and Share as one file per
+  // record: { count, noun, zipName, documents(landscape) -> [{ filename,
+  // html, landscape }] }. Print still prints the stack as one job through
+  // `populate` -- a print dialog produces one document, whatever it is fed.
+  async chooseAction({ containerId, filename, title, populate, landscape, toggles, separate }) {
     const switches = toggles || [];
+    const many = separate && separate.count > 1;
+    const each = many ? `${separate.count} files, one per ${separate.noun || 'record'}` : '';
     for (;;) {
       const items = [
-        { value: 'print', label: 'Print', sublabel: 'Opens the print dialog' },
-        { value: 'download', label: 'Download PDF', sublabel: 'Saves a file' }
+        { value: 'print', label: 'Print', sublabel: many ? `All ${separate.count} in one print job` : 'Opens the print dialog' },
+        { value: 'download', label: many ? 'Download PDFs' : 'Download PDF', sublabel: many ? each : 'Saves a file' }
       ];
       if (this.canShareFiles()) {
-        items.push({ value: 'share', label: 'Share', sublabel: 'Send it from this phone' });
+        items.push({ value: 'share', label: 'Share', sublabel: many ? each : 'Send it from this phone' });
       }
       switches.forEach((t, i) => items.push({
         value: `toggle:${i}`,
@@ -2380,7 +2629,7 @@ MApp.Print = {
         switches[Number(String(chosen.value).split(':')[1])].flip();
         continue;
       }
-      return this._runAction(chosen, { containerId, filename, landscape, populate });
+      return this._runAction(chosen, { containerId, filename, landscape, populate, separate });
     }
   },
 
@@ -2388,7 +2637,14 @@ MApp.Print = {
   // document whose orientation is one of its own toggles (the Production
   // Sheet) has to print the way the toggle stands when Print is tapped,
   // not the way it stood when the list opened.
-  async _runAction(picked, { containerId, filename, landscape: orientation, populate }) {
+  async _runAction(picked, { containerId, filename, landscape: orientation, populate, separate }) {
+    if (separate && picked.value !== 'print') {
+      const landscapeNow = typeof orientation === 'function' ? orientation() : orientation;
+      const documents = (await separate.documents(landscapeNow)) || [];
+      if (picked.value === 'download') { await this.downloadMany(documents, separate.zipName); return; }
+      await this.shareMany(documents, separate.zipName);
+      return;
+    }
 
     // Awaited: the challan's populate has to fetch Client Master and
     // Items Master for the consignee's GSTIN and each line's HSN, and an
@@ -2459,7 +2715,7 @@ MApp.Print = {
   // switch that changes how a page is laid out (the Production Sheet's
   // Page choice) has to be flipped before the pages exist, which is
   // exactly when chooseAction offers them.
-  bulk(records, buildPageHtml, { filename, title, landscape, cellsOwn, toggles } = {}) {
+  bulk(records, buildPageHtml, { filename, title, landscape, cellsOwn, toggles, separate } = {}) {
     const list = records || [];
     if (!list.length) {
       MApp.Toast.error('Nothing to print.');
@@ -2471,6 +2727,7 @@ MApp.Print = {
       title: title || 'Document',
       landscape,
       toggles,
+      separate,
       populate: () => {
         const container = document.getElementById('print-bulk-container');
         if (container) container.classList.toggle('print-cells-own', !!cellsOwn);
@@ -7929,7 +8186,14 @@ MApp.PO = {
     key: 'po', noun: 'purchase order', plural: 'purchase orders',
     method: 'deletePOsBulk',
     payload: rows => [rows.map(r => r.poNumber)],
-    onDone: () => MApp.PO.openLedgerSheet()
+    onDone: () => MApp.PO.openLedgerSheet(),
+
+    // Desktop's Print Selected / Download PDFs: the POs picked out of the
+    // list, printed as one job or saved and shared as one file per PO.
+    documents: {
+      label: 'Print / Share',
+      run: rows => MApp.PO.printMany(rows)
+    }
   },
 
   // Narration and item names were not searchable before, so a PO could only
@@ -8078,8 +8342,45 @@ MApp.PO = {
     MApp.Select.enable(listEl, page.rows, this.SELECT);
   },
 
+  // Desktop's name for a PO, for its Print title and Download filename
+  // alike: "PO_1204_Mahadev".
   _printTitle(po) {
-    return `PO_${po.poNumber}_${String(po.vendor || '').replace(/[^a-zA-Z0-9 \-]/g, '').trim().replace(/\s+/g, '_')}`;
+    return MApp.Print.docName({ type: 'PO', key: po.poNumber, party: po.vendor });
+  },
+
+  // Several POs: Print is one job, Download and Share one file per PO,
+  // each under the name that PO gets on its own. The Rates and Total
+  // switches are the same remembered ones the single PO uses, and hold for
+  // every PO in the stack.
+  printMany(pos) {
+    const list = (pos || []).filter(Boolean);
+    if (list.length === 0) {
+      MApp.Toast.error('No purchase orders to print.');
+      return;
+    }
+    return MApp.Print.bulk(list, po => {
+      this._populatePrintData(po);
+      return MApp.Print.liftPage('print-po-container');
+    }, {
+      // Desktop titles its Print Selected job this way.
+      filename: list.length === 1 ? this._printTitle(list[0]) : 'Purchase_Orders_Selected',
+      title: `Purchase Orders (${list.length})`,
+      // The PO template draws its own cells (print-cells-own on its
+      // container), so the bulk container has to say the same.
+      cellsOwn: true,
+      toggles: this._printToggles(),
+      separate: {
+        count: list.length,
+        noun: 'PO',
+        zipName: MApp.Print.bulkZipName('PO'),
+        documents: () => list
+          .map(po => {
+            this._populatePrintData(po);
+            return MApp.Print.capturePdfDocument('print-po-container', this._printTitle(po), false);
+          })
+          .filter(Boolean)
+      }
+    });
   },
 
   // Print, Download and Share over one populated container, so all three
@@ -8106,24 +8407,28 @@ MApp.PO = {
       containerId: 'print-po-container',
       filename: this._printTitle(po),
       title: `PO ${po.poNumber}`,
-      toggles: [
-        {
-          on: () => MApp.Prefs.get(this.PREF_RATES, true),
-          flip: () => MApp.Prefs.toggle(this.PREF_RATES, true),
-          onLabel: 'Rates: shown', offLabel: 'Rates: hidden'
-        },
-        {
-          // A total with no rates to add up is a number from nowhere, so
-          // hiding the rates hides the total with them -- which is what
-          // the shared builder does too.
-          on: () => MApp.Prefs.get(this.PREF_RATES, true)
-            && MApp.Prefs.get(this.PREF_TOTAL, true),
-          flip: () => MApp.Prefs.toggle(this.PREF_TOTAL, true),
-          onLabel: 'Total: shown', offLabel: 'Total: hidden'
-        }
-      ],
+      toggles: this._printToggles(),
       populate: () => this._populatePrintData(po)
     });
+  },
+
+  _printToggles() {
+    return [
+      {
+        on: () => MApp.Prefs.get(this.PREF_RATES, true),
+        flip: () => MApp.Prefs.toggle(this.PREF_RATES, true),
+        onLabel: 'Rates: shown', offLabel: 'Rates: hidden'
+      },
+      {
+        // A total with no rates to add up is a number from nowhere, so
+        // hiding the rates hides the total with them -- which is what
+        // the shared builder does too.
+        on: () => MApp.Prefs.get(this.PREF_RATES, true)
+          && MApp.Prefs.get(this.PREF_TOTAL, true),
+        flip: () => MApp.Prefs.toggle(this.PREF_TOTAL, true),
+        onLabel: 'Total: shown', offLabel: 'Total: hidden'
+      }
+    ];
   },
 
   // Mirrors desktop po.js's populatePrintData() -- same #print-po-container
@@ -15071,9 +15376,12 @@ MApp.ProductionSheet = {
     const landscape = () => MApp.Prefs.get(this.PREF_LANDSCAPE, false);
 
     return MApp.Print.bulk(list, lot => this._pageHtmlFor(lot, lookups, landscape()), {
+      // Desktop's names: a lot's own sheet is named after what it makes
+      // (docName), and a print job of several is PRD_<yymmdd>, as desktop's
+      // Print Selected titles it.
       filename: filename || (list.length === 1
         ? this.docName(list[0])
-        : `Production_Sheets_${list.length}`),
+        : MApp.Print.docName({ type: 'PRD', date: true })),
       title: title || `Production Sheets (${list.length})`,
       landscape,
       // Same Page preference the single-lot sheet uses, and the same
@@ -15083,7 +15391,24 @@ MApp.ProductionSheet = {
         flip: () => MApp.Prefs.toggle(this.PREF_LANDSCAPE, false),
         onLabel: 'Page: landscape',
         offLabel: 'Page: portrait'
-      }]
+      }],
+      // Download and Share: one PDF per lot, each under the name a single
+      // lot's sheet gets, in a batch named as desktop's Download PDFs
+      // names it. Sequential, as desktop's is: every lot renders through
+      // the one shared container, and overlapping builds would corrupt
+      // each other.
+      separate: {
+        count: list.length,
+        noun: 'lot',
+        zipName: MApp.Print.bulkZipName('PRD'),
+        documents: isLandscape => list
+          .map(lot => {
+            this._renderLot(lot, lookups, isLandscape);
+            return MApp.Print.capturePdfDocument(
+              'print-production-sheet-container', this.docName(lot), !!isLandscape);
+          })
+          .filter(Boolean)
+      }
     });
   },
 
@@ -15097,17 +15422,19 @@ MApp.ProductionSheet = {
   // the document a single print produces. So it is rendered there and
   // lifted out afterwards.
   //
-  // The lifted copy sheds three things. Its id and every id inside it,
-  // which would be duplicated the moment two pages sit in one document
-  // (and would shadow the real container on the next lot's render). Its
-  // .print-container class, because @media print hides every print
-  // container that is not the one being printed, and this one is now
-  // INSIDE #print-bulk-container rather than being printed itself. And
-  // its inline display:none. Everything else -- the frame, the green top
-  // rule, the type, the tables' own inline styling -- rides along, and the
-  // stylesheet's `.print-container *` rules still reach it through the
-  // bulk container, so a bulk page prints as the single sheet does.
+  // The lifted copy (MApp.Print.liftPage) sheds its ids, its
+  // .print-container class and its inline display:none. Everything else --
+  // the frame, the green top rule, the type, the tables' own inline
+  // styling -- rides along, and the stylesheet's `.print-container *` rules
+  // still reach it through the bulk container, so a bulk page prints as
+  // the single sheet does.
   _pageHtmlFor(lot, lookups, landscape) {
+    this._renderLot(lot, lookups, landscape);
+    return MApp.Print.liftPage('print-production-sheet-container');
+  },
+
+  // One lot's SAVED sheet, rendered into the shared sheet container.
+  _renderLot(lot, lookups, landscape) {
     const data = this.sheetData(lot, this._componentsFrom(this._rowsFor(lot)), {
       ...lookups,
       remarks: lot.sheetRemarks || '',
@@ -15122,15 +15449,6 @@ MApp.ProductionSheet = {
       pageWidthPx: MApp.Print.PAGE_WIDTH_PX
     });
     this._fillRemarks(data.remarks);
-
-    const host = document.getElementById('print-production-sheet-container');
-    if (!host) return '';
-    const page = host.cloneNode(true);
-    page.removeAttribute('id');
-    page.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
-    page.classList.remove('print-container');
-    page.style.display = 'block';
-    return page.outerHTML;
   },
 
   close() { MApp.Sheet.close('sheet-production-sheet'); },
