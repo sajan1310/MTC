@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 
 import database
@@ -153,9 +154,10 @@ def test_get_items_data_hides_zero_rate_vendors(erp_client):
     """module_items.js's MIN_VENDOR_RATE (0.01) -- a vendor pair with no
     real rate entered (0, or saved as blank and coerced to 0) is stored
     (saveItem's own validation only rejects negative/non-numeric rates,
-    matching the source), but must not show up in getItemsData as if it
+    matching the source), but must not show up in `vendors` as if it
     were a real quoted price. A real rate for a different vendor on the
-    same item is unaffected.
+    same item is unaffected. The unpriced vendor is still listed, by name,
+    under `unpricedVendors`.
     """
     name = _unique_name("MixedRateItem")
     resp = _rpc(
@@ -181,6 +183,97 @@ def test_get_items_data_hides_zero_rate_vendors(erp_client):
     assert match["vendors"] == [
         {"vendor": "Real Vendor", "rate": 8, "ratePerBaseUnit": 8}
     ]
+    assert match["unpricedVendors"] == ["Empty Slot Vendor"]
+
+
+def test_vendor_saved_without_a_rate_survives_the_next_edit(erp_client):
+    """The rate is optional on the item form, so a vendor typed with no rate
+    must come back when the item is next opened -- it used to be stored and
+    then hidden, so the form showed no vendor, and because saveItem replaces
+    the whole vendor list, the following save deleted it for good.
+
+    Both reads carry it: getItemsData (what the list and the form load) and
+    saveItem's own data.item (what the desktop patches into its list and
+    reopens the form from).
+    """
+    name = _unique_name("NoRateVendorItem")
+    created = _rpc(
+        erp_client,
+        "saveItem",
+        [
+            {
+                "itemName": name,
+                "itemBaseUnit": "Pcs",
+                "vendors": json.dumps([{"vendor": "Avon Cycles", "rate": 0}]),
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert created["success"] is True
+    assert created["data"]["item"]["vendors"] == []
+    assert created["data"]["item"]["unpricedVendors"] == ["Avon Cycles"]
+
+    # The form sends the unpriced vendor back with a blank rate, as it
+    # showed it, next to a newly priced one.
+    edited = _rpc(
+        erp_client,
+        "saveItem",
+        [
+            {
+                "originalName": name,
+                "originalSize": "",
+                "itemName": name,
+                "itemBaseUnit": "Pcs",
+                "itemRemarks": "edited",
+                "vendors": json.dumps(
+                    [
+                        {"vendor": "Avon Cycles", "rate": 0},
+                        {"vendor": "Hero Parts", "rate": 12},
+                    ]
+                ),
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert edited["success"] is True
+
+    listed = _rpc(erp_client, "getItemsData").get_json()["data"]
+    match = next(i for i in listed if i["name"] == name)
+    assert match["unpricedVendors"] == ["Avon Cycles"]
+    assert match["vendors"] == [
+        {"vendor": "Hero Parts", "rate": 12, "ratePerBaseUnit": 12}
+    ]
+
+
+def test_merge_prompt_counts_vendors_saved_without_a_rate(erp_client):
+    """The merge prompt says how many vendors the target already has. A
+    vendor with no rate is one of them -- the item list shows it."""
+    existing = _unique_name("CountTarget")
+    other = _unique_name("CountRenamed")
+    _rpc(
+        erp_client,
+        "saveItem",
+        [
+            {
+                "itemName": existing,
+                "vendors": [
+                    {"vendor": "Priced Vendor", "rate": 5},
+                    {"vendor": "Unpriced Vendor", "rate": 0},
+                ],
+            }
+        ],
+        mutation=True,
+    )
+    _rpc(erp_client, "saveItem", [{"itemName": other}], mutation=True)
+
+    collide = _rpc(
+        erp_client,
+        "saveItem",
+        [{"itemName": existing, "originalName": other, "originalSize": ""}],
+        mutation=True,
+    ).get_json()
+    assert collide["data"]["mergeable"] is True
+    assert collide["data"]["targetVendorCount"] == 2
 
 
 def test_save_item_vendor_rate_converted_to_base_unit(erp_client):

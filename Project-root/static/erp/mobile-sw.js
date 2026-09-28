@@ -122,7 +122,9 @@
 // the PO it was saved against.
 // v73: several production sheets or POs download and share as one PDF
 // each, under desktop's names, and the PO list's selection prints them.
-const CACHE_NAME = 'erp-mobile-shell-v73';
+// v74: the item form keeps a vendor saved without a rate -- it came back
+// missing, so the next save deleted it.
+const CACHE_NAME = 'erp-mobile-shell-v74';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

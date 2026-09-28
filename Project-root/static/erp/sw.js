@@ -390,7 +390,11 @@
 // across all seven columns. Both are precached, and the matching markup is
 // network-first, so without the bump an installed client pairs the new
 // dashboard sets with the old grid rule for one load.
-const CACHE_NAME = 'erp-shell-v80';
+// v81: items.js stops requiring a vendor name in the item dialog, and keeps
+// a vendor saved without a rate instead of dropping it on the next save.
+// It is precached and the dialog's markup is network-first, so without the
+// bump an installed client pairs the new headings with the old rule.
+const CACHE_NAME = 'erp-shell-v81';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

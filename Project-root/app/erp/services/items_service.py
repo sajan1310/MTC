@@ -136,9 +136,11 @@ def _item_name_size_still_exists(cur, name: str, size: str) -> bool:
 
 
 def _count_vendors(cur, item_id) -> int:
+    # Every vendor mapped, with a rate or without -- the item list and the
+    # edit form show both, so the merge prompt's count must agree with them.
     cur.execute(
-        "SELECT COUNT(*) AS n FROM erp.item_vendors WHERE item_id = %s AND rate >= %s",
-        (item_id, MIN_VENDOR_RATE),
+        "SELECT COUNT(*) AS n FROM erp.item_vendors WHERE item_id = %s",
+        (item_id,),
     )
     return cur.fetchone()["n"]
 
@@ -675,9 +677,16 @@ def _row_to_item_record(row, vendor_rows, units_map) -> dict:
     }
 
     vendors = []
+    # A vendor saved with no rate is still this item's vendor -- the rate is
+    # optional on the form. It stays out of `vendors`, whose every entry is
+    # read as a real quoted price (BOM costing, bill and PO rate fill), and is
+    # listed by name here so the edit form can show it. Left off the form,
+    # the next save would delete it: saveItem replaces the whole vendor list.
+    unpriced_vendors = []
     for v in vendor_rows:
         rate = float(v["rate"])
         if rate < MIN_VENDOR_RATE:
+            unpriced_vendors.append(v["vendor"])
             continue
         try:
             rate_per_base_unit = units_service.convert_rate_to_base_unit(
@@ -700,6 +709,7 @@ def _row_to_item_record(row, vendor_rows, units_map) -> dict:
         "weightPerBaseUnit": weight_per_base_unit,
         "image": row["image"] or "",
         "vendors": vendors,
+        "unpricedVendors": unpriced_vendors,
     }
 
 

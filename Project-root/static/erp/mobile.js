@@ -10488,7 +10488,13 @@ MApp.Items = {
   // ── Add/Edit (Phase 1) ──────────────────────────────────────────────
   openForm(item) {
     this.editingItem = item || null;
-    this.vendorRows = item && Array.isArray(item.vendors) ? item.vendors.map(v => ({ vendor: v.vendor, rate: v.rate })) : [];
+    // Vendors saved without a rate come back with a blank one. saveItem
+    // replaces the whole list, so one left off the form is deleted by the
+    // next save.
+    this.vendorRows = item ? [
+      ...(Array.isArray(item.vendors) ? item.vendors : []).map(v => ({ vendor: v.vendor, rate: v.rate })),
+      ...(Array.isArray(item.unpricedVendors) ? item.unpricedVendors : []).map(vendor => ({ vendor, rate: '' }))
+    ] : [];
     this.photoBase64 = item ? (item.image || null) : null;
 
     const titleEl = document.getElementById('item-form-title');
@@ -10572,7 +10578,7 @@ MApp.Items = {
           <input type="text" value="${MApp.Util.escapeHtml(row.vendor || '')}" oninput="MApp.Items.updateVendorRow(${i}, 'vendor', this.value)">
         </div>
         <div class="mb-field" style="margin-bottom:0;">
-          <label>Rate</label>
+          <label>Rate (optional)</label>
           <input type="number" inputmode="decimal" min="0" step="any" value="${row.rate != null ? row.rate : ''}" oninput="MApp.Items.updateVendorRow(${i}, 'rate', this.value)">
         </div>
         <button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" onclick="MApp.Items.removeVendorRow(${i})">Remove</button>
@@ -10581,7 +10587,7 @@ MApp.Items = {
   },
 
   addVendorRow() {
-    this.vendorRows.push({ vendor: '', rate: 0 });
+    this.vendorRows.push({ vendor: '', rate: '' });
     const el = document.getElementById('item-form-vendor-rows');
     if (el) el.innerHTML = this._vendorRowsHtml();
   },
@@ -10594,7 +10600,9 @@ MApp.Items = {
 
   updateVendorRow(i, key, value) {
     if (!this.vendorRows[i]) return;
-    this.vendorRows[i][key] = key === 'rate' ? MApp.Util.toNumber(value) : value;
+    // A cleared rate stays blank rather than turning into a 0 that the next
+    // redraw of the rows would show.
+    this.vendorRows[i][key] = key === 'rate' && value !== '' ? MApp.Util.toNumber(value) : value;
   },
 
   async onPhotoChange(file) {
