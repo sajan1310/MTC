@@ -1169,6 +1169,22 @@ App.Production = {
     );
   },
 
+  // The same PDF, handed to the share sheet -- a work order goes to the
+  // contractor it names.
+  async shareWorkOrderPdf() {
+    const preview = this._workOrderPreview;
+    if (!preview) {
+      App.Utils.showToast('Generate the work order preview first.', true);
+      return;
+    }
+
+    await App.Print.shareOne(
+      this._buildWorkOrderHtml(preview.date, preview.contractor, preview.lots),
+      App.Print.docName({ type: 'WO', party: preview.contractor, date: preview.date }),
+      { buttonId: 'workOrderShareBtn' }
+    );
+  },
+
   printWorkOrder() {
     if (typeof App.Print === 'undefined') {
       App.Utils.notPortedYet('Printing');
@@ -1325,6 +1341,7 @@ App.Production = {
     App.Selection.updateButton('btnBulkDeleteProduction', count, '<i class="bi bi-trash"></i> Delete Selected');
     App.Selection.updateButton('btnBulkPrintProduction', count, '<i class="bi bi-printer"></i> Print Selected');
     App.Selection.updateButton('btnBulkDownloadPdfProduction', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
+    App.Selection.updateButton('btnBulkShareProduction', count, '<i class="bi bi-share"></i> Share Selected');
   },
 
   async bulkDelete() {
@@ -1409,20 +1426,37 @@ App.Production = {
   // a production sheet, and driving bulk export from it meant the file you got
   // from "Download PDFs" had a different table layout from the one you got
   // from "Print Sheet" for the very same lot.
+  async bulkDownloadPDF() {
+    const documents = this._selectedSheetDocuments();
+    if (!documents.length) return;
+    await App.Print.downloadMany(documents, App.Print.bulkZipName('PRD'),
+      { buttonId: 'btnBulkDownloadPdfProduction' });
+  },
+
+  // "Share Selected" -- the same files, handed to the share sheet.
+  async bulkShare() {
+    const documents = this._selectedSheetDocuments();
+    if (!documents.length) return;
+    await App.Print.shareMany(documents, App.Print.bulkZipName('PRD'),
+      { buttonId: 'btnBulkShareProduction' });
+  },
+
+  // The selected lots' sheets as separately-named documents, [] when there
+  // is nothing to export.
   //
   // Sequential on purpose -- every iteration reuses the one shared container,
   // so overlapping builds would interleave and corrupt each other's output.
-  async bulkDownloadPDF() {
+  _selectedSheetDocuments() {
     const selected = App.State.selectedProduction;
-    if (!selected || selected.length === 0) return;
+    if (!selected || selected.length === 0) return [];
 
     const lots = App.State.globalProduction.filter(p => App.Selection.isSelected(selected, String(p.rowIdx)));
-    if (lots.length === 0) return;
+    if (lots.length === 0) return [];
 
     const container = document.getElementById('print-production-sheet-container');
     if (!container) {
       console.warn('[PDF] Production sheet container not found');
-      return;
+      return [];
     }
 
     const landscape = this._printOptions().landscape;
@@ -1446,9 +1480,9 @@ App.Production = {
       if (openSheet) this._buildProductionSheetForExport();
     }
 
-    await App.Print.downloadMany(documents, App.Print.bulkZipName('PRD'),
-      { buttonId: 'btnBulkDownloadPdfProduction' });
+    return documents;
   },
+
   // Builds a fully self-contained "Production Material Requirement Sheet"
   // page (mirrors #print-production-sheet-container's markup/styling)
   // for bulk printing.
@@ -8303,6 +8337,21 @@ App.Production = {
       'print-production-sheet-container',
       this._productionSheetDocName(),
       { landscape: this._printOptions().landscape }
+    );
+  },
+
+  // "Share", beside it: the same sheet, the same name and print options,
+  // handed to the share sheet instead of saved.
+  async shareProductionSheetPDF() {
+    const state = App.State.currentProductionSheet;
+    if (!state) return;
+
+    this._buildProductionSheetForExport();
+
+    await App.Print.shareContainer(
+      'print-production-sheet-container',
+      this._productionSheetDocName(),
+      { landscape: this._printOptions().landscape, buttonId: 'prodSheetShareBtn' }
     );
   }
 };

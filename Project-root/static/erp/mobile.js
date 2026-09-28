@@ -2728,19 +2728,24 @@ MApp.Print = {
       landscape,
       toggles,
       separate,
-      populate: () => {
-        const container = document.getElementById('print-bulk-container');
-        if (container) container.classList.toggle('print-cells-own', !!cellsOwn);
-        const body = document.getElementById('print-bulk-body');
-        if (!body) return;
-        body.innerHTML = list.map((record, idx) => {
-          const pageStyle = idx < list.length - 1
-            ? 'page-break-after:always;break-after:page;'
-            : '';
-          return `<div class="bulk-print-page" style="${pageStyle}">${buildPageHtml(record)}</div>`;
-        }).join('');
-      }
+      populate: () => this.fillBulk(list, buildPageHtml, cellsOwn)
     });
+  },
+
+  // One page per record into #print-bulk-container. What bulk()'s Print
+  // prints, and -- given one record at a time -- what a per-record PDF is
+  // captured from, so each file is that record's page of the print job.
+  fillBulk(records, buildPageHtml, cellsOwn) {
+    const container = document.getElementById('print-bulk-container');
+    if (container) container.classList.toggle('print-cells-own', !!cellsOwn);
+    const body = document.getElementById('print-bulk-body');
+    if (!body) return;
+    body.innerHTML = records.map((record, idx) => {
+      const pageStyle = idx < records.length - 1
+        ? 'page-break-after:always;break-after:page;'
+        : '';
+      return `<div class="bulk-print-page" style="${pageStyle}">${buildPageHtml(record)}</div>`;
+    }).join('');
   },
 
   // What print-templates.js's three note builders ask for, on top of
@@ -9615,7 +9620,15 @@ MApp.Issue = {
     key: 'issue', noun: 'issue record', plural: 'issue records',
     method: 'deleteIssueBulk',
     payload: rows => [rows.map(r => r.issueId)],
-    onDone: () => MApp.Issue.open()
+    onDone: () => MApp.Issue.open(),
+
+    // Desktop's Print Selected / Download PDFs / Share Selected: the
+    // receipts picked out of the list, printed as one job or saved and
+    // shared as one file each.
+    documents: {
+      label: 'Print / Share',
+      run: rows => MApp.Issue.printMany(rows)
+    }
   },
 
   // issuedTo and item names were already searchable; size and narration are
@@ -9704,13 +9717,48 @@ MApp.Issue = {
     else this.printAllNotes();
   },
 
+  // Desktop's name for a receipt, for its Print title and its file alike:
+  // "ISS_20260928-101530_RameshKumar".
+  docName(rec) {
+    return MApp.Print.docName({ type: 'ISS', key: rec.issueId, party: rec.issuedTo });
+  },
 
-  printNote(index) {
-    const rec = (this.filtered || [])[index];
+  _notePage(rec) {
+    return PrintTemplates.issueNote(rec, MApp.Print.noteDeps());
+  },
+
+  // One card's receipt: Print, Download PDF or Share.
+  printNote(rec) {
     if (!rec) return;
-    MApp.Print.bulk([rec], r => PrintTemplates.issueNote(r, MApp.Print.noteDeps()), {
-      filename: `Stock_Issue_Receipt_${rec.issueId || index + 1}`,
+    return MApp.Print.bulk([rec], r => this._notePage(r), {
+      filename: this.docName(rec),
       title: 'Stock Issue Receipt'
+    });
+  },
+
+  // Receipts picked out of the list: Print is one job, Download and Share
+  // one file per receipt, each under the name it gets on its own.
+  printMany(records) {
+    const list = (records || []).filter(Boolean);
+    if (list.length === 0) {
+      MApp.Toast.error('No issue records to print.');
+      return;
+    }
+    return MApp.Print.bulk(list, r => this._notePage(r), {
+      // Desktop titles its Print Selected job this way.
+      filename: list.length === 1 ? this.docName(list[0]) : 'Stock_Issue_Receipts_Selected',
+      title: `Stock Issue Receipts (${list.length})`,
+      separate: {
+        count: list.length,
+        noun: 'receipt',
+        zipName: MApp.Print.bulkZipName('ISS'),
+        documents: () => list
+          .map(rec => {
+            MApp.Print.fillBulk([rec], r => this._notePage(r));
+            return MApp.Print.capturePdfDocument('print-bulk-container', this.docName(rec), false);
+          })
+          .filter(Boolean)
+      }
     });
   },
 
@@ -9768,6 +9816,7 @@ MApp.Issue = {
         ${r.reference ? `<div class="mb-card-sub mb-mt-2">Ref: ${MApp.Util.escapeHtml(r.reference)}</div>` : ''}
         <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4); flex-wrap:wrap;">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-issue-action="edit" data-issue-index="${i}">Edit</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-issue-action="document" data-issue-index="${i}">Print / Share</button>
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-issue-action="delete" data-issue-index="${i}">Delete</button>
         </div>
       </div>`;
@@ -9781,6 +9830,7 @@ MApp.Issue = {
         const record = page.rows[Number(btn.dataset.issueIndex)];
         if (!record) return;
         if (btn.dataset.issueAction === 'edit') this.openForm(record);
+        else if (btn.dataset.issueAction === 'document') this.printNote(record);
         else this.deleteIssue(record);
       });
     });

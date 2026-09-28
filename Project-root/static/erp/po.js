@@ -125,6 +125,7 @@ App.PO = {
           <button class="btn btn-sm btn-outline-dark    btn-action w-100 mb-1" data-action="po-print"  data-index="${index}">Print Document</button>
           <button class="btn btn-sm btn-outline-primary  btn-action w-100 mb-1" data-action="po-edit"   data-index="${index}">Edit Order</button>
           <button class="btn btn-sm btn-outline-success  btn-action w-100 mb-1" data-action="po-pdf"    data-index="${index}">Download PDF</button>
+          <button class="btn btn-sm btn-outline-secondary btn-action w-100 mb-1" data-action="po-share" data-index="${index}">Share</button>
           <button class="btn btn-sm btn-danger           btn-action w-100"      data-action="po-delete" data-ponumber="${escapeHtml(po.poNumber)}">Delete</button>
         </td>
       </tr>`;
@@ -169,6 +170,7 @@ App.PO = {
     App.Selection.updateButton('btnBulkDeletePOs', count, '<i class="bi bi-trash"></i> Delete Selected');
     App.Selection.updateButton('btnBulkPrintPOs', count, '<i class="bi bi-printer"></i> Print Selected');
     App.Selection.updateButton('btnBulkDownloadPdfPOs', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
+    App.Selection.updateButton('btnBulkSharePOs', count, '<i class="bi bi-share"></i> Share Selected');
   },
 
   async bulkDelete() {
@@ -223,26 +225,37 @@ App.PO = {
   // "Download PDFs" -- one separately-named PDF per selected purchase order,
   // honouring the same rates/total toggles bulkPrint reads.
   async bulkDownloadPDF() {
+    const documents = this._selectedDocuments();
+    if (!documents.length) return;
+    await App.Print.downloadMany(documents, App.Print.bulkZipName('PO'),
+      { buttonId: 'btnBulkDownloadPdfPOs' });
+  },
+
+  // "Share Selected" -- the same files, handed to the share sheet.
+  async bulkShare() {
+    const documents = this._selectedDocuments();
+    if (!documents.length) return;
+    await App.Print.shareMany(documents, App.Print.bulkZipName('PO'),
+      { buttonId: 'btnBulkSharePOs' });
+  },
+
+  // The selected POs as separately-named documents, [] when none are selected.
+  _selectedDocuments() {
     const selected = App.State.selectedPOs;
     if (!selected.length) {
       App.Utils.showToast('No purchase orders selected.', true);
-      return;
+      return [];
     }
 
     const includeRates = document.getElementById('printWithRates')?.checked ?? true;
     const includeTotal = document.getElementById('printWithTotal')?.checked ?? true;
 
-    const pos = App.State.globalPOs.filter(po => App.Selection.isSelected(selected, String(po.poNumber)));
-    if (!pos.length) return;
-
-    await App.Print.downloadMany(
-      pos.map(po => ({
+    return App.State.globalPOs
+      .filter(po => App.Selection.isSelected(selected, String(po.poNumber)))
+      .map(po => ({
         filename: App.Print.docFilename({ type: 'PO', key: po.poNumber, party: po.vendor }),
         html: this.buildPOPrintPageHtml(po, includeRates, includeTotal)
-      })),
-      App.Print.bulkZipName('PO'),
-      { buttonId: 'btnBulkDownloadPdfPOs' }
-    );
+      }));
   },
   filterData(searchTerm) {
     App.State.poSearchTerm = String(searchTerm || '');
@@ -1072,6 +1085,16 @@ App.PO = {
     // populatePrintData has just filled the static template, so this sends
     // exactly the markup App.PO.print would have printed.
     await App.Print.downloadContainer('print-po-container', filename);
+  },
+
+  // The row's "Share": the PDF Download PDF saves, under the same name,
+  // handed to the share sheet instead. `button` is the row's button, which
+  // shows it is working while the PDF renders.
+  async share(index, button) {
+    const po = this.populatePrintData(index);
+    if (!po) return;
+    await App.Print.shareContainer('print-po-container',
+      App.Print.docName({ type: 'PO', key: po.poNumber, party: po.vendor }), { buttonId: button });
   },
 
   // Item x vendor rate/last-purchase-date catalog, built purely from

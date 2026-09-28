@@ -122,8 +122,10 @@
 // the PO it was saved against.
 // v73: several production sheets or POs download and share as one PDF
 // each, under desktop's names, and the PO list's selection prints them.
-// v74: the item form keeps a vendor saved without a rate -- it came back
-// missing, so the next save deleted it.
+// v74: an issue record's card prints, downloads or shares its Stock Issue
+// Receipt, and a selection of them goes out as one PDF each. The item form
+// keeps a vendor saved without a rate -- it came back missing, so the next
+// save deleted it.
 const CACHE_NAME = 'erp-mobile-shell-v74';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
