@@ -7742,6 +7742,170 @@ MApp.Returns = {
   }
 };
 // ================================================================
+// PURCHASE HINTS — a line's narration and rate, from what has been
+// bought before. Used by the New PO and Bill forms below.
+//
+// Desktop's PO and Bill forms suggest a line's narration and fill its rate
+// as the item is entered (po.js#refreshNarrationList / #autoFillRate,
+// bill.js#getLatestRate). The phone's had neither: a PO raised here went
+// out with no narration and a rate typed from memory, and editing one here
+// saved every line's narration as blank.
+//
+// Desktop's rules, in desktop's order, over the same three sources --
+// Items Master, the PO list and the Bill Ledger -- so one line gets one
+// suggestion whichever shell it is entered on. mobile_purchase_hints
+// .test.js runs desktop's own functions on the same records and requires
+// the answers to agree.
+//
+// A suggestion only ever fills an EMPTY field, or one it filled itself.
+// Whatever the operator typed stays typed.
+// ================================================================
+MApp.PurchaseHints = {
+  // The PO list and Bill Ledger, for a form about to open. Best-effort:
+  // with no signal the form still opens, with nothing to suggest.
+  //
+  // Held for a few minutes, because the Bill Ledger is the biggest read
+  // the phone makes and a run of bills entered one after another would
+  // otherwise fetch it for every one. A save drops it (invalidate), so the
+  // next form suggests from what was just entered. A failed read is not
+  // held -- the next form asks again.
+  HOLD_MS: 5 * 60 * 1000,
+  _held: null,
+
+  load() {
+    const now = Date.now();
+    if (this._held && now - this._held.at < this.HOLD_MS) return this._held.promise;
+    const list = r => (r && r.success && Array.isArray(r.data) ? r.data : null);
+    const held = { at: now };
+    held.promise = Promise.all([
+      MApp.Api.call('getPOData').catch(() => null),
+      MApp.Api.call('getBillData').catch(() => null)
+    ]).then(([pos, bills]) => {
+      if (!list(pos) || !list(bills)) {
+        if (this._held === held) this._held = null;
+      }
+      return { pos: list(pos) || [], bills: list(bills) || [] };
+    });
+    this._held = held;
+    return held.promise;
+  },
+
+  invalidate() {
+    this._held = null;
+  },
+
+  _k(v) {
+    return String(v == null ? '' : v).trim().toLowerCase();
+  },
+
+  // po.js#refreshNarrationList: the narrations this item + size has been
+  // bought under -- this vendor's first, any vendor's if it has none --
+  // then the Items Master's own. Item identity is name + size; narration
+  // only describes it, and can differ by vendor.
+  narrations({ pos, bills, items }, { name, size, vendor }) {
+    const k = v => this._k(v);
+    const nameKey = k(name);
+    const sizeKey = k(size);
+    const vendorKey = k(vendor);
+    if (!nameKey) return [];
+
+    const collect = requireVendor => {
+      const found = new Set();
+      const scan = records => (records || []).forEach(rec => {
+        if (requireVendor && k(rec.vendor) !== vendorKey) return;
+        (rec.items || []).forEach(it => {
+          if (k(it.name) === nameKey && k(it.size) === sizeKey && it.narration) found.add(it.narration);
+        });
+      });
+      scan(pos);
+      scan(bills);
+      return found;
+    };
+
+    let found = vendorKey ? collect(true) : new Set();
+    if (found.size === 0) found = collect(false);
+    if (found.size === 0) {
+      const master = (items || []).find(i => k(i.name) === nameKey && k(i.size) === sizeKey);
+      if (master && master.narration) found.add(master.narration);
+    }
+    return [...found];
+  },
+
+  // bill.js#getLatestRate, less its first step -- the linked PO's own
+  // line -- which the Bill form takes from its PO match instead. The
+  // vendor's rate in Items Master; else the latest PO, then bill, for this
+  // item + size (+ vendor, when there is one), an exact narration first.
+  // Says where the rate came from as well, so the form can.
+  latestRate({ pos, bills, items }, { name, size, narration, vendor }) {
+    const k = v => this._k(v);
+    const nameKey = k(name);
+    const sizeKey = k(size);
+    const narrationKey = k(narration);
+    const vendorKey = k(vendor);
+    if (!nameKey) return null;
+
+    const master = (items || []).find(i => k(i.name) === nameKey && k(i.size) === sizeKey);
+    if (master && vendorKey) {
+      const v = (master.vendors || []).find(x => k(x.vendor) === vendorKey);
+      if (v) return { rate: v.rate, source: 'this vendor\'s rate in Items Master' };
+    }
+
+    const find = (records, exactNarration, describe) => {
+      for (const rec of records || []) {
+        if (vendorKey && k(rec.vendor) !== vendorKey) continue;
+        const line = (rec.items || []).find(i =>
+          k(i.name) === nameKey && k(i.size) === sizeKey &&
+          (!exactNarration || k(i.narration) === narrationKey));
+        if (line) return { rate: line.price, source: describe(rec) };
+      }
+      return null;
+    };
+    const fromPo = rec => `PO ${rec.poNumber}${rec.poDate ? ` (${rec.poDate})` : ''}`;
+    const fromBill = rec => `bill ${rec.billNumber}${rec.billDate ? ` (${rec.billDate})` : ''}`;
+
+    return find(pos, true, fromPo) || find(bills, true, fromBill)
+      || find(pos, false, fromPo) || find(bills, false, fromBill);
+  },
+
+  // A line's Narration field. Free text, always; beneath it, as chips, the
+  // narrations this item has been bought under when there is a choice to
+  // make. `ns` is the owning form's global ('MApp.PO' / 'MApp.Bill'), and
+  // a chip names its narration by position rather than carrying the text
+  // inside an onclick attribute.
+  fieldHtml(ns, prefix, i, line) {
+    const esc = v => MApp.Util.escapeHtml(v);
+    return `
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label for="${prefix}-narration-${i}">Narration</label>
+          <input type="text" id="${prefix}-narration-${i}" maxlength="200" autocomplete="off"
+                 value="${esc(line.narration || '')}" placeholder="${line.name ? 'Describe this item (optional)' : 'Choose an item first'}"
+                 oninput="${ns}.updateNarration(${i}, this.value)">
+          <div id="${prefix}-narration-chips-${i}">${this.chipsHtml(ns, i, line)}</div>
+        </div>`;
+  },
+
+  chipsHtml(ns, i, line) {
+    const others = (line.narrationOptions || [])
+      .map((n, idx) => ({ n, idx }))
+      .filter(o => o.n !== line.narration);
+    if (!others.length) return '';
+    return `<div class="mb-filter-chip-row" style="margin:var(--mb-sp-1) 0 0;">${others.map(o =>
+      `<button type="button" class="mb-filter-chip" onclick="${ns}.pickNarration(${i}, ${o.idx})">${MApp.Util.escapeHtml(o.n)}</button>`
+    ).join('')}</div>`;
+  },
+
+  // The line under a rate field: where a filled-in rate came from, or --
+  // once the operator has typed their own -- what it was last time.
+  rateNote(line) {
+    const hint = line.rateHint;
+    if (!hint) return '';
+    const rate = MApp.Util.formatCurrency(hint.rate);
+    if (line.priceAuto) return `Filled from ${hint.source}. Type a rate to change it.`;
+    if (MApp.Util.toNumber(line.price) !== MApp.Util.toNumber(hint.rate)) return `Last rate ${rate}, from ${hint.source}.`;
+    return '';
+  }
+};
+// ================================================================
 // PO LEDGER — getPOData already returns po.status and per-line
 // receivedQty/pendingQty (see module_po.js#_attachPoStatus), so the list
 // is a straight read + status-chip + pending-line surface, no new server
@@ -7977,7 +8141,7 @@ MApp.PO = {
     const stale = MApp.Util.openGuard(this);
     this.editingPoNumber = null;
     this.selection = { vendor: '', contact: '' };
-    this.lines = [{ name: '', size: '', unit: 'Pcs', qty: '', price: '' }];
+    this.lines = [this._blankLine()];
 
     const titleEl = document.querySelector('#sheet-new-po h2');
     if (titleEl) titleEl.textContent = 'New PO';
@@ -8017,10 +8181,14 @@ MApp.PO = {
     const stale = MApp.Util.openGuard(this);
     this.editingPoNumber = po.poNumber;
     this.selection = { vendor: po.vendor || '', contact: po.contact || '' };
+    // Narration carried across: without it, saving an edit from the phone
+    // sent every line's narration as blank and wiped them on the server.
     this.lines = (po.items || []).map(it => ({
-      name: it.name, size: it.size || '', unit: it.unit || 'Pcs', qty: it.qty, price: it.price
+      ...this._blankLine(),
+      name: it.name, size: it.size || '', unit: it.unit || 'Pcs', qty: it.qty, price: it.price,
+      narration: it.narration || ''
     }));
-    if (this.lines.length === 0) this.lines.push({ name: '', size: '', unit: 'Pcs', qty: '', price: '' });
+    if (this.lines.length === 0) this.lines.push(this._blankLine());
 
     const titleEl = document.querySelector('#sheet-new-po h2');
     if (titleEl) titleEl.textContent = 'Edit PO';
@@ -8037,6 +8205,9 @@ MApp.PO = {
     try {
       await this._ensureNewPoRefData();
       if (stale()) return;
+      // The saved PO's own narrations and rates are left exactly as they
+      // are; only the choices and the last-rate notes are worked out.
+      this.lines.forEach(line => this._applyHints(line, { fill: false }));
       document.getElementById('new-po-body').innerHTML = this._newPoFormHtml();
 
       const setValue = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
@@ -8063,12 +8234,65 @@ MApp.PO = {
   },
 
   async _ensureNewPoRefData() {
-    const [vendorsRes, itemsRes] = await Promise.all([
+    const [vendorsRes, itemsRes, history] = await Promise.all([
       MApp.Api.call('getVendorsData'),
-      MApp.Api.call('getItemsData')
+      MApp.Api.call('getItemsData'),
+      MApp.PurchaseHints.load()
     ]);
     this.vendors = (vendorsRes && vendorsRes.success) ? (vendorsRes.data || []) : [];
     this.items = (itemsRes && itemsRes.success) ? (itemsRes.data || []) : [];
+    this.history = history;
+  },
+
+  history: { pos: [], bills: [] },
+
+  // A line: the item, and whether its narration and rate were filled in by
+  // a suggestion (and so may be re-suggested) or typed by the operator
+  // (and so are never touched again).
+  _blankLine() {
+    return {
+      name: '', size: '', unit: 'Pcs', qty: '', price: '', narration: '',
+      narrationOptions: [], narrationAuto: false, priceAuto: false, rateHint: null
+    };
+  },
+
+  _hintData() {
+    return { pos: this.history.pos, bills: this.history.bills, items: this.items };
+  },
+
+  // po.js's order on an item change: the narration list (filled outright
+  // when it holds exactly one), then the rate for that narration.
+  // `fill: false` works out the choices and notes only -- for a saved PO
+  // opened to edit, whose values are the operator's.
+  _applyHints(line, { fill = true } = {}) {
+    line.narrationOptions = MApp.PurchaseHints.narrations(this._hintData(), {
+      name: line.name, size: line.size, vendor: this.selection.vendor
+    });
+    if (fill && (!line.narration || line.narrationAuto)) {
+      const only = line.narrationOptions.length === 1 ? line.narrationOptions[0] : '';
+      line.narration = only;
+      line.narrationAuto = !!only;
+    }
+    this._applyRate(line, { fill });
+  },
+
+  _applyRate(line, { fill = true } = {}) {
+    const hit = MApp.PurchaseHints.latestRate(this._hintData(), {
+      name: line.name, size: line.size, narration: line.narration, vendor: this.selection.vendor
+    });
+    line.rateHint = hit && hit.rate > 0 ? hit : null;
+    if (!fill) return;
+    const typed = line.price !== '' && line.price != null && !line.priceAuto;
+    if (typed) return;
+    if (line.rateHint) {
+      line.price = line.rateHint.rate;
+      line.priceAuto = true;
+    } else if (line.priceAuto) {
+      // Filled for an item or vendor the line no longer has, and nothing
+      // on record for the new one: a stale rate is worse than none.
+      line.price = '';
+      line.priceAuto = false;
+    }
   },
 
   _newPoFormHtml() {
@@ -8115,6 +8339,11 @@ MApp.PO = {
       const contactInput = document.getElementById('new-po-contact');
       if (contactInput) contactInput.value = match.contact;
     }
+
+    // Narrations and rates are this vendor's first -- desktop re-fills
+    // every line's rate on a vendor change, too.
+    this.lines.forEach(line => { if (line.name) this._applyHints(line); });
+    this._renderLines();
   },
 
   // ── Line items (Phase 2) ─────────────────────────────────────────────
@@ -8126,35 +8355,84 @@ MApp.PO = {
           <label>Item</label>
           <button type="button" class="mb-picker-field${line.name ? '' : ' mb-placeholder'}" onclick="MApp.PO.pickLineItem(${i})">${line.name ? MApp.Util.escapeHtml(line.name) + (line.size ? ` (${MApp.Util.escapeHtml(line.size)})` : '') : 'Choose an item...'}</button>
         </div>
+        ${MApp.PurchaseHints.fieldHtml('MApp.PO', 'new-po-line', i, line)}
         <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
           <label>Quantity</label>
           <input type="number" inputmode="decimal" min="0" step="1" value="${line.qty || ''}" oninput="MApp.PO.updateLine(${i}, 'qty', this.value)">
         </div>
         <div class="mb-field" style="margin-bottom:0;">
-          <label>Rate (per unit)</label>
-          <input type="number" inputmode="decimal" min="0" step="0.01" value="${line.price || ''}" oninput="MApp.PO.updateLine(${i}, 'price', this.value)">
+          <label for="new-po-line-price-${i}">Rate (per unit)</label>
+          <input type="number" id="new-po-line-price-${i}" inputmode="decimal" min="0" step="0.01" value="${line.price === '' || line.price == null ? '' : line.price}" oninput="MApp.PO.updatePrice(${i}, this.value)">
+          <div class="mb-text-sm mb-text-steel" id="new-po-line-rate-note-${i}" style="margin-top:var(--mb-sp-1);">${MApp.Util.escapeHtml(MApp.PurchaseHints.rateNote(line))}</div>
         </div>
         ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" onclick="MApp.PO.removeLine(${i})">Remove</button>` : ''}
       </div>
     `).join('');
   },
 
-  addLine() {
-    this.lines.push({ name: '', size: '', unit: 'Pcs', qty: '', price: '' });
+  _renderLines() {
     const el = document.getElementById('new-po-lines');
     if (el) el.innerHTML = this._linesHtml();
   },
 
+  // Repaints what a suggestion can change on one line -- its rate, the
+  // note under it, its narration chips -- without re-rendering the list,
+  // which would take the keyboard away from whatever is being typed.
+  _refreshLine(i) {
+    const line = this.lines[i];
+    if (!line) return;
+    const price = document.getElementById(`new-po-line-price-${i}`);
+    if (price && document.activeElement !== price) price.value = line.price === '' || line.price == null ? '' : line.price;
+    const note = document.getElementById(`new-po-line-rate-note-${i}`);
+    if (note) note.textContent = MApp.PurchaseHints.rateNote(line);
+    const chips = document.getElementById(`new-po-line-narration-chips-${i}`);
+    if (chips) chips.innerHTML = MApp.PurchaseHints.chipsHtml('MApp.PO', i, line);
+  },
+
+  addLine() {
+    this.lines.push(this._blankLine());
+    this._renderLines();
+  },
+
   removeLine(i) {
     this.lines.splice(i, 1);
-    if (this.lines.length === 0) this.lines.push({ name: '', size: '', unit: 'Pcs', qty: '', price: '' });
-    const el = document.getElementById('new-po-lines');
-    if (el) el.innerHTML = this._linesHtml();
+    if (this.lines.length === 0) this.lines.push(this._blankLine());
+    this._renderLines();
   },
 
   updateLine(i, key, value) {
     if (!this.lines[i]) return;
     this.lines[i][key] = MApp.Util.toNumber(value);
+  },
+
+  // A typed rate is the operator's, and no suggestion replaces it. Clearing
+  // the field hands it back to the suggestions.
+  updatePrice(i, value) {
+    const line = this.lines[i];
+    if (!line) return;
+    line.price = String(value).trim() === '' ? '' : MApp.Util.toNumber(value);
+    line.priceAuto = false;
+    this._refreshLine(i);
+  },
+
+  // Typed narration is kept as typed. The rate follows it, because the
+  // rate lookup prefers a line bought under this exact narration.
+  updateNarration(i, value) {
+    const line = this.lines[i];
+    if (!line) return;
+    line.narration = value;
+    line.narrationAuto = false;
+    this._applyRate(line);
+    this._refreshLine(i);
+  },
+
+  pickNarration(i, idx) {
+    const line = this.lines[i];
+    if (!line || !line.narrationOptions || line.narrationOptions[idx] == null) return;
+    line.narration = line.narrationOptions[idx];
+    line.narrationAuto = false;
+    this._applyRate(line);
+    this._renderLines();
   },
 
   async pickLineItem(i) {
@@ -8171,9 +8449,9 @@ MApp.PO = {
     this.lines[i].name = match ? match.name : picked.label;
     this.lines[i].size = match ? match.size : '';
     this.lines[i].unit = match ? match.baseUnit : 'Pcs';
+    this._applyHints(this.lines[i]);
 
-    const el = document.getElementById('new-po-lines');
-    if (el) el.innerHTML = this._linesHtml();
+    this._renderLines();
   },
 
   // Note: source's own single-verb _apiCall handled both reads and
@@ -8196,7 +8474,7 @@ MApp.PO = {
       contact: (document.getElementById('new-po-contact')?.value || '').trim(),
       poRemarks: (document.getElementById('new-po-remarks')?.value || '').trim(),
       items: JSON.stringify(validLines.map(l => ({
-        name: l.name, size: l.size || '', narration: '', unit: l.unit || 'Pcs',
+        name: l.name, size: l.size || '', narration: String(l.narration || '').trim(), unit: l.unit || 'Pcs',
         qty: l.qty, price: l.price || 0
       })))
     };
@@ -8234,6 +8512,7 @@ MApp.PO = {
   },
 
   _onPoSaved(message, idleLabel) {
+    MApp.PurchaseHints.invalidate();
     MApp.Toast.success(message);
     this.editingPoNumber = null;
     this.closeNewSheet();
@@ -8421,10 +8700,27 @@ MApp.Bill = {
     this.editingBillNumber = bill ? bill.billNumber : null;
     this.editingBillVendor = bill ? bill.vendor : null;
     this.selection = { vendor: bill ? bill.vendor : '', contact: bill ? bill.contact : '' };
+    clearTimeout(this._matchTimer);
+    this._matchSeq++;
+    // A saved line keeps the PO it was saved against (`savedLink`) until
+    // something about it changes. Re-matching it regardless -- which the
+    // save used to do for every line -- asks for this bill's own quantity
+    // against a PO that already counts it as billed, and can move an
+    // untouched line to Direct or to the next PO.
     this.lines = bill
-      ? (bill.items || []).map(it => ({ name: it.name, size: it.size || '', unit: it.unit || 'Pcs', qty: it.qty, price: it.price, gst: it.gstRatePct, narration: it.narration || '' }))
-      : [{ name: '', size: '', unit: 'Pcs', qty: '', price: '', gst: 18 }];
-    if (this.lines.length === 0) this.lines.push({ name: '', size: '', unit: 'Pcs', qty: '', price: '', gst: 18 });
+      ? (bill.items || []).map(it => {
+          const po = String(it.poNumber || '').trim();
+          const linked = po && po.toUpperCase() !== 'DIRECT';
+          return {
+            ...this._blankLine(),
+            name: it.name, size: it.size || '', unit: it.unit || 'Pcs', qty: it.qty, price: it.price,
+            gst: it.gstRatePct, narration: it.narration || '',
+            allocs: linked ? [{ poNumber: po, qty: it.qty }] : [],
+            savedLink: true
+          };
+        })
+      : [this._blankLine()];
+    if (this.lines.length === 0) this.lines.push(this._blankLine());
 
     const titleEl = document.getElementById('bill-form-title');
     if (titleEl) titleEl.textContent = bill ? 'Edit Bill' : 'New Bill';
@@ -8439,15 +8735,20 @@ MApp.Bill = {
     if (saveBtn) saveBtn.disabled = true;
 
     try {
-      const [vendorsRes, itemsRes] = await Promise.all([
+      const [vendorsRes, itemsRes, history] = await Promise.all([
         MApp.Api.call('getVendorsData'),
-        MApp.Api.call('getItemsData')
+        MApp.Api.call('getItemsData'),
+        MApp.PurchaseHints.load()
       ]);
       // A newer openForm() call superseded this one while we were awaiting --
       // don't let this stale response repaint the (now different) form.
       if (mySeq !== this._formSeq) return;
       this.vendors = (vendorsRes && vendorsRes.success) ? (vendorsRes.data || []) : [];
       this.items = (itemsRes && itemsRes.success) ? (itemsRes.data || []) : [];
+      this.history = history;
+      // A saved bill's narrations and rates stay as saved: choices and
+      // last-rate notes only.
+      this.lines.forEach(line => this._applyHints(line, { fill: false }));
 
       document.getElementById('bill-form-body').innerHTML = this._billFormHtml(bill);
 
@@ -8478,7 +8779,7 @@ MApp.Bill = {
 
       <div class="mb-field">
         <label for="bill-form-date">Invoice Date</label>
-        <input type="date" id="bill-form-date" value="${bill ? dateToInputValue(bill.billDateRaw, bill.billDate) : MApp.Util.todayInputValue()}">
+        <input type="date" id="bill-form-date" value="${bill ? dateToInputValue(bill.billDateRaw, bill.billDate) : MApp.Util.todayInputValue()}" onchange="MApp.Bill.onDateChange()">
       </div>
 
       <div class="mb-field">
@@ -8509,6 +8810,134 @@ MApp.Bill = {
     this.selection.vendor = picked.value;
     const el = document.getElementById('bill-form-vendor-field');
     if (el) { el.textContent = picked.label; el.classList.remove('mb-placeholder'); }
+
+    // Another vendor's POs, narrations and rates: every line is up for
+    // matching again, and its suggestions are this vendor's now.
+    this.lines.forEach(line => {
+      line.savedLink = false;
+      if (line.name) this._applyHints(line);
+    });
+    this._renderLines();
+    this.scheduleMatch(0);
+  },
+
+  onDateChange() {
+    // A bill cannot draw down a PO raised after it, so the date decides
+    // which POs are candidates.
+    this.lines.forEach(line => { line.savedLink = false; });
+    this.scheduleMatch(0);
+  },
+
+  // ── Narration and rate ───────────────────────────────────────────────
+  // MApp.PurchaseHints' rules, as the PO form uses them, plus the step
+  // desktop's getLatestRate puts FIRST on a bill: the rate on the PO line
+  // this bill line draws down. That comes from the PO match (matchPos),
+  // quoted by the server in this line's own unit.
+  history: { pos: [], bills: [] },
+
+  _blankLine() {
+    return {
+      name: '', size: '', unit: 'Pcs', qty: '', price: '', gst: 18, narration: '',
+      narrationOptions: [], narrationAuto: false, priceAuto: false, rateHint: null,
+      allocs: [], poManual: false, savedLink: false, keptRate: ''
+    };
+  },
+
+  _hintData() {
+    return { pos: this.history.pos, bills: this.history.bills, items: this.items };
+  },
+
+  _applyHints(line, { fill = true } = {}) {
+    line.narrationOptions = MApp.PurchaseHints.narrations(this._hintData(), {
+      name: line.name, size: line.size, vendor: this.selection.vendor
+    });
+    if (fill && (!line.narration || line.narrationAuto)) {
+      const only = line.narrationOptions.length === 1 ? line.narrationOptions[0] : '';
+      line.narration = only;
+      line.narrationAuto = !!only;
+    }
+    this._applyRate(line, { fill });
+  },
+
+  // The PO line this line draws down, with its rate in this line's unit --
+  // or null for a Direct line, or when the server could not convert.
+  _linkedPo(line) {
+    if (line.poManual) return null;
+    const a = (line.allocs || [])[0];
+    if (!a || a.poNumber === 'DIRECT' || a.poRateInBillUnit == null) return null;
+    return { poNumber: a.poNumber, rate: Number(a.poRateInBillUnit), poRate: a.poRate, poUnit: a.poUnit };
+  },
+
+  _applyRate(line, { fill = true } = {}) {
+    const po = this._linkedPo(line);
+    const hit = po
+      ? { rate: po.rate, source: `PO ${po.poNumber}` }
+      : MApp.PurchaseHints.latestRate(this._hintData(), {
+          name: line.name, size: line.size, narration: line.narration, vendor: this.selection.vendor
+        });
+    line.rateHint = hit && hit.rate > 0 ? hit : null;
+    if (!fill) return;
+    const typed = line.price !== '' && line.price != null && !line.priceAuto;
+    if (typed) return;
+    if (line.rateHint) {
+      line.price = line.rateHint.rate;
+      line.priceAuto = true;
+    } else if (line.priceAuto) {
+      line.price = '';
+      line.priceAuto = false;
+    }
+  },
+
+  // A typed rate that disagrees with the PO it is billed against. The
+  // bill's rate is what gets saved -- it is what was actually charged --
+  // but the operator is shown the PO's and offered it, as desktop does.
+  _rateConflict(line) {
+    const po = this._linkedPo(line);
+    if (!po || line.priceAuto) return null;
+    const price = MApp.Util.toNumber(line.price);
+    if (!(price > 0) || Math.abs(price - po.rate) <= 0.01) return null;
+    if (line.keptRate === `${po.poNumber}|${price}`) return null;
+    return { ...po, billRate: price };
+  },
+
+  _rateBlockHtml(line, i) {
+    const conflict = this._rateConflict(line);
+    if (!conflict) {
+      return `<div class="mb-text-sm mb-text-steel" style="margin-top:var(--mb-sp-1);">${MApp.Util.escapeHtml(MApp.PurchaseHints.rateNote(line))}</div>`;
+    }
+    const esc = v => MApp.Util.escapeHtml(v);
+    const money = v => MApp.Util.formatCurrency(v);
+    const unit = line.unit || 'unit';
+    const poUnit = conflict.poUnit || unit;
+    const poSide = MApp.PurchaseHints._k(poUnit) === MApp.PurchaseHints._k(unit)
+      ? `${money(conflict.poRate)}/${esc(poUnit)}`
+      : `${money(conflict.poRate)}/${esc(poUnit)} (${money(conflict.rate)}/${esc(unit)})`;
+    return `
+      <div class="mb-mt-2" style="display:flex; flex-direction:column; gap:var(--mb-sp-1);">
+        <div class="mb-text-sm" style="color:var(--mb-enamel-amber-ink);">PO ${esc(conflict.poNumber)} rate is ${poSide}; this bill says ${money(conflict.billRate)}/${esc(unit)}.</div>
+        <div style="display:flex; gap:var(--mb-sp-4); flex-wrap:wrap;">
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" onclick="MApp.Bill.usePoRate(${i})">Use PO rate</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" onclick="MApp.Bill.keepBillRate(${i})">Keep bill rate</button>
+        </div>
+      </div>`;
+  },
+
+  usePoRate(i) {
+    const line = this.lines[i];
+    const po = line && this._linkedPo(line);
+    if (!po) return;
+    line.price = po.rate;
+    line.priceAuto = true;
+    this._applyRate(line);
+    this._refreshLine(i);
+  },
+
+  keepBillRate(i) {
+    const line = this.lines[i];
+    const po = line && this._linkedPo(line);
+    if (!po) return;
+    line.keptRate = `${po.poNumber}|${MApp.Util.toNumber(line.price)}`;
+    this._refreshLine(i);
   },
 
   // ── Line items (Phase 3) ─────────────────────────────────────────────
@@ -8520,19 +8949,21 @@ MApp.Bill = {
           <label>Item</label>
           <button type="button" class="mb-picker-field${line.name ? '' : ' mb-placeholder'}" onclick="MApp.Bill.pickLineItem(${i})">${line.name ? MApp.Util.escapeHtml(line.name) + (line.size ? ` (${MApp.Util.escapeHtml(line.size)})` : '') : 'Choose an item...'}</button>
         </div>
+        ${MApp.PurchaseHints.fieldHtml('MApp.Bill', 'bill-form-line', i, line)}
         <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
           <label>Quantity</label>
           <input type="number" inputmode="decimal" min="0" step="1" value="${line.qty === '' ? '' : line.qty}" oninput="MApp.Bill.updateLine(${i}, 'qty', this.value)">
         </div>
         <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
-          <label>Unit Price</label>
-          <input type="number" inputmode="decimal" min="0" step="0.01" value="${line.price || ''}" oninput="MApp.Bill.updateLine(${i}, 'price', this.value)">
+          <label for="bill-form-line-price-${i}">Unit Price</label>
+          <input type="number" id="bill-form-line-price-${i}" inputmode="decimal" min="0" step="0.01" value="${line.price === '' || line.price == null ? '' : line.price}" oninput="MApp.Bill.updatePrice(${i}, this.value)">
+          <div id="bill-form-line-rate-${i}">${this._rateBlockHtml(line, i)}</div>
         </div>
         <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
           <label>GST %</label>
           <input type="number" inputmode="decimal" min="0" step="0.01" value="${line.gst != null ? line.gst : 18}" oninput="MApp.Bill.updateLine(${i}, 'gst', this.value)">
         </div>
-        ${this._poBadgeHtml(line, i)}
+        <div id="bill-form-line-po-${i}">${this._poBadgeHtml(line, i)}</div>
         ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" onclick="MApp.Bill.removeLine(${i})">Remove</button>` : ''}
       </div>
     `).join('');
@@ -8557,15 +8988,35 @@ MApp.Bill = {
   },
 
   unlinkPo(i) {
-    if (!this.lines[i]) return;
-    this.lines[i].poManual = true;
-    this.lines[i].allocs = [];
+    const line = this.lines[i];
+    if (!line) return;
+    line.poManual = true;
+    line.allocs = [];
+    // A rate that came from the PO goes with the link.
+    if (line.priceAuto) this._applyRate(line);
     this._renderLines();
   },
 
   _renderLines() {
     const el = document.getElementById('bill-form-lines');
     if (el) el.innerHTML = this._linesHtml();
+  },
+
+  // What a match or a suggestion can change on one line -- its rate and
+  // the note or choice under it, its PO badge, its narration chips --
+  // repainted in place. Re-rendering the list would take the keyboard away
+  // from whatever is being typed while a match comes back.
+  _refreshLine(i) {
+    const line = this.lines[i];
+    if (!line) return;
+    const price = document.getElementById(`bill-form-line-price-${i}`);
+    if (price && document.activeElement !== price) price.value = line.price === '' || line.price == null ? '' : line.price;
+    const rate = document.getElementById(`bill-form-line-rate-${i}`);
+    if (rate) rate.innerHTML = this._rateBlockHtml(line, i);
+    const po = document.getElementById(`bill-form-line-po-${i}`);
+    if (po) po.innerHTML = this._poBadgeHtml(line, i);
+    const chips = document.getElementById(`bill-form-line-narration-chips-${i}`);
+    if (chips) chips.innerHTML = MApp.PurchaseHints.chipsHtml('MApp.Bill', i, line);
   },
 
   // Asks the server which open PO lines each bill line most likely belongs
@@ -8577,19 +9028,37 @@ MApp.Bill = {
   // all. The auto-match is a convenience; the LINK is data, and it was
   // missing entirely.
   //
+  // It runs as the form is filled in (scheduleMatch), not only at save,
+  // because the PO it finds is where a blank Unit Price is filled from.
+  // At save it runs once more with `fillRates: false`: the rates saved are
+  // the rates the operator last saw.
+  //
   // Advisory, exactly like desktop's: the server itself fails open and
   // returns an empty list rather than blocking bill entry, and so does
   // this.
-  async matchPos() {
+  _matchSeq: 0,
+  _matchTimer: null,
+
+  scheduleMatch(delay = 500) {
+    clearTimeout(this._matchTimer);
+    this._matchTimer = setTimeout(() => { this._matchTimer = null; this.matchPos(); }, delay);
+  },
+
+  async matchPos({ fillRates = true } = {}) {
+    clearTimeout(this._matchTimer);
+    this._matchTimer = null;
+    const seq = ++this._matchSeq;
     const vendor = this.selection.vendor;
-    const lines = this.lines.filter(l => l.name && l.qty > 0);
+    const lines = this.lines.filter(l => l.name && l.qty > 0 && !l.poManual && !l.savedLink);
     if (!vendor || !lines.length) return;
 
     // rowIndex refers to the position in THIS payload, so it has to be
-    // mapped back to the real line afterwards.
+    // mapped back to the real line afterwards. A rate the form filled in is
+    // not sent as the bill's: the server prefers a PO whose rate matches
+    // the bill's, and a suggestion is not evidence of what was charged.
     const payload = lines.map((l, idx) => ({
-      rowIndex: idx, name: l.name, size: l.size || '',
-      unit: l.unit || 'Pcs', qty: l.qty, price: l.price || 0
+      rowIndex: idx, name: l.name, size: l.size || '', narration: l.narration || '',
+      unit: l.unit || 'Pcs', qty: l.qty, price: l.priceAuto ? 0 : (MApp.Util.toNumber(l.price) || 0)
     }));
     const billDate = document.getElementById('bill-form-date')?.value || MApp.Util.todayInputValue();
 
@@ -8600,6 +9069,8 @@ MApp.Bill = {
     } catch (err) {
       return; // offline or failing: leave the lines as they are
     }
+    // A later match has been asked for since -- its answer, not this one.
+    if (seq !== this._matchSeq) return;
 
     const byRow = {};
     results.forEach(r => { byRow[r.rowIndex] = r; });
@@ -8609,31 +9080,73 @@ MApp.Bill = {
       // with its `autoMatched === 'manual'` check.
       if (line.poManual) return;
       const result = byRow[idx];
-      const allocs = (result && result.allocations || []).map(a => ({ poNumber: a.poNumber, qty: a.qty }));
+      const allocs = (result && result.allocations || []).map(a => ({
+        poNumber: a.poNumber, qty: a.qty, poRate: a.poRate, poUnit: a.poUnit, poRateInBillUnit: a.poRateInBillUnit
+      }));
       if (result && result.unmatchedQty > 0 && allocs.length) {
         allocs.push({ poNumber: 'DIRECT', qty: result.unmatchedQty });
       }
       line.allocs = allocs;
+      this._applyRate(line, { fill: fillRates });
+      const at = this.lines.indexOf(line);
+      if (at !== -1) this._refreshLine(at);
     });
-    this._renderLines();
   },
 
   addLine() {
-    this.lines.push({ name: '', size: '', unit: 'Pcs', qty: '', price: '', gst: 18 });
-    const el = document.getElementById('bill-form-lines');
-    if (el) el.innerHTML = this._linesHtml();
+    this.lines.push(this._blankLine());
+    this._renderLines();
   },
 
   removeLine(i) {
     this.lines.splice(i, 1);
-    if (this.lines.length === 0) this.lines.push({ name: '', size: '', unit: 'Pcs', qty: '', price: '', gst: 18 });
-    const el = document.getElementById('bill-form-lines');
-    if (el) el.innerHTML = this._linesHtml();
+    if (this.lines.length === 0) this.lines.push(this._blankLine());
+    this._renderLines();
+    this.scheduleMatch();
   },
 
   updateLine(i, key, value) {
-    if (!this.lines[i]) return;
-    this.lines[i][key] = MApp.Util.toNumber(value);
+    const line = this.lines[i];
+    if (!line) return;
+    line[key] = MApp.Util.toNumber(value);
+    if (key === 'qty') {
+      line.savedLink = false;
+      this.scheduleMatch();
+    }
+  },
+
+  // A typed rate is the operator's; no suggestion replaces it. It is also
+  // what the PO match prefers to agree with, so it re-asks.
+  updatePrice(i, value) {
+    const line = this.lines[i];
+    if (!line) return;
+    line.price = String(value).trim() === '' ? '' : MApp.Util.toNumber(value);
+    line.priceAuto = false;
+    line.savedLink = false;
+    this._refreshLine(i);
+    this.scheduleMatch();
+  },
+
+  updateNarration(i, value) {
+    const line = this.lines[i];
+    if (!line) return;
+    line.narration = value;
+    line.narrationAuto = false;
+    line.savedLink = false;
+    this._applyRate(line);
+    this._refreshLine(i);
+    this.scheduleMatch();
+  },
+
+  pickNarration(i, idx) {
+    const line = this.lines[i];
+    if (!line || !line.narrationOptions || line.narrationOptions[idx] == null) return;
+    line.narration = line.narrationOptions[idx];
+    line.narrationAuto = false;
+    line.savedLink = false;
+    this._applyRate(line);
+    this._renderLines();
+    this.scheduleMatch(0);
   },
 
   async pickLineItem(i) {
@@ -8644,15 +9157,21 @@ MApp.Bill = {
     const picked = await MApp.Picker.open({
       title: 'Choose an item', items, selectedValue: this.lines[i].name + '||' + this.lines[i].size
     });
-    if (!picked || !this.lines[i]) return;
+    const line = this.lines[i];
+    if (!picked || !line) return;
 
     const match = (this.items || []).find(it => (it.name + '||' + it.size) === picked.value);
-    this.lines[i].name = match ? match.name : picked.label;
-    this.lines[i].size = match ? match.size : '';
-    this.lines[i].unit = match ? match.baseUnit : 'Pcs';
+    line.name = match ? match.name : picked.label;
+    line.size = match ? match.size : '';
+    line.unit = match ? match.baseUnit : 'Pcs';
+    // A different item is a different PO line, if any.
+    line.savedLink = false;
+    line.poManual = false;
+    line.allocs = [];
+    this._applyHints(line);
 
-    const el = document.getElementById('bill-form-lines');
-    if (el) el.innerHTML = this._linesHtml();
+    this._renderLines();
+    this.scheduleMatch(0);
   },
 
   async saveBill() {
@@ -8671,11 +9190,10 @@ MApp.Bill = {
       return;
     }
 
-    // Settle the PO match before serialising. Desktop debounces this as
-    // the operator types and flushes it at submit; on a phone, where the
-    // form is short and the LAN is not, running it once here is the same
-    // guarantee for one round trip instead of one per keystroke.
-    await this.matchPos();
+    // Settle the PO match before serialising -- desktop's flush at submit.
+    // The links may still move here; the rates do not; a rate the operator
+    // never saw is not the one to save.
+    await this.matchPos({ fillRates: false });
 
     const formData = {
       billNumber,
@@ -8691,7 +9209,7 @@ MApp.Bill = {
       // what it means.
       items: JSON.stringify(validLines.flatMap(l => {
         const base = {
-          name: l.name, size: l.size || '', narration: l.narration || '', unit: l.unit || 'Pcs',
+          name: l.name, size: l.size || '', narration: String(l.narration || '').trim(), unit: l.unit || 'Pcs',
           price: l.price || 0, gst: l.gst != null ? l.gst : 18
         };
         const allocs = l.poManual ? [] : (l.allocs || []);
@@ -8736,6 +9254,7 @@ MApp.Bill = {
 
     const res = await MApp.Util.mutateSimple('saveBill', [formData], isEdit ? 'Bill updated.' : 'Bill saved.');
     if (res.success) {
+      MApp.PurchaseHints.invalidate();
       this.closeForm();
       this.openLedgerSheet();
       return;

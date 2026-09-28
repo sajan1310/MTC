@@ -116,7 +116,11 @@
 // always asked (only the Home stat tile had the rule, so only the chip was
 // red), and text buttons lose the browser's default border. Both are
 // mobile_styles.css, which rides on this version's ?v= like mobile.js.
-const CACHE_NAME = 'erp-mobile-shell-v71';
+// v72: the New PO and Bill forms get a Narration field and fill a line's
+// rate (a bill's from the PO it is billed against, first); editing a PO
+// keeps its narrations, and editing a bill keeps each untouched line on
+// the PO it was saved against.
+const CACHE_NAME = 'erp-mobile-shell-v72';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so
