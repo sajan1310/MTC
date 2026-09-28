@@ -176,6 +176,40 @@ def _po_sort_num(po_number: str) -> int:
     return int(digits) if digits else 0
 
 
+def _po_rate_in_bill_unit(po_line: dict, bill_unit: str, unit_info: dict, units_map):
+    """The PO line's rate, per ONE of the unit a bill line is entered in.
+
+    A PO raised at 1200/Box and received as Pcs has to be quoted as 100/Pcs,
+    or filling the bill with it would bill every piece at the price of a box.
+    The PO's own figure is returned untouched when the units already agree,
+    so a rate that needs no conversion picks up no float noise from one.
+
+    Converted from the PO line's own unit and price, NOT from its stored
+    baseRate: that was computed against whatever the item's Base Unit was
+    when the PO was saved -- "Pcs" by fallback, for an item the PO itself
+    introduced, which savePO then creates with the PO's unit as its base.
+    Both units measured against today's Items Master cannot disagree.
+
+    None when either unit cannot be converted: no rate is better than a rate
+    in the wrong unit.
+    """
+    po_unit = str(po_line["unit"] or "Pcs")
+    if po_unit.strip().lower() == str(bill_unit or "").strip().lower():
+        return po_line["price"]
+    try:
+        per_bill_unit = units_service.convert_qty_to_base_unit(
+            1, bill_unit, unit_info, units_map
+        )
+        per_po_unit = units_service.convert_qty_to_base_unit(
+            1, po_unit, unit_info, units_map
+        )
+    except ValueError:
+        return None
+    if per_bill_unit <= 0 or per_po_unit <= 0:
+        return None
+    return round(po_line["price"] * per_bill_unit / per_po_unit, 4)
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Lookups
 # ─────────────────────────────────────────────────────────────────────────
@@ -830,7 +864,20 @@ def suggest_po_allocations(vendor, items, bill_date=None):
                 # Bill rate has dominion over PO rate -- flag the
                 # disagreement so the UI can offer to keep the PO's rate
                 # instead, rather than silently overwriting it.
-                allocation = {"poNumber": c["poNumber"], "qty": round(take * ratio, 4)}
+                #
+                # The PO's rate travels on every allocation, not only on a
+                # conflict: a bill line entered with no price yet is filled
+                # from the PO it draws down, and a conflict can only be
+                # reported once there is a bill price to disagree with.
+                allocation = {
+                    "poNumber": c["poNumber"],
+                    "qty": round(take * ratio, 4),
+                    "poRate": c["price"],
+                    "poUnit": c["unit"],
+                    "poRateInBillUnit": _po_rate_in_bill_unit(
+                        c, unit, unit_info, units_map
+                    ),
+                }
                 if (
                     price > 0
                     and abs(c["baseRate"] - base_rate) > _PO_PRICE_MATCH_EPSILON

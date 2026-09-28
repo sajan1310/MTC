@@ -554,7 +554,15 @@ def test_suggest_po_allocations_exact_match_single_po(erp_client):
         ],
     )
     result = resp.get_json()["data"][0]
-    assert result["allocations"] == [{"poNumber": po_number, "qty": 10}]
+    assert result["allocations"] == [
+        {
+            "poNumber": po_number,
+            "qty": 10,
+            "poRate": 5,
+            "poUnit": "Pcs",
+            "poRateInBillUnit": 5,
+        }
+    ]
     assert result["unmatchedQty"] == 0
 
 
@@ -595,9 +603,10 @@ def test_suggest_po_allocations_splits_across_two_pos_oldest_first(erp_client):
         [vendor, [{"rowIndex": 0, "name": item, "qty": 9, "price": 5}], "10/01/2026"],
     )
     result = resp.get_json()["data"][0]
+    rate = {"poRate": 5, "poUnit": "Pcs", "poRateInBillUnit": 5}
     assert result["allocations"] == [
-        {"poNumber": first_num, "qty": 4},
-        {"poNumber": second_num, "qty": 5},
+        {"poNumber": first_num, "qty": 4, **rate},
+        {"poNumber": second_num, "qty": 5, **rate},
     ]
     assert result["unmatchedQty"] == 0
 
@@ -684,7 +693,7 @@ def test_suggest_po_allocations_narration_disambiguates(erp_client):
         ],
     )
     result = resp.get_json()["data"][0]
-    assert result["allocations"] == [{"poNumber": po_b_num, "qty": 5}]
+    assert [(a["poNumber"], a["qty"]) for a in result["allocations"]] == [(po_b_num, 5)]
 
 
 def test_suggest_po_allocations_price_mismatch_flags_rate_conflict_but_still_allocates(
@@ -722,6 +731,91 @@ def test_suggest_po_allocations_price_mismatch_flags_rate_conflict_but_still_all
     }
 
 
+def test_suggest_po_allocations_carries_po_rate_for_a_line_with_no_price(erp_client):
+    """A bill line typed with no price yet is filled from the PO it draws
+    down -- so the PO's rate has to arrive even when there is nothing for it
+    to conflict with."""
+    vendor = _unique_name("BlankRateVendor")
+    item = _unique_name("BlankRateItem")
+    create = _rpc(
+        erp_client,
+        "savePO",
+        [
+            {
+                "vendor": vendor,
+                "poDate": "01/01/2026",
+                "items": [{"name": item, "qty": 5, "unit": "Pcs", "price": 42.5}],
+            }
+        ],
+        mutation=True,
+    )
+    po_number = create.get_json()["data"]["poNumber"]
+
+    resp = _rpc(
+        erp_client,
+        "suggestPoAllocations",
+        [
+            vendor,
+            [{"rowIndex": 0, "name": item, "qty": 3, "unit": "Pcs"}],
+            "02/01/2026",
+        ],
+    )
+    (allocation,) = resp.get_json()["data"][0]["allocations"]
+    assert allocation["poNumber"] == po_number
+    assert allocation["poRate"] == 42.5
+    assert allocation["poRateInBillUnit"] == 42.5
+    assert "rateConflict" not in allocation
+
+
+def test_suggest_po_allocations_quotes_po_rate_in_the_bills_unit(erp_client):
+    """Ordered by the dozen, received by the piece: the rate that fills the
+    bill is the PO's rate per PIECE, not the price of a dozen."""
+    dozen = _unique_name("Dz")
+    unit = _rpc(
+        erp_client,
+        "saveUnit",
+        [{"unitName": dozen, "family": "Count", "factorToBase": 12}],
+        mutation=True,
+    )
+    assert unit.get_json()["success"] is True
+
+    vendor = _unique_name("DozenVendor")
+    item = _unique_name("DozenItem")
+    _rpc(
+        erp_client,
+        "savePO",
+        [
+            {
+                "vendor": vendor,
+                "poDate": "01/01/2026",
+                "items": [{"name": item, "qty": 2, "unit": dozen, "price": 120}],
+            }
+        ],
+        mutation=True,
+    )
+
+    resp = _rpc(
+        erp_client,
+        "suggestPoAllocations",
+        [
+            vendor,
+            [{"rowIndex": 0, "name": item, "qty": 24, "unit": "Pcs"}],
+            "02/01/2026",
+        ],
+    )
+    (allocation,) = resp.get_json()["data"][0]["allocations"]
+    assert allocation["qty"] == 24
+    assert allocation["poRate"] == 120
+    assert allocation["poUnit"] == dozen
+    assert allocation["poRateInBillUnit"] == 10
+
+
+def _claimed(row):
+    """(PO, qty) per allocation -- what these tests are about, without the
+    rate fields every allocation also carries."""
+    return [(a["poNumber"], a["qty"]) for a in row["allocations"]]
+
+
 def test_suggest_po_allocations_shared_candidate_not_double_allocated(erp_client):
     vendor = _unique_name("SharedCandidateVendor")
     item = _unique_name("SharedCandidateItem")
@@ -754,10 +848,10 @@ def test_suggest_po_allocations_shared_candidate_not_double_allocated(erp_client
     results = resp.get_json()["data"]
     first_row = next(r for r in results if r["rowIndex"] == 0)
     second_row = next(r for r in results if r["rowIndex"] == 1)
-    assert first_row["allocations"] == [{"poNumber": po_number, "qty": 3}]
+    assert _claimed(first_row) == [(po_number, 3)]
     assert first_row["unmatchedQty"] == 0
     # Only 2 units left after the first row claimed 3 of the 5 available.
-    assert second_row["allocations"] == [{"poNumber": po_number, "qty": 2}]
+    assert _claimed(second_row) == [(po_number, 2)]
     assert second_row["unmatchedQty"] == 1
 
 
