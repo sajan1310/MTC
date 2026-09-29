@@ -1,10 +1,12 @@
 /**
- * The "specific dates" window, across the modules.
+ * The date window, across the modules.
  *
- * Five ledgers had an exact-date filter -- "show me the 4th" -- which is
- * not the question anyone asks of a ledger; Production and Dispatch had no
- * date filter at all. This adds a from/to window to each, as a SEPARATE
- * control: both apply, so an exact date inside a window still narrows.
+ * Five ledgers had an exact-date filter -- "show me the 4th" -- next to a
+ * from/to window, and both applied, so a day left in one box and a range
+ * in the other could empty a list with nothing on screen saying why.
+ * There is now one date filter per list: the toolbar's date button
+ * (App.ListControls), where a single day is a window with both ends on
+ * that day. Production, Dispatch and PI / Estimates had no date filter.
  *
  * The window lives in one store keyed by module (App.Utils.dateRange)
  * rather than as two State keys per module, because eight lists times two
@@ -115,7 +117,6 @@ describe('Bills', () => {
     inputs('bill');
     App.State.globalBills = BILLS;
     App.State.billSearchTerm = '';
-    App.State.billDateFilter = '';
     App.Bill.renderTable = jest.fn();
   });
 
@@ -134,21 +135,20 @@ describe('Bills', () => {
     expect(App.State.filteredBills).toHaveLength(2);
   });
 
-  test('the exact-date filter still applies alongside it', () => {
-    // They are separate controls and both narrow -- an exact date outside
-    // the window correctly yields nothing.
-    setRange('bill', '2026-02-01', '');
-    App.State.billDateFilter = '2026-01-01';
+  test('a single day is a window with both ends on that day', () => {
+    // Not a second filter beside the window: there is only the one.
+    setRange('bill', '2026-02-15', '2026-02-15');
     App.Bill.filterByDateRange();
 
-    expect(App.State.filteredBills).toHaveLength(0);
+    expect(App.State.filteredBills.map(b => b.billNumber)).toEqual(['B2']);
+    expect(App.Bill.filterByDate).toBeUndefined();
+    expect(App.State).not.toHaveProperty('billDateFilter');
   });
 
-  test('the control is wired in the markup', () => {
-    const html = HTML('bill_ledger.html');
-    expect(html).toContain('id="billDateFrom"');
-    expect(html).toContain('App.Bill.filterByDateRange()');
-    expect(html).toContain('App.Bill.clearDateRange()');
+  test('the control is declared in the markup', () => {
+    // The date button and its inputs are built by App.ListControls; the
+    // partial says where it goes and which list it filters.
+    expect(HTML('bill_ledger.html')).toContain('class="list-date" data-list="bill" data-module="Bill"');
   });
 });
 
@@ -193,10 +193,9 @@ describe('Production', () => {
     expect(App.State.filteredProduction.map(p => p.lotNumber)).toEqual(['L2']);
   });
 
-  test('the control is wired in the markup', () => {
-    const html = HTML('production.html');
-    expect(html).toContain('id="productionDateFrom"');
-    expect(html).toContain('App.Production.filterByDateRange()');
+  test('the control is declared in the markup', () => {
+    expect(HTML('production.html'))
+      .toContain('class="list-date" data-list="production" data-module="Production"');
   });
 });
 
@@ -233,118 +232,148 @@ describe('Dispatch', () => {
     expect(App.State.filteredDispatchBills.map(b => b.dispatchNumber)).toEqual(['D2']);
   });
 
-  test('the control is wired in the markup', () => {
-    const html = HTML('dispatch.html');
-    expect(html).toContain('id="dispatchDateFrom"');
-    expect(html).toContain('App.Dispatch.filterByDateRange()');
+  test('the control is declared in the markup', () => {
+    expect(HTML('dispatch.html'))
+      .toContain('class="list-date" data-list="dispatch" data-module="Dispatch"');
   });
 });
+
+describe('PI / Estimates', () => {
+  // Had no date filter, and no sort: "which estimates went out last month"
+  // meant reading every row.
+  const ORDERS = [
+    { orderNumber: 'PI-9', orderDate: '12/08/2026', dateRaw: '2026-08-12', clientName: 'sharma', lines: [] },
+    { orderNumber: 'PI-10', orderDate: '03/09/2026', dateRaw: '2026-09-03', clientName: 'verma', lines: [] },
+  ];
+
+  beforeEach(() => {
+    jest.resetModules();
+    loadModules('client.js');
+    inputs('order');
+    App.State.globalOrders = ORDERS;
+    App.Client.renderOrdersTable = jest.fn();
+  });
+
+  test('the window narrows the list', () => {
+    setRange('order', '2026-09-01', '');
+    App.Client.filterByDateRange();
+
+    expect(App.State.filteredOrders.map(o => o.orderNumber)).toEqual(['PI-10']);
+  });
+
+  test('it survives a search, and a search survives it', () => {
+    setRange('order', '2026-08-01', '2026-09-30');
+    App.Client.filterByDateRange();
+    App.Client.filterOrders('verma');
+    expect(App.State.filteredOrders.map(o => o.orderNumber)).toEqual(['PI-10']);
+
+    App.Client.clearDateRange();
+    expect(App.State.filteredOrders.map(o => o.orderNumber)).toEqual(['PI-10']);
+  });
+
+  test('the control is declared in the markup', () => {
+    expect(HTML('clients.html')).toContain('class="list-date" data-list="order" data-module="Client"');
+  });
+});
+
+// Every list with a date button, the module its controls call, and the
+// module's own comparators, which the ⇅ menu and the headers must stay
+// inside.
+const LISTS = [
+  ['bill_ledger.html', 'bill', 'Bill', () => App.Bill.SORT_COMPARATORS],
+  ['po_ledger.html', 'po', 'PO', () => App.PO.SORT_COMPARATORS],
+  ['return_ledger.html', 'return', 'Return', () => App.Return.SORT_COMPARATORS],
+  ['return_ledger.html', 'wastage', 'Wastage', () => App.Wastage.SORT_COMPARATORS],
+  ['production.html', 'production', 'Production', () => App.Production.SORT_COMPARATORS],
+  ['production.html', 'issue', 'Issue', () => App.Issue.SORT_COMPARATORS],
+  ['dispatch.html', 'dispatch', 'Dispatch', () => App.Dispatch.DISPATCH_SORT_COMPARATORS],
+  ['clients.html', 'order', 'Client', () => App.Client.ORDER_SORT_COMPARATORS],
+];
+
+const ALL_MODULES = ['bill.js', 'po.js', 'issue.js', 'return.js', 'dispatch.js', 'production.js', 'client.js'];
 
 describe('every module that got one is wired end to end', () => {
   beforeEach(() => {
     jest.resetModules();
-    loadModules('bill.js', 'po.js', 'issue.js', 'return.js', 'dispatch.js', 'production.js');
+    loadModules(...ALL_MODULES);
   });
 
   test('each exposes both handlers', () => {
-    [['Bill'], ['PO'], ['Issue'], ['Return'], ['Wastage'], ['Dispatch'], ['Production']]
-      .forEach(([mod]) => {
-        expect(typeof App[mod].filterByDateRange).toBe('function');
-        expect(typeof App[mod].clearDateRange).toBe('function');
-      });
-  });
-
-  test('each has its inputs in the markup', () => {
-    [
-      ['bill_ledger.html', 'billDateFrom'],
-      ['po_ledger.html', 'poDateFrom'],
-      ['return_ledger.html', 'returnDateFrom'],
-      ['return_ledger.html', 'wastageDateFrom'],
-      ['production.html', 'issueDateFrom'],
-      ['production.html', 'productionDateFrom'],
-      ['dispatch.html', 'dispatchDateFrom'],
-      ['contractors.html', 'ledgerDateFrom'],
-    ].forEach(([file, id]) => {
-      expect(HTML(file)).toContain(`id="${id}"`);
+    LISTS.forEach(([, , mod]) => {
+      expect(typeof App[mod].filterByDateRange).toBe('function');
+      expect(typeof App[mod].clearDateRange).toBe('function');
     });
   });
 
-  test('every From has a matching To', () => {
+  test('each declares its date control', () => {
+    LISTS.forEach(([file, list, mod]) => {
+      expect(HTML(file)).toContain(`class="list-date" data-list="${list}" data-module="${mod}"`);
+    });
+    // The contractor ledger keeps its own From/To inside its dialog.
+    expect(HTML('contractors.html')).toContain('id="ledgerDateFrom"');
+    expect(HTML('contractors.html')).toContain('id="ledgerDateTo"');
+  });
+
+  test('mounted, every list has a From and a To with the ids its module reads', () => {
     // A half-wired control silently filters on one end only.
-    ['bill_ledger.html', 'po_ledger.html', 'return_ledger.html',
-      'production.html', 'dispatch.html', 'contractors.html'].forEach(file => {
-      const html = HTML(file);
-      const froms = [...html.matchAll(/id="(\w+)DateFrom"/g)].map(m => m[1]);
-      froms.forEach(prefix => expect(html).toContain(`id="${prefix}DateTo"`));
-      expect(froms.length).toBeGreaterThan(0);
+    [...new Set(LISTS.map(([file]) => file))].forEach(file => {
+      document.body.innerHTML = HTML(file);
+      App.ListControls.mountAll();
+      LISTS.filter(([f]) => f === file).forEach(([, list]) => {
+        expect(document.getElementById(`${list}DateFrom`)).not.toBeNull();
+        expect(document.getElementById(`${list}DateTo`)).not.toBeNull();
+      });
     });
   });
 });
 
-describe('the filter toolbars stay one row', () => {
-  // The date inputs were dropped into flex toolbars as bare
-  // .form-control elements. Bootstrap gives that class width:100%, so in
-  // a flex row each one claims a full line: the Issued Stock toolbar went
-  // from a row to a four-high stack with the action button stranded
-  // beside it. Every test passed throughout, because none of them look at
-  // layout.
-  const FILES = ['production.html', 'dispatch.html', 'return_ledger.html'];
-
-  // The invariant that actually matters: a date input INSIDE an
-  // input-group must be fixed-width. Bootstrap's .form-control is
-  // width:100%, and a 100%-wide member of a flex group claims the whole
-  // line -- which is how the Issued Stock toolbar became a four-high
-  // stack. A filter that sits in its own column (Returns, Bills, POs) is
-  // meant to fill that column and is left alone.
-  const groupedDateInputs = html =>
-    [...html.matchAll(/<div\b[^>]*?class="[^"]*input-group[^"]*"[^>]*?>[\s\S]*?<\/div>/g)]
-      .flatMap(g => [...g[0].matchAll(/<input\b[^>]*?type="date"[^>]*?>/g)].map(m => m[0]));
-
-  test('every date input inside an input-group is fixed-width', () => {
-    let checked = 0;
-    FILES.forEach(file => {
-      groupedDateInputs(HTML(file)).forEach(tag => {
-        expect(tag).toMatch(/width:\s*\d+px/);
-        checked += 1;
-      });
-    });
-    // Guards the assertion against a regex that quietly matches nothing.
-    expect(checked).toBeGreaterThan(5);
+describe('the list toolbars', () => {
+  // One row each: search, the date button, the ⇅ menu. With a grey hint
+  // line under every control, the "on this date" box, the range and the
+  // Sort by dropdown needed more than the 900px they were given, and Sort
+  // wrapped onto a second row.
+  beforeEach(() => {
+    jest.resetModules();
+    loadModules(...ALL_MODULES);
   });
 
-  test('each range is wrapped in an input-group so it reads as one control', () => {
-    // Three unlabelled date boxes in a row say nothing about which is
-    // which. The group carries the From/To words.
-    FILES.forEach(file => {
+  test('no toolbar keeps an "on this date" box or a Sort by dropdown', () => {
+    [...new Set(LISTS.map(([file]) => file))].forEach(file => {
       const html = HTML(file);
-      if (!html.includes('DateFrom')) return;
-      expect(html).toContain('input-group');
-      expect(html).toMatch(/>From</);
-      expect(html).toMatch(/>To</);
+      expect(html).not.toMatch(/filterByDate\(/);
+      expect(html).not.toMatch(/id="\w+DateFilter"/);
+      expect(html).not.toMatch(/<select\b[^>]*id="\w+SortBy"/);
     });
   });
 
-  test('the clear button sits inside its group, beside the To input', () => {
-    // Loose in the row it wraps onto a line of its own, which is what the
-    // stacked toolbar looked like.
-    FILES.forEach(file => {
-      const html = HTML(file);
-      if (!html.includes('clearDateRange')) return;
-      const to = html.indexOf('DateTo');
-      const clear = html.indexOf('clearDateRange', to);
-      expect(clear).toBeGreaterThan(to);
-      // No element closes between them: same input-group.
-      expect(html.slice(to, clear)).not.toContain('</div>');
-    });
+  test.each(LISTS)('%s: %s has one date button and one sort menu, for the same module', (file, list, mod) => {
+    document.body.innerHTML = HTML(file);
+    const dates = document.querySelectorAll(`.list-date[data-list="${list}"]`);
+    const sorts = document.querySelectorAll(`.list-sort[data-list="${list}"]`);
+    expect(dates).toHaveLength(1);
+    expect(sorts).toHaveLength(1);
+    expect(dates[0].dataset.module).toBe(mod);
+    expect(sorts[0].dataset.module).toBe(mod);
+    expect(sorts[0].querySelector('.list-sort-btn').getAttribute('aria-label')).toBeTruthy();
+    expect(typeof App[mod].sortBy).toBe('function');
   });
 
-  test('every clear button is reachable by name', () => {
-    FILES.forEach(file => {
-      const html = HTML(file);
-      [...html.matchAll(/<button\b[^>]*?clearDateRange[^>]*?>/gs)].forEach(m => {
-        expect(m[0]).toMatch(/aria-label=/);
-      });
-    });
+  test.each(LISTS)('%s: %s sorts only by orders its module knows', (file, list, mod, comparators) => {
+    document.body.innerHTML = HTML(file);
+    const known = Object.keys(comparators());
+    const sort = document.querySelector(`.list-sort[data-list="${list}"]`);
+    const menuKeys = [...sort.querySelectorAll('[data-sort]')].map(b => b.dataset.sort);
+    const headerKeys = [...document.querySelectorAll(`table[data-list="${list}"] th[data-sort-keys]`)]
+      .flatMap(th => th.dataset.sortKeys.split(','));
+
+    expect(menuKeys.length).toBeGreaterThan(0);
+    expect(headerKeys.length).toBeGreaterThan(0);
+    [...menuKeys, ...headerKeys].forEach(key => expect(known).toContain(key));
+    // Every header order is in the menu too, so the menu can always tick it.
+    headerKeys.forEach(key => expect(menuKeys).toContain(key));
+    // The default the ⇅ button measures against is where the list starts.
+    expect(known).toContain(sort.dataset.default);
+    expect(App.State[sort.dataset.state]).toBe(sort.dataset.default);
   });
 });
 

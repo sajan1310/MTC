@@ -210,12 +210,11 @@ App.Dispatch = {
       // (client.js, stock.js) read this same array directly.
       App.State.globalDispatch = response.data;
       this.buildDispatchBills();
-      App.State.filteredDispatchBills = App.State.globalDispatchBills;
-      App.State.dispatchCurrentPage = 1;
       App.State.dispatchSortBy = App.State.dispatchSortBy || 'dateDesc';
       App.State.selectedDispatch = [];
-      this.sortFilteredDispatch();
-      this.renderDispatchTable();
+      // Re-applies the search and date window the toolbar is showing, so a
+      // reload after a save never lists more than the date button says.
+      this.filterDispatch(App.State.dispatchSearchTerm || '');
     } catch (err) {
       App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load dispatch data', true);
@@ -298,8 +297,8 @@ App.Dispatch = {
     this.renderDispatchTable();
   },
 
-  // Field/direction combos selectable via the "Sort by" dropdown
-  // (dispatch.html#dispatchSortBy). Applied to filteredDispatchBills after
+  // Field/direction combos picked from the toolbar's ⇅ menu or a sortable
+  // column header (dispatch.html). Applied to filteredDispatchBills after
   // every filter pass, before the pagination slice in renderDispatchTable.
   // Operates on bill-level aggregates -- never per-line.
   DISPATCH_SORT_COMPARATORS: {
@@ -318,7 +317,9 @@ App.Dispatch = {
     if (cmp) App.State.filteredDispatchBills.sort(cmp);
   },
 
-  sortDispatchBy(value) {
+  // sortBy, like every other list's, so the shared toolbar controls
+  // (App.ListControls) can call it without knowing which module this is.
+  sortBy(value) {
     App.State.dispatchSortBy = value;
     this.sortFilteredDispatch();
     App.State.dispatchCurrentPage = 1;

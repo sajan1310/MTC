@@ -398,7 +398,15 @@
 // name in the item dialog and keeps a vendor saved without a rate. All are
 // precached and their markup is network-first, so without the bump an
 // installed client renders the new buttons over scripts with no handler.
-const CACHE_NAME = 'erp-shell-v81';
+// v82: every list toolbar is one row -- search, a date button with quick
+// picks, a ⇅ sort menu -- and column headers sort. core.js builds the date
+// button (App.ListControls), styles.css draws it, and bill/po/return/issue/
+// production/dispatch/client.js drop the "on this date" filter; Returns,
+// Wastage, Issued Stock and PI / Estimates gain sorting, PI / Estimates a
+// date filter. The markup is network-first, so without the bump an
+// installed client pairs the new placeholders with a core.js that never
+// fills them in.
+const CACHE_NAME = 'erp-shell-v82';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

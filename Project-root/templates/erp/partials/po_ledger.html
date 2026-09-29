@@ -22,63 +22,41 @@
     </button>
   </div>
 
-  <!-- TOOLBAR: Search, Filters, and Action Buttons -->
-  <div class="d-flex justify-content-between flex-wrap gap-2 mb-4" style="align-items: flex-start;">
+  <!-- TOOLBAR: search · date · sort · print options, then the actions, on
+       one row. The date button is built into .list-date by
+       App.ListControls (core.js), which also wires the ⇅ menu and the
+       sortable column headers. -->
+  <div class="d-flex justify-content-between flex-wrap gap-2 mb-4 align-items-center">
 
-    <div class="d-flex flex-grow-1 flex-wrap gap-3 align-items-center" style="max-width: 900px;">
-      <div class="flex-grow-1" style="min-width: 250px;">
-        <input type="text"
-               id="searchVendor"
-               class="form-control"
-               placeholder="Search by Party, PO#, or Item…"
-               autocomplete="off"
-               aria-label="Search Purchase Orders"
-               oninput="App.Utils.debouncedFilter(this, () => App.PO.filterData(this.value))">
-        <small class="text-muted" style="display: block; margin-top: 4px;">
-          Filter by vendor name, PO number, or item
-        </small>
-      </div>
+    <div class="d-flex flex-grow-1 flex-wrap gap-2 align-items-center" style="max-width: 900px;">
+      <input type="text"
+             id="searchVendor"
+             class="form-control"
+             style="flex: 1 1 240px; min-width: 200px;"
+             placeholder="Search by Party, PO#, or Item…"
+             autocomplete="off"
+             aria-label="Search Purchase Orders"
+             oninput="App.Utils.debouncedFilter(this, () => App.PO.filterData(this.value))">
 
-      <div style="min-width: 170px;">
-        <input type="date"
-               id="poDateFilter"
-               class="form-control"
-               aria-label="Filter Purchase Orders by Date"
-               onchange="App.PO.filterByDate(this.value)">
-        <small class="text-muted" style="display: block; margin-top: 4px;">
-          Show POs issued on this date
-        </small>
-      </div>
+      <div class="list-date" data-list="po" data-module="PO" data-noun="purchase orders"></div>
 
-      <!-- Specific dates. Separate from the single-date filter beside it:
-           that one answers "show me the 4th", this one "this month". Both
-           ends inclusive, either may be left blank. -->
-      <div style="min-width: 300px;">
-        <label class="form-label small fw-bold mb-1">Specific dates</label>
-        <div class="d-flex gap-1 align-items-center">
-          <input type="date" id="poDateFrom" class="form-control"
-                 aria-label="Purchase Orders from date" onchange="App.PO.filterByDateRange()">
-          <span class="text-muted small">to</span>
-          <input type="date" id="poDateTo" class="form-control"
-                 aria-label="Purchase Orders to date" onchange="App.PO.filterByDateRange()">
-          <button type="button" class="btn btn-outline-secondary btn-sm"
-                  title="Clear dates" onclick="App.PO.clearDateRange()">&times;</button>
-        </div>
-        <small class="text-muted" style="display: block; margin-top: 4px;">Show everything between these dates</small>
-      </div>
-
-      <div style="min-width: 190px;">
-        <select id="poSortBy" class="form-select" aria-label="Sort Purchase Orders" onchange="App.PO.sortBy(this.value)">
-          <option value="poNumberDesc">PO# (Newest first)</option>
-          <option value="poNumberAsc">PO# (Oldest first)</option>
-          <option value="dateDesc">Date (Newest first)</option>
-          <option value="dateAsc">Date (Oldest first)</option>
-          <option value="vendorAsc">Vendor (A&ndash;Z)</option>
-          <option value="vendorDesc">Vendor (Z&ndash;A)</option>
-          <option value="valueDesc">Value (High&ndash;Low)</option>
-          <option value="valueAsc">Value (Low&ndash;High)</option>
-        </select>
-        <small class="text-muted" style="display: block; margin-top: 4px;">Sort by</small>
+      <div class="dropdown list-sort" data-list="po" data-module="PO" data-state="poSortBy"
+           data-default="poNumberDesc" data-noun="purchase orders">
+        <button type="button" class="btn list-ctl list-sort-btn" id="poSortBtn"
+                data-bs-toggle="dropdown" aria-expanded="false" aria-label="Sort purchase orders" title="Sort">
+          <i class="bi bi-arrow-down-up" aria-hidden="true"></i>
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end list-menu list-sort-menu" aria-labelledby="poSortBtn">
+          <li><h6 class="dropdown-header">Sort by</h6></li>
+          <li><button type="button" class="dropdown-item" data-sort="poNumberDesc">PO# (Newest first)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="poNumberAsc">PO# (Oldest first)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="dateDesc">Date (Newest first)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="dateAsc">Date (Oldest first)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="vendorAsc">Vendor (A&ndash;Z)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="vendorDesc">Vendor (Z&ndash;A)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="valueDesc">Value (High&ndash;Low)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="valueAsc">Value (Low&ndash;High)</button></li>
+        </ul>
       </div>
 
       <div class="d-flex flex-row gap-2 align-items-center text-nowrap">
@@ -123,19 +101,19 @@
 
   <!-- PO LEDGER TABLE -->
   <div class="table-responsive" style="border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-    <table class="table table-hover table-bordered align-middle mb-0" role="table" style="margin-bottom: 0;">
+    <table class="table table-hover table-bordered align-middle mb-0" role="table" style="margin-bottom: 0;" data-list="po">
       <thead class="table-dark">
         <tr role="row">
           <th scope="col" role="columnheader" style="width: 4%; text-align: center;">
             <input type="checkbox" id="selectAllPOs" class="form-check-input" onclick="App.PO.toggleSelectAll(this)">
           </th>
-          <th scope="col" role="columnheader" style="width: 10%; min-width: 100px;">
+          <th scope="col" role="columnheader" style="width: 10%; min-width: 100px;" data-sort-keys="poNumberDesc,poNumberAsc">
             <i class="bi bi-file-earmark-text me-2"></i>PO#
           </th>
-          <th scope="col" role="columnheader" style="width: 12%; min-width: 120px;">
+          <th scope="col" role="columnheader" style="width: 12%; min-width: 120px;" data-sort-keys="dateDesc,dateAsc">
             <i class="bi bi-calendar me-2"></i>Date
           </th>
-          <th scope="col" role="columnheader" style="width: 18%; min-width: 140px;">
+          <th scope="col" role="columnheader" style="width: 18%; min-width: 140px;" data-sort-keys="vendorAsc,vendorDesc">
             <i class="bi bi-building me-2"></i>Vendor
           </th>
           <th scope="col" role="columnheader" style="width: 18%; min-width: 180px;">
@@ -144,7 +122,7 @@
           <th scope="col" role="columnheader" style="width: 10%; min-width: 80px; text-align: center;">
             <i class="bi bi-collection me-2"></i>Qty
           </th>
-          <th scope="col" role="columnheader" style="width: 12%; min-width: 100px; text-align: right;">
+          <th scope="col" role="columnheader" style="width: 12%; min-width: 100px; text-align: right;" data-sort-keys="valueDesc,valueAsc">
             <i class="bi bi-currency-rupee me-2"></i>Value
           </th>
           <th scope="col" role="columnheader" style="width: 10%; min-width: 140px; text-align: center;">
@@ -178,7 +156,7 @@
 
   <div class="alert alert-info mt-4" role="alert" style="display: none;">
     <i class="bi bi-info-circle me-2"></i>
-    <strong>Tip:</strong> Use the search box to quickly find Purchase Orders by vendor name, PO number, or item, and use the date picker to find POs issued on a specific date.
+    <strong>Tip:</strong> Use the search box to quickly find Purchase Orders by vendor name, PO number, or item, and the date button to narrow them to a day or a range.
     Check "Show Rates" and "Show Total" to customize your print preview.
   </div>
 </div>

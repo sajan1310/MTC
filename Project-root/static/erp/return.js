@@ -55,12 +55,10 @@ App.Return = {
       }
 
       App.State.globalReturns = Array.isArray(res.data) ? res.data : [];
-      App.State.filteredReturns = [...App.State.globalReturns];
-      App.State.returnCurrentPage = 1;
-      App.State.returnSearchTerm = '';
-      App.State.returnDateFilter = '';
       App.State.selectedReturns = [];
-      this.renderTable();
+      // Re-applies the search, date window and order the toolbar is
+      // showing, so a reload after a save never lists more than it says.
+      this.applyFilters();
 
       // #returnVendor shares PO.populateVendorSelects' shared
       // `select.select2-vendor` target, but nothing ever called it from
@@ -87,6 +85,7 @@ App.Return = {
     this.applyFilters();
   },
 
+  // The date window, set from the toolbar's date button (App.ListControls).
   filterByDateRange() {
     App.Utils.readDateRange('return', 'returnDateFrom', 'returnDateTo');
     this.applyFilters();
@@ -97,18 +96,12 @@ App.Return = {
     this.applyFilters();
   },
 
-  filterByDate(dateValue) {
-    App.State.returnDateFilter = String(dateValue || '');
-    this.applyFilters();
-  },
-
   applyFilters() {
     const term = App.State.returnSearchTerm.toLowerCase().trim();
-    const dateFilter = App.State.returnDateFilter;
+    const range = App.Utils.dateRange('return');
 
     App.State.filteredReturns = App.State.globalReturns.filter(ret => {
-      if (dateFilter && dateToInputValue(ret.returnDateRaw, ret.returnDate) !== dateFilter) return false;
-      if (!App.Utils.inDateRange(ret.returnDateRaw, ret.returnDate, App.Utils.dateRange('return').from, App.Utils.dateRange('return').to)) return false;
+      if (!App.Utils.inDateRange(ret.returnDateRaw, ret.returnDate, range.from, range.to)) return false;
 
       if (term) {
         const itemsText = (ret.items || []).map(it => `${it.name || ''} ${it.size || ''} ${it.narration || ''}`).join(' ');
@@ -118,6 +111,34 @@ App.Return = {
       return true;
     });
 
+    this.sortFiltered();
+    App.State.returnCurrentPage = 1;
+    this.renderTable();
+  },
+
+  // Orders picked from the toolbar's ⇅ menu or a sortable column header
+  // (return_ledger.html). dateDesc is the order getReturnData already
+  // sends, and the sort is stable, so the default view is unchanged: same
+  // day, most recently logged first.
+  SORT_COMPARATORS: {
+    dateDesc: (a, b) => parseRecordDate(b.returnDateRaw, b.returnDate) - parseRecordDate(a.returnDateRaw, a.returnDate),
+    dateAsc: (a, b) => parseRecordDate(a.returnDateRaw, a.returnDate) - parseRecordDate(b.returnDateRaw, b.returnDate),
+    returnNumberDesc: (a, b) => (parseInt(String(b.returnNumber).replace(/\D/g, ''), 10) || 0) - (parseInt(String(a.returnNumber).replace(/\D/g, ''), 10) || 0),
+    returnNumberAsc: (a, b) => (parseInt(String(a.returnNumber).replace(/\D/g, ''), 10) || 0) - (parseInt(String(b.returnNumber).replace(/\D/g, ''), 10) || 0),
+    vendorAsc: (a, b) => String(a.vendor || '').localeCompare(String(b.vendor || '')),
+    vendorDesc: (a, b) => String(b.vendor || '').localeCompare(String(a.vendor || '')),
+    creditDesc: (a, b) => (b.totalAmount || 0) - (a.totalAmount || 0),
+    creditAsc: (a, b) => (a.totalAmount || 0) - (b.totalAmount || 0)
+  },
+
+  sortFiltered() {
+    const cmp = this.SORT_COMPARATORS[App.State.returnSortBy];
+    if (cmp) App.State.filteredReturns.sort(cmp);
+  },
+
+  sortBy(value) {
+    App.State.returnSortBy = value;
+    this.sortFiltered();
     App.State.returnCurrentPage = 1;
     this.renderTable();
   },
@@ -517,12 +538,10 @@ App.Wastage = {
         return;
       }
       App.State.globalWastage = Array.isArray(res.data) ? res.data : [];
-      App.State.filteredWastage = [...App.State.globalWastage];
-      App.State.wastageCurrentPage = 1;
-      App.State.wastageSearchTerm = '';
-      App.State.wastageDateFilter = '';
       App.State.selectedWastage = [];
-      this.renderTable();
+      // Re-applies the search, date window and order the toolbar is
+      // showing, so a reload after a save never lists more than it says.
+      this.applyFilters();
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to load wastage records.', true);
     }
@@ -550,6 +569,7 @@ App.Wastage = {
     this.applyFilters();
   },
 
+  // The date window, set from the section's date button (App.ListControls).
   filterByDateRange() {
     App.Utils.readDateRange('wastage', 'wastageDateFrom', 'wastageDateTo');
     this.applyFilters();
@@ -560,18 +580,12 @@ App.Wastage = {
     this.applyFilters();
   },
 
-  filterByDate(dateValue) {
-    App.State.wastageDateFilter = String(dateValue || '');
-    this.applyFilters();
-  },
-
   applyFilters() {
     const term = App.State.wastageSearchTerm.toLowerCase().trim();
-    const dateFilter = App.State.wastageDateFilter;
+    const range = App.Utils.dateRange('wastage');
 
     App.State.filteredWastage = App.State.globalWastage.filter(w => {
-      if (dateFilter && dateToInputValue(w.dateRaw, w.date) !== dateFilter) return false;
-      if (!App.Utils.inDateRange(w.dateRaw, w.date, App.Utils.dateRange('wastage').from, App.Utils.dateRange('wastage').to)) return false;
+      if (!App.Utils.inDateRange(w.dateRaw, w.date, range.from, range.to)) return false;
       if (term) {
         const itemsText = (w.items || []).map(it =>
           `${it.name || ''} ${it.size || ''} ${it.reason || ''}`
@@ -582,6 +596,31 @@ App.Wastage = {
       return true;
     });
 
+    this.sortFiltered();
+    App.State.wastageCurrentPage = 1;
+    this.renderTable();
+  },
+
+  // Orders picked from the section's ⇅ menu or a sortable column header
+  // (return_ledger.html). dateDesc is getWastageData's own order, and the
+  // sort is stable, so the default view is unchanged.
+  SORT_COMPARATORS: {
+    dateDesc: (a, b) => parseRecordDate(b.dateRaw, b.date) - parseRecordDate(a.dateRaw, a.date),
+    dateAsc: (a, b) => parseRecordDate(a.dateRaw, a.date) - parseRecordDate(b.dateRaw, b.date),
+    vendorAsc: (a, b) => String(a.vendor || '').localeCompare(String(b.vendor || '')),
+    vendorDesc: (a, b) => String(b.vendor || '').localeCompare(String(a.vendor || '')),
+    qtyDesc: (a, b) => (b.totalQty || 0) - (a.totalQty || 0),
+    qtyAsc: (a, b) => (a.totalQty || 0) - (b.totalQty || 0)
+  },
+
+  sortFiltered() {
+    const cmp = this.SORT_COMPARATORS[App.State.wastageSortBy];
+    if (cmp) App.State.filteredWastage.sort(cmp);
+  },
+
+  sortBy(value) {
+    App.State.wastageSortBy = value;
+    this.sortFiltered();
     App.State.wastageCurrentPage = 1;
     this.renderTable();
   },

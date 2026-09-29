@@ -90,14 +90,11 @@ App.Bill = {
       }
 
       App.State.globalBills = Array.isArray(res.data) ? res.data : [];
-      App.State.filteredBills = [...App.State.globalBills];
-      App.State.billCurrentPage = 1;
-      App.State.billSearchTerm = '';
-      App.State.billDateFilter = '';
       App.State.billSortBy = App.State.billSortBy || 'dateDesc';
       App.State.selectedBills = [];
-      this.sortFiltered();
-      this.renderTable();
+      // Re-applies the search and date window the toolbar is showing, so
+      // a reload after a save never lists more than the date button says.
+      this.applyFilters();
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to load bills.', true);
     }
@@ -108,13 +105,8 @@ App.Bill = {
     this.applyFilters();
   },
 
-  filterByDate(dateValue) {
-    App.State.billDateFilter = String(dateValue || '');
-    this.applyFilters();
-  },
-
-  // The specific-dates window, separate from the exact-date filter above:
-  // one answers "show me the 4th", the other "this month". Both apply.
+  // The date window, set from the toolbar's date button (App.ListControls).
+  // A single day is a window with both ends on that day.
   filterByDateRange() {
     App.Utils.readDateRange('bill', 'billDateFrom', 'billDateTo');
     this.applyFilters();
@@ -127,11 +119,9 @@ App.Bill = {
 
   applyFilters() {
     const term = App.State.billSearchTerm.toLowerCase().trim();
-    const dateFilter = App.State.billDateFilter;
     const range = App.Utils.dateRange('bill');
 
     App.State.filteredBills = App.State.globalBills.filter(bill => {
-      if (dateFilter && dateToInputValue(bill.billDateRaw, bill.billDate) !== dateFilter) return false;
       if (!App.Utils.inDateRange(bill.billDateRaw, bill.billDate, range.from, range.to)) return false;
 
       if (term) {
@@ -148,9 +138,9 @@ App.Bill = {
     this.renderTable();
   },
 
-  // Field/direction combos selectable via the "Sort by" dropdown
-  // (View_BillLedger.html#billSortBy). Applied to filteredBills after
-  // every filter/search pass, before the pagination slice in renderTable.
+  // Field/direction combos picked from the toolbar's ⇅ menu or a sortable
+  // column header (bill_ledger.html). Applied to filteredBills after every
+  // filter/search pass, before the pagination slice in renderTable.
   SORT_COMPARATORS: {
     dateDesc: (a, b) => parseRecordDate(b.billDateRaw, b.billDate) - parseRecordDate(a.billDateRaw, a.billDate),
     dateAsc: (a, b) => parseRecordDate(a.billDateRaw, a.billDate) - parseRecordDate(b.billDateRaw, b.billDate),

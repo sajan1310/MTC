@@ -46,15 +46,11 @@ App.PO = {
       }
 
       App.State.globalPOs = Array.isArray(res.data) ? res.data : [];
-      App.State.filteredPOs = [...App.State.globalPOs];
-      App.State.poCurrentPage = 1;
-      App.State.poSearchTerm = '';
-      App.State.poDateFilter = '';
-      App.State.poStatusFilter = 'all';
       App.State.poSortBy = App.State.poSortBy || 'poNumberDesc';
       App.State.selectedPOs = [];
-      this.sortFiltered();
-      this.renderTable();
+      // Re-applies the search, status tile and date window the toolbar is
+      // showing, so a reload after a save never lists more than they say.
+      this.applyFilters();
       this.updateStatusBar();
       // Vendor Master may not have loaded yet this session -- ensure it has
       // before building the vendor dropdown, so it's never missing
@@ -262,6 +258,7 @@ App.PO = {
     this.applyFilters();
   },
 
+  // The date window, set from the toolbar's date button (App.ListControls).
   filterByDateRange() {
     App.Utils.readDateRange('po', 'poDateFrom', 'poDateTo');
     this.applyFilters();
@@ -269,11 +266,6 @@ App.PO = {
 
   clearDateRange() {
     App.Utils.clearDateRange('po', 'poDateFrom', 'poDateTo');
-    this.applyFilters();
-  },
-
-  filterByDate(dateValue) {
-    App.State.poDateFilter = String(dateValue || '');
     this.applyFilters();
   },
 
@@ -292,12 +284,10 @@ App.PO = {
 
   applyFilters() {
     const term = App.State.poSearchTerm.toLowerCase().trim();
-    const dateFilter = App.State.poDateFilter;
     const range = App.Utils.dateRange('po');
     const statusFilter = App.State.poStatusFilter || 'all';
 
     App.State.filteredPOs = App.State.globalPOs.filter(po => {
-      if (dateFilter && normalizeDateForInput(po) !== dateFilter) return false;
       if (!App.Utils.inDateRange(po.poDateRaw, po.poDate, range.from, range.to)) return false;
       if (statusFilter !== 'all' && po.status !== statusFilter) return false;
 
@@ -345,8 +335,8 @@ App.PO = {
     setCount('poStatusCountPending', counts[PO_STATUS.ISSUED] + counts[PO_STATUS.PARTIAL]);
   },
 
-  // Field/direction combos selectable via the "Sort by" dropdown
-  // (View_POLedger.html#poSortBy). Applied to filteredPOs after every
+  // Field/direction combos picked from the toolbar's ⇅ menu or a sortable
+  // column header (po_ledger.html). Applied to filteredPOs after every
   // filter/search pass, before the pagination slice in renderTable.
   SORT_COMPARATORS: {
     poNumberDesc: (a, b) => (parseInt(String(b.poNumber).replace(/\D/g, ''), 10) || 0) - (parseInt(String(a.poNumber).replace(/\D/g, ''), 10) || 0),

@@ -5,50 +5,40 @@
 
 <div id="returnLedger" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-returnLedger">
 
-  <!-- TOOLBAR: Search and Action Buttons -->
-  <div class="d-flex justify-content-between flex-wrap gap-2 mb-4" style="align-items: flex-start;">
+  <!-- TOOLBAR: search · date · sort, then the actions, on one row. The
+       date button is built into .list-date by App.ListControls (core.js),
+       which also wires the ⇅ menu and the sortable column headers. -->
+  <div class="d-flex justify-content-between flex-wrap gap-2 mb-4 align-items-center">
 
-    <div class="d-flex flex-grow-1 flex-wrap gap-3 align-items-center" style="max-width: 900px;">
-      <div class="flex-grow-1" style="min-width: 250px;">
-        <input type="text"
-               id="searchReturn"
-               class="form-control"
-               placeholder="Search by Return#, Bill#, Vendor, or Item…"
-               autocomplete="off"
-               aria-label="Search Returns"
-               oninput="App.Utils.debouncedFilter(this, () => App.Return.filterData(this.value))">
-        <small class="text-muted" style="display: block; margin-top: 4px;">
-          Filter by return number, bill reference, vendor, or item
-        </small>
-      </div>
+    <div class="d-flex flex-grow-1 flex-wrap gap-2 align-items-center" style="max-width: 900px;">
+      <input type="text"
+             id="searchReturn"
+             class="form-control"
+             style="flex: 1 1 240px; min-width: 200px;"
+             placeholder="Search by Return#, Bill#, Vendor, or Item…"
+             autocomplete="off"
+             aria-label="Search Returns"
+             oninput="App.Utils.debouncedFilter(this, () => App.Return.filterData(this.value))">
 
-      <div style="min-width: 170px;">
-        <input type="date"
-               id="returnDateFilter"
-               class="form-control"
-               aria-label="Filter Returns by Date"
-               onchange="App.Return.filterByDate(this.value)">
-        <small class="text-muted" style="display: block; margin-top: 4px;">
-          Show returns logged on this date
-        </small>
-      </div>
+      <div class="list-date" data-list="return" data-module="Return" data-noun="returns"></div>
 
-      <!-- Specific dates. Separate from the single-date filter beside it:
-           that one answers "show me the 4th", this one "this month". Both
-           ends inclusive, either may be left blank. -->
-      <div style="min-width: 300px;">
-        <label class="form-label small fw-bold mb-1">Specific dates</label>
-        <div class="d-flex gap-1 align-items-center">
-          <input type="date" id="returnDateFrom" class="form-control"
-                 aria-label="Returns from date" onchange="App.Return.filterByDateRange()">
-          <span class="text-muted small">to</span>
-          <input type="date" id="returnDateTo" class="form-control"
-                 aria-label="Returns to date" onchange="App.Return.filterByDateRange()">
-          <button type="button" class="btn btn-outline-secondary btn-sm"
-                  title="Clear dates" aria-label="Clear Returns dates"
-                  onclick="App.Return.clearDateRange()">&times;</button>
-        </div>
-        <small class="text-muted" style="display: block; margin-top: 4px;">Show everything between these dates</small>
+      <div class="dropdown list-sort" data-list="return" data-module="Return" data-state="returnSortBy"
+           data-default="dateDesc" data-noun="returns">
+        <button type="button" class="btn list-ctl list-sort-btn" id="returnSortBtn"
+                data-bs-toggle="dropdown" aria-expanded="false" aria-label="Sort returns" title="Sort">
+          <i class="bi bi-arrow-down-up" aria-hidden="true"></i>
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end list-menu list-sort-menu" aria-labelledby="returnSortBtn">
+          <li><h6 class="dropdown-header">Sort by</h6></li>
+          <li><button type="button" class="dropdown-item" data-sort="dateDesc">Date (Newest first)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="dateAsc">Date (Oldest first)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="returnNumberDesc">Return# (Newest first)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="returnNumberAsc">Return# (Oldest first)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="vendorAsc">Vendor (A&ndash;Z)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="vendorDesc">Vendor (Z&ndash;A)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="creditDesc">Credit (High&ndash;Low)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="creditAsc">Credit (Low&ndash;High)</button></li>
+        </ul>
       </div>
     </div>
 
@@ -88,22 +78,23 @@
   <div class="table-responsive" style="border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
     <table class="table table-hover table-bordered align-middle mb-0"
            role="table"
-           style="margin-bottom: 0;">
+           style="margin-bottom: 0;"
+           data-list="return">
       <thead class="table-dark">
         <tr role="row">
           <th scope="col" role="columnheader" style="width: 4%; text-align: center;">
             <input type="checkbox" id="selectAllReturns" class="form-check-input" onclick="App.Return.toggleSelectAll(this)">
           </th>
-          <th scope="col" role="columnheader" style="width: 14%; min-width: 110px;">
+          <th scope="col" role="columnheader" style="width: 14%; min-width: 110px;" data-sort-keys="returnNumberDesc,returnNumberAsc">
             <i class="bi bi-arrow-return-left me-2"></i>Return#
           </th>
           <th scope="col" role="columnheader" style="width: 12%; min-width: 100px;">
             <i class="bi bi-receipt me-2"></i>Bill#
           </th>
-          <th scope="col" role="columnheader" style="width: 12%; min-width: 120px;">
+          <th scope="col" role="columnheader" style="width: 12%; min-width: 120px;" data-sort-keys="dateDesc,dateAsc">
             <i class="bi bi-calendar me-2"></i>Date
           </th>
-          <th scope="col" role="columnheader" style="width: 14%; min-width: 130px;">
+          <th scope="col" role="columnheader" style="width: 14%; min-width: 130px;" data-sort-keys="vendorAsc,vendorDesc">
             <i class="bi bi-truck me-2"></i>Vendor
           </th>
           <th scope="col" role="columnheader" style="width: 26%; min-width: 200px;">
@@ -112,7 +103,7 @@
           <th scope="col" role="columnheader" style="width: 8%; min-width: 80px; text-align: center;">
             <i class="bi bi-collection me-2"></i>Qty
           </th>
-          <th scope="col" role="columnheader" style="width: 10%; min-width: 120px; text-align: right;">
+          <th scope="col" role="columnheader" style="width: 10%; min-width: 120px; text-align: right;" data-sort-keys="creditDesc,creditAsc">
             <i class="bi bi-currency-rupee me-2"></i>Credit
           </th>
           <th scope="col" role="columnheader" style="width: 8%; min-width: 140px;">
@@ -152,34 +143,36 @@
         <i class="bi bi-exclamation-triangle me-2"></i>Wastage Records
       </h5>
       <div class="d-flex gap-2 flex-wrap align-items-center">
+        <!-- A fixed width, not just a min-width: Bootstrap's .form-control is
+             width:100%, which in this wrapping row claims a whole line, and
+             this group only ever sizes to its content, so the date and sort
+             buttons ended up underneath. -->
         <input type="text"
                id="searchWastage"
                class="form-control form-control-sm"
                placeholder="Search by item, vendor, reason…"
-               style="min-width: 220px;"
+               style="flex: 0 1 auto; width: 260px; min-width: 200px;"
                autocomplete="off"
                oninput="App.Utils.debouncedFilter(this, () => App.Wastage.filterData(this.value))">
-        <!-- Grouped and labelled, and fixed-width rather than left to
-             Bootstrap's width:100% -- bare inputs in a flex row each claim
-             a full line and turn the toolbar into a stack. "On" is the
-             exact-date filter, From/To the range; both apply. -->
-        <div class="input-group input-group-sm flex-nowrap" style="flex: 0 0 auto; width: auto;">
-          <span class="input-group-text">On</span>
-          <input type="date" id="wastageDateFilter" class="form-control form-control-sm"
-                 style="flex: 0 0 auto; width: 140px;" aria-label="Filter wastage by exact date"
-                 onchange="App.Wastage.filterByDate(this.value)">
-        </div>
-        <div class="input-group input-group-sm flex-nowrap" style="flex: 0 0 auto; width: auto;">
-          <span class="input-group-text">From</span>
-          <input type="date" id="wastageDateFrom" class="form-control form-control-sm"
-                 style="flex: 0 0 auto; width: 140px;"
-                 aria-label="Wastage from date" onchange="App.Wastage.filterByDateRange()">
-          <span class="input-group-text">To</span>
-          <input type="date" id="wastageDateTo" class="form-control form-control-sm"
-                 style="flex: 0 0 auto; width: 140px;"
-                 aria-label="Wastage to date" onchange="App.Wastage.filterByDateRange()">
-          <button type="button" class="btn btn-outline-secondary" title="Clear dates"
-                  aria-label="Clear wastage dates" onclick="App.Wastage.clearDateRange()">&times;</button>
+        <!-- The date button is built into .list-date by App.ListControls
+             (core.js), which also wires the ⇅ menu and the sortable
+             column headers below. -->
+        <div class="list-date" data-list="wastage" data-module="Wastage" data-noun="wastage records"></div>
+        <div class="dropdown list-sort" data-list="wastage" data-module="Wastage" data-state="wastageSortBy"
+             data-default="dateDesc" data-noun="wastage records">
+          <button type="button" class="btn list-ctl list-sort-btn" id="wastageSortBtn"
+                  data-bs-toggle="dropdown" aria-expanded="false" aria-label="Sort wastage records" title="Sort">
+            <i class="bi bi-arrow-down-up" aria-hidden="true"></i>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end list-menu list-sort-menu" aria-labelledby="wastageSortBtn">
+            <li><h6 class="dropdown-header">Sort by</h6></li>
+            <li><button type="button" class="dropdown-item" data-sort="dateDesc">Date (Newest first)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="dateAsc">Date (Oldest first)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="vendorAsc">Vendor (A&ndash;Z)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="vendorDesc">Vendor (Z&ndash;A)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="qtyDesc">Total Qty (High&ndash;Low)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="qtyAsc">Total Qty (Low&ndash;High)</button></li>
+          </ul>
         </div>
         <button class="btn btn-sm btn-success fw-bold d-none" id="btnPrintSelectedWastage" type="button" onclick="App.Wastage.printSelected()" style="white-space: nowrap;">
           <i class="bi bi-printer"></i> Print Selected
@@ -191,7 +184,7 @@
     </div>
 
     <div class="table-responsive" style="border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-      <table class="table table-hover table-bordered align-middle mb-0">
+      <table class="table table-hover table-bordered align-middle mb-0" data-list="wastage">
         <!-- table-warning, not an inline background: Bootstrap paints each
              header cell over the thead, so the inline yellow never showed in
              the light theme, and in the dark theme the cells went transparent
@@ -203,10 +196,10 @@
               <input type="checkbox" id="selectAllWastage" class="form-check-input" onclick="App.Wastage.toggleSelectAll(this)">
             </th>
             <th scope="col" style="min-width:130px;"><i class="bi bi-hash me-1"></i>Wastage ID</th>
-            <th scope="col" style="min-width:100px;"><i class="bi bi-calendar me-1"></i>Date</th>
-            <th scope="col" style="min-width:120px;"><i class="bi bi-truck me-1"></i>Vendor</th>
+            <th scope="col" style="min-width:100px;" data-sort-keys="dateDesc,dateAsc"><i class="bi bi-calendar me-1"></i>Date</th>
+            <th scope="col" style="min-width:120px;" data-sort-keys="vendorAsc,vendorDesc"><i class="bi bi-truck me-1"></i>Vendor</th>
             <th scope="col" style="min-width:200px;"><i class="bi bi-box-seam me-1"></i>Items Wasted</th>
-            <th scope="col" style="min-width:80px; text-align:center;"><i class="bi bi-collection me-1"></i>Total Qty</th>
+            <th scope="col" style="min-width:80px; text-align:center;" data-sort-keys="qtyDesc,qtyAsc"><i class="bi bi-collection me-1"></i>Total Qty</th>
             <th scope="col" style="min-width:100px;"><i class="bi bi-gear me-1"></i>Actions</th>
           </tr>
         </thead>

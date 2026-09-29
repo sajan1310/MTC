@@ -42,12 +42,10 @@ App.Issue = {
         return;
       }
       App.State.globalIssues = Array.isArray(res.data) ? res.data : [];
-      App.State.filteredIssues = [...App.State.globalIssues];
-      App.State.issueCurrentPage = 1;
-      App.State.issueSearchTerm = '';
-      App.State.issueDateFilter = '';
       App.State.selectedIssues = [];
-      this.renderTable();
+      // Re-applies the search, date window and order the toolbar is
+      // showing, so a reload after a save never lists more than it says.
+      this.applyFilters();
     } catch (err) {
       App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load issued stock records.', true);
@@ -59,6 +57,7 @@ App.Issue = {
     this.applyFilters();
   },
 
+  // The date window, set from the toolbar's date button (App.ListControls).
   filterByDateRange() {
     App.Utils.readDateRange('issue', 'issueDateFrom', 'issueDateTo');
     this.applyFilters();
@@ -69,18 +68,12 @@ App.Issue = {
     this.applyFilters();
   },
 
-  filterByDate(dateValue) {
-    App.State.issueDateFilter = String(dateValue || '');
-    this.applyFilters();
-  },
-
   applyFilters() {
     const term = App.State.issueSearchTerm.toLowerCase().trim();
-    const dateFilter = App.State.issueDateFilter;
+    const range = App.Utils.dateRange('issue');
 
     App.State.filteredIssues = App.State.globalIssues.filter(iss => {
-      if (dateFilter && dateToInputValue(iss.dateRaw, iss.date) !== dateFilter) return false;
-      if (!App.Utils.inDateRange(iss.dateRaw, iss.date, App.Utils.dateRange('issue').from, App.Utils.dateRange('issue').to)) return false;
+      if (!App.Utils.inDateRange(iss.dateRaw, iss.date, range.from, range.to)) return false;
       if (term) {
         const itemsText = (iss.items || []).map(it => `${it.name || ''} ${it.size || ''}`).join(' ');
         const haystack = `${iss.issueId || ''} ${iss.issuedTo || ''} ${iss.reference || ''} ${itemsText} ${iss.remarks || ''}`;
@@ -89,6 +82,31 @@ App.Issue = {
       return true;
     });
 
+    this.sortFiltered();
+    App.State.issueCurrentPage = 1;
+    this.renderTable();
+  },
+
+  // Orders picked from the toolbar's ⇅ menu or a sortable column header
+  // (production.html, Issued Stock). dateDesc is getIssueData's own
+  // order, and the sort is stable, so the default view is unchanged.
+  SORT_COMPARATORS: {
+    dateDesc: (a, b) => parseRecordDate(b.dateRaw, b.date) - parseRecordDate(a.dateRaw, a.date),
+    dateAsc: (a, b) => parseRecordDate(a.dateRaw, a.date) - parseRecordDate(b.dateRaw, b.date),
+    issuedToAsc: (a, b) => String(a.issuedTo || '').localeCompare(String(b.issuedTo || '')),
+    issuedToDesc: (a, b) => String(b.issuedTo || '').localeCompare(String(a.issuedTo || '')),
+    qtyDesc: (a, b) => (b.totalQty || 0) - (a.totalQty || 0),
+    qtyAsc: (a, b) => (a.totalQty || 0) - (b.totalQty || 0)
+  },
+
+  sortFiltered() {
+    const cmp = this.SORT_COMPARATORS[App.State.issueSortBy];
+    if (cmp) App.State.filteredIssues.sort(cmp);
+  },
+
+  sortBy(value) {
+    App.State.issueSortBy = value;
+    this.sortFiltered();
     App.State.issueCurrentPage = 1;
     this.renderTable();
   },

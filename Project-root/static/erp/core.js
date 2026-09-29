@@ -189,7 +189,6 @@ const App = {
     poCurrentPage: 1,
     poRowsPerPage: 15,
     poSearchTerm: '',
-    poDateFilter: '',
     poStatusFilter: 'all',
     poSortBy: 'poNumberDesc',
     selectedPOs: [],
@@ -197,11 +196,10 @@ const App = {
     filteredPendingPOs: [],
     rowSeq: 0,
 
-    // Every list's "specific dates" window, keyed by module -- see
-    // App.Utils.dateRange. The exact-date filters some ledgers already had
-    // answer "show me the 4th"; these answer "this week", "since the
-    // audit", which is the question actually asked of a ledger. The two are
-    // separate controls and both apply.
+    // Every list's date window, keyed by module -- see App.Utils.dateRange
+    // and the date button that sets it (App.ListControls). A single day is
+    // a window whose two ends are the same date, so there is one date
+    // filter per list, never two that both apply.
     dateRanges: {},
 
     // Bill Ledger's own pagination/filter/selection state (Script_Bill.html).
@@ -209,7 +207,6 @@ const App = {
     billCurrentPage: 1,
     billRowsPerPage: 15,
     billSearchTerm: '',
-    billDateFilter: '',
     billSortBy: 'dateDesc',
     selectedBills: [],
     billAutoMatchTimer: null,
@@ -220,7 +217,7 @@ const App = {
     returnCurrentPage: 1,
     returnRowsPerPage: 15,
     returnSearchTerm: '',
-    returnDateFilter: '',
+    returnSortBy: 'dateDesc',
     selectedReturns: [],
 
     // Wastage Log's own pagination/filter/selection state -- nested inside
@@ -230,7 +227,7 @@ const App = {
     wastageCurrentPage: 1,
     wastageRowsPerPage: 15,
     wastageSearchTerm: '',
-    wastageDateFilter: '',
+    wastageSortBy: 'dateDesc',
     selectedWastage: [],
 
     // Items Stock sub-tab's own pagination/filter/selection state
@@ -307,6 +304,8 @@ const App = {
     filteredOrders: [],
     orderCurrentPage: 1,
     orderRowsPerPage: 15,
+    orderSearchTerm: '',
+    orderSortBy: 'orderNumberDesc',
     selectedOrders: [],
     allPendingOrders: [],
     filteredPendingOrders: [],
@@ -391,7 +390,7 @@ const App = {
     issueCurrentPage: 1,
     issueRowsPerPage: 15,
     issueSearchTerm: '',
-    issueDateFilter: '',
+    issueSortBy: 'dateDesc',
 
     // Users tab (admin-only, users.js's App.Users) -- same flat state
     // shape as every other module here. No pagination: user lists are
@@ -1782,6 +1781,313 @@ const App = {
     }
   },
 
+  // ── One-row list toolbars: the date button and the ⇅ sort menu ─────────
+  //
+  // Every ledger's toolbar is search · date · ⇅ · actions, on one row. It
+  // used to carry an "on this date" box and a separate from-to range, both
+  // applied at once, so a day left in one and a range in the other could
+  // empty a list with nothing on screen saying why. With a grey hint line
+  // under every control they also needed more than the 900px the toolbar
+  // is given, and Sort wrapped onto a second row.
+  //
+  // The date control is built here from a placeholder in the partial:
+  //   <div class="list-date" data-list="bill" data-module="Bill"
+  //        data-noun="bills"></div>
+  // data-list keys the shared window (App.Utils.dateRange) and names the
+  // pop-up's inputs billDateFrom/billDateTo, so each module's own
+  // filterByDateRange/clearDateRange keep working unchanged: this control
+  // only ever writes those two inputs and then calls them. A single day is
+  // a window whose two ends are the same date.
+  //
+  // The sort menu is a Bootstrap dropdown written into each partial,
+  // because its choices differ per list:
+  //   <div class="dropdown list-sort" data-list="bill" data-module="Bill"
+  //        data-state="billSortBy" data-default="dateDesc" data-noun="bills">
+  // with one .dropdown-item[data-sort] per order. Headers opt in with
+  // th[data-sort-keys="dateDesc,dateAsc"] inside table[data-list="bill"]:
+  // a first click picks the first key, the next click the other one. Both
+  // go through the module's sortBy(), and both are redrawn after every
+  // change, so the menu's tick and the header's arrow always agree.
+  ListControls: {
+    // Quick picks, in the order the pop-up lists them.
+    PRESETS: [
+      ['today', 'Today'],
+      ['yesterday', 'Yesterday'],
+      ['week', 'This week'],
+      ['month', 'This month'],
+      ['lastMonth', 'Last month']
+    ],
+
+    MONTHS: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+
+    // Mounted sort menus by list: { el, module, state, def, noun }.
+    _sorts: {},
+
+    // The window a quick pick stands for, both ends inclusive. Worked out
+    // on calendar days in UTC, never from a local time, so no timezone can
+    // move an end across midnight; Date.UTC rolls day 0 and month -1 back
+    // into the previous month and year. A week runs Monday to Sunday.
+    presetRange(key, today = todayIso()) {
+      const [y, m, d] = today.split('-').map(Number);
+      const day = (yy, mm, dd) => new Date(Date.UTC(yy, mm, dd)).toISOString().slice(0, 10);
+      const monday = d - ((new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7);
+      switch (key) {
+        case 'today': return { from: today, to: today };
+        case 'yesterday': return { from: day(y, m - 1, d - 1), to: day(y, m - 1, d - 1) };
+        case 'week': return { from: day(y, m - 1, monday), to: day(y, m - 1, monday + 6) };
+        case 'month': return { from: day(y, m - 1, 1), to: day(y, m, 0) };
+        case 'lastMonth': return { from: day(y, m - 2, 1), to: day(y, m - 1, 0) };
+        default: return { from: '', to: '' };
+      }
+    },
+
+    // Which quick pick a window is, or '' when it is none of them.
+    presetFor(from, to, today = todayIso()) {
+      if (!from || !to) return '';
+      const hit = this.PRESETS.find(([key]) => {
+        const r = this.presetRange(key, today);
+        return r.from === from && r.to === to;
+      });
+      return hit ? hit[0] : '';
+    },
+
+    // What the date button says: the quick pick's name when the window is
+    // one, otherwise the dates themselves, as short as they read clearly.
+    label(from, to, today = todayIso()) {
+      if (!from && !to) return 'All dates';
+      const preset = this.presetFor(from, to, today);
+      if (preset) return this.PRESETS.find(([key]) => key === preset)[1];
+
+      const parts = iso => iso.split('-').map(Number);
+      const full = iso => { const [y, m, d] = parts(iso); return `${d} ${this.MONTHS[m - 1]} ${y}`; };
+      if (from && to) {
+        if (from === to) return full(from);
+        const [fy, fm, fd] = parts(from);
+        const [ty, tm, td] = parts(to);
+        if (from < to && fy === ty && fm === tm) return `${fd}–${td} ${this.MONTHS[tm - 1]} ${ty}`;
+        if (from < to && fy === ty) return `${fd} ${this.MONTHS[fm - 1]} – ${td} ${this.MONTHS[tm - 1]} ${ty}`;
+        return `${full(from)} – ${full(to)}`;
+      }
+      return from ? `From ${full(from)}` : `Up to ${full(to)}`;
+    },
+
+    mountAll(root = document) {
+      root.querySelectorAll('.list-date[data-list]').forEach(el => this.mountDate(el));
+      root.querySelectorAll('.list-sort[data-list]').forEach(el => this.mountSort(el));
+    },
+
+    // ── Date ──
+    mountDate(el) {
+      if (el.dataset.mounted) return;
+      el.dataset.mounted = '1';
+      const list = el.dataset.list;
+      const id = part => `${list}Date${part}`;
+      const presets = [...this.PRESETS, ['all', 'All dates']].map(([key, text]) =>
+        `<button type="button" class="list-date-preset" data-preset="${key}" aria-pressed="false">${text}</button>`
+      ).join('');
+
+      // The menu sits beside its toggle, inside the group: Bootstrap looks
+      // for a dropdown's menu among the toggle's siblings, and positions
+      // it against the whole group (data-bs-reference="parent").
+      el.innerHTML = `
+        <div class="list-date-group">
+          <button type="button" class="btn list-ctl list-date-btn" id="${id('Btn')}"
+                  data-bs-toggle="dropdown" data-bs-auto-close="outside" data-bs-reference="parent"
+                  aria-expanded="false" aria-haspopup="dialog" aria-controls="${id('Menu')}">
+            <i class="bi bi-calendar3" aria-hidden="true"></i>
+            <span class="list-date-label">All dates</span>
+            <i class="bi bi-chevron-down list-date-caret" aria-hidden="true"></i>
+          </button>
+          <button type="button" class="btn list-ctl list-date-clear" title="Clear date filter"
+                  aria-label="Clear date filter" hidden><i class="bi bi-x-lg" aria-hidden="true"></i></button>
+          <div class="dropdown-menu list-menu list-date-menu" id="${id('Menu')}" role="dialog"
+               aria-label="Filter ${el.dataset.noun || 'records'} by date">
+            <div class="list-date-presets">${presets}</div>
+            <label class="list-date-caption" for="${id('Day')}">Single day</label>
+            <input type="date" class="form-control list-date-day" id="${id('Day')}">
+            <span class="list-date-caption" id="${id('Between')}">Between</span>
+            <div class="list-date-range" role="group" aria-labelledby="${id('Between')}">
+              <input type="date" class="form-control" id="${id('From')}" aria-label="From">
+              <span class="list-date-and">and</span>
+              <input type="date" class="form-control" id="${id('To')}" aria-label="To">
+            </div>
+            <div class="list-date-foot">
+              <button type="button" class="list-date-reset">Clear</button>
+              <button type="button" class="btn btn-primary btn-sm list-date-done">Done</button>
+            </div>
+          </div>
+        </div>`;
+
+      const toggle = el.querySelector('.list-date-btn');
+      const close = () => {
+        if (window.bootstrap?.Dropdown) window.bootstrap.Dropdown.getOrCreateInstance(toggle).hide();
+      };
+
+      el.addEventListener('click', e => {
+        const preset = e.target.closest('[data-preset]');
+        if (preset) {
+          const r = this.presetRange(preset.dataset.preset);
+          this.applyDate(el, r.from, r.to);
+          close();
+          toggle.focus();
+        } else if (e.target.closest('.list-date-clear')) {
+          // The button hides itself, so focus goes back to the date button.
+          this.clearDate(el);
+          toggle.focus();
+        } else if (e.target.closest('.list-date-reset')) {
+          this.clearDate(el);
+        } else if (e.target.closest('.list-date-done')) {
+          close();
+          toggle.focus();
+        }
+      });
+
+      el.addEventListener('change', e => {
+        if (e.target.id === id('Day')) {
+          this.applyDate(el, e.target.value, e.target.value);
+        } else if (e.target.id === id('From') || e.target.id === id('To')) {
+          App[el.dataset.module]?.filterByDateRange();
+          this.syncDate(list);
+        }
+      });
+
+      this.syncDate(list);
+    },
+
+    applyDate(el, from, to) {
+      const list = el.dataset.list;
+      const fromEl = document.getElementById(`${list}DateFrom`);
+      const toEl = document.getElementById(`${list}DateTo`);
+      if (fromEl) fromEl.value = from;
+      if (toEl) toEl.value = to;
+      App[el.dataset.module]?.filterByDateRange();
+      this.syncDate(list);
+    },
+
+    clearDate(el) {
+      App[el.dataset.module]?.clearDateRange();
+      this.syncDate(el.dataset.list);
+    },
+
+    // Redraws the button and the pop-up from the window store, the one
+    // place a list's dates live.
+    syncDate(list) {
+      const el = document.querySelector(`.list-date[data-list="${list}"]`);
+      if (!el || !el.dataset.mounted) return;
+      const { from, to } = App.Utils.dateRange(list);
+      const set = Boolean(from || to);
+      const text = this.label(from, to);
+      const input = part => document.getElementById(`${list}Date${part}`);
+
+      el.classList.toggle('is-set', set);
+      el.querySelector('.list-date-label').textContent = text;
+      el.querySelector('.list-date-btn').setAttribute('aria-label',
+        `Filter ${el.dataset.noun || 'records'} by date: ${text}`);
+      el.querySelector('.list-date-clear').hidden = !set;
+      input('Day').value = from && from === to ? from : '';
+      input('From').value = from;
+      input('To').value = to;
+
+      const current = set ? this.presetFor(from, to) : 'all';
+      el.querySelectorAll('[data-preset]').forEach(b =>
+        b.setAttribute('aria-pressed', String(b.dataset.preset === current)));
+    },
+
+    // ── Sort ──
+    mountSort(el) {
+      if (el.dataset.mounted) return;
+      el.dataset.mounted = '1';
+      const list = el.dataset.list;
+      this._sorts[list] = {
+        el,
+        module: el.dataset.module,
+        state: el.dataset.state,
+        def: el.dataset.default,
+        noun: el.dataset.noun || 'records'
+      };
+
+      el.addEventListener('click', e => {
+        const item = e.target.closest('[data-sort]');
+        if (item) this.applySort(list, item.dataset.sort);
+      });
+
+      document.querySelectorAll(`table[data-list="${list}"] th[data-sort-keys]`)
+        .forEach(th => this.wrapHeader(th, list));
+      this.syncSort(list);
+    },
+
+    // Turns a header's label into a sort button. Anything else in the
+    // header keeps its place: Production Log's column-filter funnels stay
+    // buttons of their own beside it.
+    wrapHeader(th, list) {
+      if (th.querySelector('.th-sort-btn')) return;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'th-sort-btn';
+      Array.from(th.childNodes).forEach(node => {
+        if (!(node.nodeType === 1 && node.classList.contains('th-filter-btn'))) btn.appendChild(node);
+      });
+      btn.title = `Sort by ${btn.textContent.trim()}`;
+      const ind = document.createElement('i');
+      ind.className = 'bi bi-arrow-down-up th-sort-ind';
+      ind.setAttribute('aria-hidden', 'true');
+      btn.appendChild(ind);
+      th.insertBefore(btn, th.firstChild);
+      th.classList.add('th-sortable');
+
+      btn.addEventListener('click', () => {
+        const keys = th.dataset.sortKeys.split(',');
+        const current = App.State[this._sorts[list].state];
+        this.applySort(list, current === keys[0] && keys[1] ? keys[1] : keys[0]);
+      });
+    },
+
+    applySort(list, key) {
+      const cfg = this._sorts[list];
+      const mod = cfg && App[cfg.module];
+      if (!mod || typeof mod.sortBy !== 'function') return;
+      mod.sortBy(key);
+      this.syncSort(list);
+    },
+
+    // Marks the current order in the menu, on the ⇅ button (highlighted
+    // whenever it is not the list's default order) and on its column.
+    syncSort(list) {
+      const cfg = this._sorts[list];
+      if (!cfg) return;
+      const current = App.State[cfg.state];
+      let text = '';
+      cfg.el.querySelectorAll('[data-sort]').forEach(item => {
+        const on = item.dataset.sort === current;
+        item.classList.toggle('is-current', on);
+        if (on) {
+          item.setAttribute('aria-current', 'true');
+          text = item.textContent.trim();
+        } else {
+          item.removeAttribute('aria-current');
+        }
+      });
+
+      const btn = cfg.el.querySelector('.list-sort-btn');
+      if (btn) {
+        btn.classList.toggle('is-set', Boolean(current) && current !== cfg.def);
+        btn.title = text ? `Sort: ${text}` : 'Sort';
+        btn.setAttribute('aria-label', text ? `Sort ${cfg.noun}: ${text}` : `Sort ${cfg.noun}`);
+      }
+
+      const desc = /Desc$/.test(current || '');
+      document.querySelectorAll(`table[data-list="${list}"] th.th-sortable`).forEach(th => {
+        const on = th.dataset.sortKeys.split(',').includes(current);
+        th.setAttribute('aria-sort', on ? (desc ? 'descending' : 'ascending') : 'none');
+        const ind = th.querySelector('.th-sort-ind');
+        if (ind) {
+          const glyph = on ? (desc ? 'bi-caret-down-fill' : 'bi-caret-up-fill') : 'bi-arrow-down-up';
+          ind.className = `bi ${glyph} th-sort-ind`;
+        }
+      });
+    }
+  },
+
   // ── My Profile (self-service, every role) ───────────────────────────────
   // Two independent forms/mutations (updateMyProfile / changeMyPassword,
   // see profile_service.py) since a mistake in one (e.g. a password typo)
@@ -2557,6 +2863,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   bindGlobalEvents();
+  App.ListControls.mountAll();
 
   // Reload/refresh used to always land back on Dashboard because the tab
   // shown was whatever the static HTML marked active, with nothing to say
