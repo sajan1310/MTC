@@ -1634,6 +1634,116 @@ def test_save_production_sheet_independent_of_components_consumed(erp_client):
     assert row2["componentsConsumed"][0]["itemName"] == "RawMat"  # untouched
 
 
+def _lot_with_customized_sheet(erp_client):
+    """A lot whose Production Sheet was saved with its own edits -- the
+    state LOT-FTD033-0008 was in when a component added to the lot never
+    reached its sheet."""
+    _payload, process_id = _save_process(erp_client)
+    create = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "qty": 5,
+                "componentsConsumed": [_item_component()],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    listed = _rpc(erp_client, "getProductionData").get_json()["data"]
+    row = next(r for r in listed if r["lotNumber"] == create["data"]["lotNumber"])
+    saved = _rpc(
+        erp_client,
+        "saveProductionSheet",
+        [
+            row["rowIdx"],
+            row["productId"],
+            row["qty"],
+            [
+                {
+                    "itemName": "RawMat",
+                    "size": "",
+                    "narration": "",
+                    "color": "",
+                    "requiredQty": 7,
+                }
+            ],
+            "printout remark",
+        ],
+        mutation=True,
+    ).get_json()
+    assert saved["success"] is True
+    return process_id, row
+
+
+def _edit_lot(erp_client, process_id, row, components, **overrides):
+    payload = {
+        "rowIdx": row["rowIdx"],
+        "processId": process_id,
+        "assignedTo": "Worker A",
+        "qty": 5,
+        "componentsConsumed": components,
+    }
+    payload.update(overrides)
+    body = _rpc(erp_client, "saveProduction", [payload], mutation=True).get_json()
+    assert body["success"] is True, body["message"]
+    return body
+
+
+def test_changing_a_lots_components_shows_on_its_customized_sheet(erp_client):
+    """Any change to what a lot consumes reaches its Production Sheet: the
+    sheet's saved copy is dropped, so the sheet shows the lot again. The
+    sheet's own remarks survive, and the save says what happened."""
+    process_id, row = _lot_with_customized_sheet(erp_client)
+
+    edited = _edit_lot(
+        erp_client,
+        process_id,
+        row,
+        [_item_component(), _item_component("NewPart", qty=2)],
+    )
+
+    assert edited["data"]["row"]["customComponents"] == []
+    assert "Production Sheet now shows these changes" in edited["message"]
+    assert [c["itemName"] for c in edited["data"]["row"]["componentsConsumed"]] == [
+        "RawMat",
+        "NewPart",
+    ]
+
+    listed = _rpc(erp_client, "getProductionData").get_json()["data"]
+    fresh = next(r for r in listed if r["rowIdx"] == row["rowIdx"])
+    assert fresh["customComponents"] == []
+    assert fresh["sheetRemarks"] == "printout remark"
+
+
+def test_a_changed_quantity_also_reaches_the_customized_sheet(erp_client):
+    process_id, row = _lot_with_customized_sheet(erp_client)
+    edited = _edit_lot(erp_client, process_id, row, [_item_component(qty=4)])
+    assert edited["data"]["row"]["customComponents"] == []
+
+
+def test_an_edit_that_leaves_the_components_alone_keeps_the_sheet(erp_client):
+    """Status, remarks, contractor -- and a narration, which Items Master
+    re-derives on every save -- are not changes to what the lot consumes, so
+    the sheet's own edits stay."""
+    process_id, row = _lot_with_customized_sheet(erp_client)
+
+    edited = _edit_lot(
+        erp_client,
+        process_id,
+        row,
+        [dict(_item_component(), narration="retyped note")],
+        remarks="checked by QC",
+        assignedTo="Worker B",
+    )
+
+    custom = edited["data"]["row"]["customComponents"]
+    assert [(c["itemName"], c["requiredQty"]) for c in custom] == [("RawMat", 7)]
+    assert "Production Sheet" not in edited["message"]
+
+
 def test_contractor_rename_cascades_into_production_assigned_to(erp_client):
     old_name = _unique_name("OldProdContractor")
     new_name = _unique_name("NewProdContractor")

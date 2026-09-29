@@ -448,6 +448,31 @@ def _consolidate_duplicate_components(components: list) -> list:
     return result
 
 
+def _sheet_signature(components) -> list:
+    """A lot's components as its Production Sheet shows them -- item, size,
+    colour, pool bucket and quantity -- for telling whether an edit changed
+    them. Narration and unit are left out: both are re-derived from Items
+    Master on every save and every display, so a difference there is not a
+    change anyone made to the lot.
+    """
+    rows = []
+    for c in components or []:
+        c = c or {}
+        color_group = str(c.get("colorGroup") or "").strip()
+        if not color_group or process_service._is_common_color_group(color_group):
+            color_group = ""
+        rows.append(
+            (
+                str(c.get("itemName") or "").strip().lower(),
+                str(c.get("size") or "").strip().lower(),
+                color_group.lower(),
+                str(c.get("poolColor") or "").strip().lower(),
+                round(_validate_number(c.get("qty"), -10000000, 10000000), 6),
+            )
+        )
+    return sorted(rows)
+
+
 def _dropped_component_warning(dropped: list) -> str | None:
     """The message for components save_production refused to record because
     they name a colour this lot does not produce. Names them -- up to three,
@@ -1132,7 +1157,7 @@ def save_production(conn, cur, form_data):
             row_idx, "Invalid production record selected for edit."
         )
         cur.execute(
-            "SELECT id, process_id, lot_number, status, components_consumed FROM erp.production WHERE id = %s AND deleted_at IS NULL",
+            "SELECT id, process_id, lot_number, status, components_consumed, custom_components FROM erp.production WHERE id = %s AND deleted_at IS NULL",
             (target_id,),
         )
         existing = cur.fetchone()
@@ -1210,6 +1235,7 @@ def save_production(conn, cur, form_data):
     resolved_contractor_id = _find_contractor_id_by_name(cur, assigned_to)
     user_id = get_current_user_id()
 
+    sheet_reset = False
     if is_edit:
         cur.execute(
             """
@@ -1249,6 +1275,25 @@ def save_production(conn, cur, form_data):
             ),
         )
         new_row_idx = existing["id"]
+
+        # A saved Production Sheet customization is a copy of the lot's
+        # components taken when it was saved, and the sheet shows that copy
+        # in place of the lot -- so a component added to the lot afterwards
+        # never reached its sheet (LOT-FTD033-0008). The lot is the source
+        # of truth: when this edit changes what it consumes, the copy goes
+        # and the sheet shows the lot again, exactly as "Reset to Recorded
+        # Components" would. The sheet's remarks are kept, and an edit that
+        # leaves the components alone (status, remarks, contractor) keeps
+        # the copy too.
+        sheet_reset = bool(existing["custom_components"]) and (
+            _sheet_signature(existing["components_consumed"])
+            != _sheet_signature(clean_components)
+        )
+        if sheet_reset:
+            cur.execute(
+                "UPDATE erp.production SET custom_components = NULL WHERE id = %s",
+                (existing["id"],),
+            )
     else:
         cur.execute(
             """
@@ -1291,6 +1336,8 @@ def save_production(conn, cur, form_data):
     warehouse_service._recalculate_warehouse_pool(cur)
 
     message = f"Lot #{lot_number} updated." if is_edit else f"Lot #{lot_number} saved."
+    if sheet_reset:
+        message = f"{message} Its Production Sheet now shows these changes, replacing the sheet's earlier edits."
     if dropped_colour_warning:
         message = f"{message} {dropped_colour_warning}"
     if pool_warning:
