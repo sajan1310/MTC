@@ -406,7 +406,12 @@
 // date filter. The markup is network-first, so without the bump an
 // installed client pairs the new placeholders with a core.js that never
 // fills them in.
-const CACHE_NAME = 'erp-shell-v82';
+// v83: the Return, Wastage and Issue Stock forms load Items Master before
+// they open. Their item lists read it, and nothing on the Return tab or the
+// Dashboard's Quick Actions loaded it, so the list came up empty. return.js
+// and issue.js are precached, so without the bump an installed client keeps
+// the empty list.
+const CACHE_NAME = 'erp-shell-v83';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

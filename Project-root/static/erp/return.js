@@ -320,7 +320,26 @@ App.Return = {
     contactInput.value = match?.contact || '';
   },
 
-  openReturnModal() {
+  // What this form reads from other modules: every row's Item and Size
+  // suggestions come from Items Master (the shared #itemList datalist,
+  // filled by App.Item.populateDatalists), the vendor dropdown from Vendor
+  // Master, the contact fallback from Bill history. loadData ensured only
+  // the last two, and the Dashboard's "Return Goods" tile opens this form
+  // without loadData at all -- so on a session that had not first visited
+  // Items Master, PO, Bill or Production, every row's item list was empty
+  // (and, from the Dashboard, the vendor dropdown too). Ensured before the
+  // form is shown, as App.PO.openCreateModal does.
+  async ensureFormData() {
+    await Promise.all([
+      App.Item ? App.Item.ensureLoaded() : Promise.resolve(),
+      App.Vendor ? App.Vendor.ensureLoaded() : Promise.resolve(),
+      App.Bill ? App.Bill.ensureLoaded() : Promise.resolve()
+    ]);
+  },
+
+  async openReturnModal() {
+    await this.ensureFormData();
+
     document.getElementById('returnForm')?.reset();
 
     const existingReturnNumber = document.getElementById('existingReturnNumber');
@@ -375,12 +394,13 @@ App.Return = {
     this.print(index);
   },
 
-  openEditModal(index) {
+  async openEditModal(index) {
     const ret = App.State.globalReturns[index];
     if (!ret) {
       App.Utils.showToast('Return record not found.', true);
       return;
     }
+    await this.ensureFormData();
 
     document.getElementById('returnForm')?.reset();
 
@@ -715,7 +735,17 @@ App.Wastage = {
     App.Selection.updateButton('btnBulkDeleteWastage', count, '<i class="bi bi-trash"></i> Delete Selected');
   },
 
-  openWastageModal() {
+  // Every row's Item/Size suggestions and the vendor box read Items Master
+  // (#itemList and #vendorList, App.Item.populateDatalists), which neither
+  // this tab nor the Dashboard's "Log Wastage" tile ever loaded -- see
+  // App.Return.ensureFormData.
+  async ensureFormData() {
+    if (App.Item) await App.Item.ensureLoaded();
+  },
+
+  async openWastageModal() {
+    await this.ensureFormData();
+
     document.getElementById('wastageForm')?.reset();
     this.resetToCreateMode();
     const dateInput = document.getElementById('wastageDateInput');
@@ -728,9 +758,10 @@ App.Wastage = {
   // Edits an existing wastage record in place, mirroring GAS's
   // updateWastage(wastageId, formData) (module_wastage.js) -- the item
   // rows are fully replaced, wastageId itself never changes.
-  openEditModal(wastageId) {
+  async openEditModal(wastageId) {
     const w = App.State.globalWastage.find(rec => String(rec.wastageId) === String(wastageId));
     if (!w) return;
+    await this.ensureFormData();
 
     document.getElementById('wastageForm')?.reset();
     this.resetToCreateMode();
