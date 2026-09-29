@@ -297,7 +297,14 @@ App.Issue = {
     return PrintTemplates.issueNote(iss, App.Print.templateDeps());
   },
 
-  openIssueModal(prefillReference) {
+  // Every row's Item/Size suggestions and the Issued To box read Items
+  // Master (#itemList and #vendorList, App.Item.populateDatalists). The
+  // Production tab loads it, but the Dashboard's "Issue Stock" tile opens
+  // this form on a session that may never have visited Production -- see
+  // App.Return.ensureFormData. (Edit is only reachable from Production.)
+  async openIssueModal(prefillReference) {
+    if (App.Item) await App.Item.ensureLoaded();
+
     document.getElementById('issueStockForm')?.reset();
     this.resetToCreateMode();
     const dateInput = document.getElementById('issueDateInput');
