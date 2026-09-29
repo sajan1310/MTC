@@ -279,10 +279,10 @@ App.Client = {
         return;
       }
       App.State.globalOrders = response.data;
-      App.State.filteredOrders = response.data;
-      App.State.orderCurrentPage = 1;
       App.State.selectedOrders = [];
-      this.renderOrdersTable();
+      // Re-applies the search, date window and order the toolbar is
+      // showing, so a reload after a save never lists more than it says.
+      this.applyOrderFilters();
     } catch (err) {
       App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load PI / Estimates', true);
@@ -290,13 +290,59 @@ App.Client = {
   },
 
   filterOrders(searchTerm) {
-    const term = String(searchTerm || '').toLowerCase().trim();
-    App.State.filteredOrders = term
-      ? App.State.globalOrders.filter(o => {
-        const productsText = (o.lines || []).map(l => `${l.productId} ${l.productName}`).join(' ');
-        return App.Utils.matchesKeywords(`${o.orderNumber} ${o.clientName} ${productsText}`, term);
-      })
-      : App.State.globalOrders;
+    App.State.orderSearchTerm = String(searchTerm || '');
+    this.applyOrderFilters();
+  },
+
+  // The date window and sort order below belong to the PI / Estimates
+  // list, the only one of this tab's two lists that has dates. They carry
+  // the names every list's toolbar controls call (App.ListControls).
+  filterByDateRange() {
+    App.Utils.readDateRange('order', 'orderDateFrom', 'orderDateTo');
+    this.applyOrderFilters();
+  },
+
+  clearDateRange() {
+    App.Utils.clearDateRange('order', 'orderDateFrom', 'orderDateTo');
+    this.applyOrderFilters();
+  },
+
+  applyOrderFilters() {
+    const term = App.State.orderSearchTerm.toLowerCase().trim();
+    const range = App.Utils.dateRange('order');
+
+    App.State.filteredOrders = (App.State.globalOrders || []).filter(o => {
+      if (!App.Utils.inDateRange(o.dateRaw, o.orderDate, range.from, range.to)) return false;
+      if (!term) return true;
+      const productsText = (o.lines || []).map(l => `${l.productId} ${l.productName}`).join(' ');
+      return App.Utils.matchesKeywords(`${o.orderNumber} ${o.clientName} ${productsText}`, term);
+    });
+
+    this.sortOrders();
+    App.State.orderCurrentPage = 1;
+    this.renderOrdersTable();
+  },
+
+  // Orders picked from the toolbar's ⇅ menu or a sortable column header
+  // (clients.html). orderNumberDesc matches getClientOrdersData's own
+  // natural-sort order, so the default view is unchanged.
+  ORDER_SORT_COMPARATORS: {
+    orderNumberDesc: (a, b) => String(b.orderNumber || '').localeCompare(String(a.orderNumber || ''), undefined, { numeric: true, sensitivity: 'base' }),
+    orderNumberAsc: (a, b) => String(a.orderNumber || '').localeCompare(String(b.orderNumber || ''), undefined, { numeric: true, sensitivity: 'base' }),
+    dateDesc: (a, b) => parseRecordDate(b.dateRaw, b.orderDate) - parseRecordDate(a.dateRaw, a.orderDate),
+    dateAsc: (a, b) => parseRecordDate(a.dateRaw, a.orderDate) - parseRecordDate(b.dateRaw, b.orderDate),
+    clientAsc: (a, b) => String(a.clientName || '').localeCompare(String(b.clientName || '')),
+    clientDesc: (a, b) => String(b.clientName || '').localeCompare(String(a.clientName || ''))
+  },
+
+  sortOrders() {
+    const cmp = this.ORDER_SORT_COMPARATORS[App.State.orderSortBy];
+    if (cmp) App.State.filteredOrders.sort(cmp);
+  },
+
+  sortBy(value) {
+    App.State.orderSortBy = value;
+    this.sortOrders();
     App.State.orderCurrentPage = 1;
     this.renderOrdersTable();
   },

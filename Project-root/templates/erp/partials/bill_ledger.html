@@ -3,67 +3,40 @@
 
 <div id="billLedger" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-billLedger">
 
-  <!-- TOOLBAR: Search and Action Buttons -->
-  <div class="d-flex justify-content-between flex-wrap gap-2 mb-4" style="align-items: flex-start;">
+  <!-- TOOLBAR: search · date · sort, then the actions, on one row. The
+       date button is built into .list-date by App.ListControls (core.js),
+       which also wires the ⇅ menu and the sortable column headers. -->
+  <div class="d-flex justify-content-between flex-wrap gap-2 mb-4 align-items-center">
 
-    <div class="d-flex flex-grow-1 flex-wrap gap-3 align-items-center" style="max-width: 900px;">
-      <div class="flex-grow-1" style="min-width: 250px;">
-        <input type="text"
-               id="searchBill"
-               class="form-control"
-               placeholder="Search by Bill#, PO, Vendor, or Item…"
-               autocomplete="off"
-               aria-label="Search Bills"
-               oninput="App.Utils.debouncedFilter(this, () => App.Bill.filterData(this.value))">
-        <small class="text-muted" style="display: block; margin-top: 4px;">
-          Filter by bill number, PO, vendor, or item
-        </small>
-      </div>
+    <div class="d-flex flex-grow-1 flex-wrap gap-2 align-items-center" style="max-width: 900px;">
+      <input type="text"
+             id="searchBill"
+             class="form-control"
+             style="flex: 1 1 240px; min-width: 200px;"
+             placeholder="Search by Bill#, PO, Vendor, or Item…"
+             autocomplete="off"
+             aria-label="Search Bills"
+             oninput="App.Utils.debouncedFilter(this, () => App.Bill.filterData(this.value))">
 
-      <div style="min-width: 170px;">
-        <input type="date"
-               id="billDateFilter"
-               class="form-control"
-               aria-label="Filter Bills by Date"
-               onchange="App.Bill.filterByDate(this.value)">
-        <small class="text-muted" style="display: block; margin-top: 4px;">
-          Show bills received on this date
-        </small>
-      </div>
+      <div class="list-date" data-list="bill" data-module="Bill" data-noun="bills"></div>
 
-      <!-- Specific dates. Separate from the single-date filter beside it:
-           that one answers "show me the 4th", this one "this month". Both
-           ends inclusive, either may be left blank. -->
-      <div style="min-width: 300px;">
-        <label class="form-label small fw-bold mb-1">Specific dates</label>
-        <div class="d-flex gap-1 align-items-center">
-          <input type="date" id="billDateFrom" class="form-control"
-                 aria-label="Bills from date"
-                 onchange="App.Bill.filterByDateRange()">
-          <span class="text-muted small">to</span>
-          <input type="date" id="billDateTo" class="form-control"
-                 aria-label="Bills to date"
-                 onchange="App.Bill.filterByDateRange()">
-          <button type="button" class="btn btn-outline-secondary btn-sm"
-                  title="Clear dates" onclick="App.Bill.clearDateRange()">&times;</button>
-        </div>
-        <small class="text-muted" style="display: block; margin-top: 4px;">
-          Show everything between these dates
-        </small>
-      </div>
-
-      <div style="min-width: 190px;">
-        <select id="billSortBy" class="form-select" aria-label="Sort Bills" onchange="App.Bill.sortBy(this.value)">
-          <option value="dateDesc">Date (Newest first)</option>
-          <option value="dateAsc">Date (Oldest first)</option>
-          <option value="billNumberDesc">Bill# (Newest first)</option>
-          <option value="billNumberAsc">Bill# (Oldest first)</option>
-          <option value="vendorAsc">Vendor (A&ndash;Z)</option>
-          <option value="vendorDesc">Vendor (Z&ndash;A)</option>
-          <option value="amountDesc">Amount (High&ndash;Low)</option>
-          <option value="amountAsc">Amount (Low&ndash;High)</option>
-        </select>
-        <small class="text-muted" style="display: block; margin-top: 4px;">Sort by</small>
+      <div class="dropdown list-sort" data-list="bill" data-module="Bill" data-state="billSortBy"
+           data-default="dateDesc" data-noun="bills">
+        <button type="button" class="btn list-ctl list-sort-btn" id="billSortBtn"
+                data-bs-toggle="dropdown" aria-expanded="false" aria-label="Sort bills" title="Sort">
+          <i class="bi bi-arrow-down-up" aria-hidden="true"></i>
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end list-menu list-sort-menu" aria-labelledby="billSortBtn">
+          <li><h6 class="dropdown-header">Sort by</h6></li>
+          <li><button type="button" class="dropdown-item" data-sort="dateDesc">Date (Newest first)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="dateAsc">Date (Oldest first)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="billNumberDesc">Bill# (Newest first)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="billNumberAsc">Bill# (Oldest first)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="vendorAsc">Vendor (A&ndash;Z)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="vendorDesc">Vendor (Z&ndash;A)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="amountDesc">Amount (High&ndash;Low)</button></li>
+          <li><button type="button" class="dropdown-item" data-sort="amountAsc">Amount (Low&ndash;High)</button></li>
+        </ul>
       </div>
     </div>
 
@@ -92,7 +65,8 @@
   <div class="table-responsive" style="border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
     <table class="table table-hover table-bordered align-middle mb-0"
            role="table"
-           style="margin-bottom: 0;">
+           style="margin-bottom: 0;"
+           data-list="bill">
       <thead class="table-dark">
         <tr role="row">
           <th scope="col" role="columnheader" style="width: 4%; text-align: center;">
@@ -101,13 +75,13 @@
           <th scope="col" role="columnheader" style="width: 12%; min-width: 100px;">
             <i class="bi bi-file-earmark me-2"></i>PO#
           </th>
-          <th scope="col" role="columnheader" style="width: 15%; min-width: 120px;">
+          <th scope="col" role="columnheader" style="width: 15%; min-width: 120px;" data-sort-keys="billNumberDesc,billNumberAsc">
             <i class="bi bi-receipt me-2"></i>Bill#
           </th>
-          <th scope="col" role="columnheader" style="width: 12%; min-width: 120px;">
+          <th scope="col" role="columnheader" style="width: 12%; min-width: 120px;" data-sort-keys="dateDesc,dateAsc">
             <i class="bi bi-calendar me-2"></i>Date
           </th>
-          <th scope="col" role="columnheader" style="width: 14%; min-width: 130px;">
+          <th scope="col" role="columnheader" style="width: 14%; min-width: 130px;" data-sort-keys="vendorAsc,vendorDesc">
             <i class="bi bi-truck me-2"></i>Vendor
           </th>
           <th scope="col" role="columnheader" style="width: 28%; min-width: 200px;">
@@ -116,7 +90,7 @@
           <th scope="col" role="columnheader" style="width: 10%; min-width: 80px; text-align: center;">
             <i class="bi bi-collection me-2"></i>Qty
           </th>
-          <th scope="col" role="columnheader" style="width: 14%; min-width: 120px; text-align: right;">
+          <th scope="col" role="columnheader" style="width: 14%; min-width: 120px; text-align: right;" data-sort-keys="amountDesc,amountAsc">
             <i class="bi bi-currency-rupee me-2"></i>Amount
           </th>
           <th scope="col" role="columnheader" style="width: 8%; min-width: 140px;">
@@ -153,7 +127,7 @@
     <i class="bi bi-info-circle me-2"></i>
     <strong>About Bills:</strong>
     Bills can be recorded against existing Purchase Orders or as direct bills (when PO = "DIRECT").
-    All amounts shown include GST. Use the search box to find bills by number, PO, vendor, or item, and the date picker to find bills received on a specific date.
+    All amounts shown include GST. Use the search box to find bills by number, PO, vendor, or item, and the date button to narrow them to a day or a range.
   </div>
 </div>
 

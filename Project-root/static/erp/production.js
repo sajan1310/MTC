@@ -720,8 +720,9 @@ App.Production = {
     });
   },
 
-  // Field/direction combos selectable via the "Sort by" dropdown
-  // (View_Production.html#productionSortBy).
+  // Field/direction combos picked from the toolbar's ⇅ menu or a sortable
+  // column header (production.html). statusDesc exists so the Status
+  // header can flip like every other sortable column.
   SORT_COMPARATORS: {
     dateDesc: (a, b) => parseRecordDate(b.dateRaw, b.date) - parseRecordDate(a.dateRaw, a.date),
     dateAsc: (a, b) => parseRecordDate(a.dateRaw, a.date) - parseRecordDate(b.dateRaw, b.date),
@@ -729,7 +730,8 @@ App.Production = {
     outputItemDesc: (a, b) => String(b.outputItemName || '').localeCompare(String(a.outputItemName || '')),
     qtyDesc: (a, b) => (b.qty || 0) - (a.qty || 0),
     qtyAsc: (a, b) => (a.qty || 0) - (b.qty || 0),
-    statusAsc: (a, b) => String(a.status || '').localeCompare(String(b.status || ''))
+    statusAsc: (a, b) => String(a.status || '').localeCompare(String(b.status || '')),
+    statusDesc: (a, b) => String(b.status || '').localeCompare(String(a.status || ''))
   },
 
   sortFiltered() {

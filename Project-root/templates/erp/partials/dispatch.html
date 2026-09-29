@@ -81,35 +81,32 @@
   <!-- DISPATCHED GOODS SUB-TAB -->
   <div id="dispatchedGoodsSubTab" class="dispatch-sub-tab" style="display: none;">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
-      <!-- No w-50 here, for the same reason as Production's toolbar: the
-           fixed-width date range filled a half-width wrapper and left the
-           search and sort as empty slivers at 1366px. -->
-      <div class="d-flex flex-wrap gap-2 align-items-center flex-grow-1">
+      <!-- search · date · sort on one row; the search grows and the
+           buttons wrap below when the width runs out. The date button is
+           built into .list-date by App.ListControls (core.js), which also
+           wires the ⇅ menu and the sortable column headers. -->
+      <div class="d-flex flex-wrap gap-2 align-items-center flex-grow-1" style="max-width: 900px;">
         <input type="text" id="searchDispatchedGoods" class="form-control" style="flex: 1 1 240px; min-width: 200px;" placeholder="Search Dispatch #, Order #, Client, or Product..." aria-label="Search dispatched goods" autocomplete="off" oninput="App.Utils.debouncedFilter(this, () => App.Dispatch.filterDispatch(this.value))">
-        <select id="dispatchSortBy" class="form-select" style="flex: 0 0 auto; width: auto; max-width: 220px;" aria-label="Sort Dispatched Goods" onchange="App.Dispatch.sortDispatchBy(this.value)">
-          <option value="dateDesc">Date (Newest first)</option>
-          <option value="dateAsc">Date (Oldest first)</option>
-          <option value="clientAsc">Client (A&ndash;Z)</option>
-          <option value="clientDesc">Client (Z&ndash;A)</option>
-          <option value="qtyDesc">Qty (High&ndash;Low)</option>
-          <option value="qtyAsc">Qty (Low&ndash;High)</option>
-          <option value="dispatchNumberDesc">Dispatch# (Newest first)</option>
-          <option value="dispatchNumberAsc">Dispatch# (Oldest first)</option>
-        </select>
-        <!-- Grouped and fixed-width: Bootstrap's .form-control is
-             width:100%, so bare inputs in a flex row each claim a full
-             line and the toolbar becomes a stack. -->
-        <div class="input-group flex-nowrap" style="flex: 0 0 auto; width: auto;">
-          <span class="input-group-text">From</span>
-          <input type="date" id="dispatchDateFrom" class="form-control"
-                 style="flex: 0 0 auto; width: 148px;"
-                 aria-label="Dispatches from date" onchange="App.Dispatch.filterByDateRange()">
-          <span class="input-group-text">To</span>
-          <input type="date" id="dispatchDateTo" class="form-control"
-                 style="flex: 0 0 auto; width: 148px;"
-                 aria-label="Dispatches to date" onchange="App.Dispatch.filterByDateRange()">
-          <button type="button" class="btn btn-outline-secondary" title="Clear dates"
-                  aria-label="Clear Dispatches dates" onclick="App.Dispatch.clearDateRange()">&times;</button>
+
+        <div class="list-date" data-list="dispatch" data-module="Dispatch" data-noun="dispatches"></div>
+
+        <div class="dropdown list-sort" data-list="dispatch" data-module="Dispatch" data-state="dispatchSortBy"
+             data-default="dateDesc" data-noun="dispatches">
+          <button type="button" class="btn list-ctl list-sort-btn" id="dispatchSortBtn"
+                  data-bs-toggle="dropdown" aria-expanded="false" aria-label="Sort dispatches" title="Sort">
+            <i class="bi bi-arrow-down-up" aria-hidden="true"></i>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end list-menu list-sort-menu" aria-labelledby="dispatchSortBtn">
+            <li><h6 class="dropdown-header">Sort by</h6></li>
+            <li><button type="button" class="dropdown-item" data-sort="dateDesc">Date (Newest first)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="dateAsc">Date (Oldest first)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="dispatchNumberDesc">Dispatch# (Newest first)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="dispatchNumberAsc">Dispatch# (Oldest first)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="clientAsc">Client (A&ndash;Z)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="clientDesc">Client (Z&ndash;A)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="qtyDesc">Qty (High&ndash;Low)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="qtyAsc">Qty (Low&ndash;High)</button></li>
+          </ul>
         </div>
       </div>
       <div class="d-flex gap-2 flex-wrap justify-content-end">
@@ -126,16 +123,16 @@
     </div>
 
     <div class="table-responsive">
-      <table class="table table-hover table-bordered align-middle mb-0">
+      <table class="table table-hover table-bordered align-middle mb-0" data-list="dispatch">
         <thead class="table-dark">
           <tr>
             <th scope="col" style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllDispatch" class="form-check-input" onclick="App.Dispatch.toggleSelectAllDispatch(this)"></th>
-            <th scope="col" style="width: 10%;">Dispatch #</th>
-            <th scope="col" style="width: 9%;">Date</th>
+            <th scope="col" style="width: 10%;" data-sort-keys="dispatchNumberDesc,dispatchNumberAsc">Dispatch #</th>
+            <th scope="col" style="width: 9%;" data-sort-keys="dateDesc,dateAsc">Date</th>
             <th scope="col" style="width: 10%;">Order #</th>
-            <th scope="col" style="width: 12%;">Client</th>
+            <th scope="col" style="width: 12%;" data-sort-keys="clientAsc,clientDesc">Client</th>
             <th scope="col" style="width: 15%;">Product</th>
-            <th scope="col" style="width: 6%; text-align: center;">Qty</th>
+            <th scope="col" style="width: 6%; text-align: center;" data-sort-keys="qtyDesc,qtyAsc">Qty</th>
             <th scope="col" style="width: 8%;">Transport</th>
             <th scope="col" style="width: 9%;">Invoice / GR #</th>
             <th scope="col" style="width: 10%; text-align: right;">Logistics Cost</th>

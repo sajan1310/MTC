@@ -62,9 +62,31 @@
 
   <!-- PI / ESTIMATES SUB-TAB -->
   <div id="clientOrdersSubTab" class="clients-sub-tab" style="display: none;">
-    <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
-      <div class="d-flex w-50 align-items-center">
-        <input type="text" id="searchClientOrders" class="form-control me-2" placeholder="Search PI #, Client, or Product..." aria-label="Search client orders" autocomplete="off" oninput="App.Utils.debouncedFilter(this, () => App.Client.filterOrders(this.value))">
+    <!-- search · date · sort on one row, then the actions. The date button
+         is built into .list-date by App.ListControls (core.js), which also
+         wires the ⇅ menu and the sortable column headers. -->
+    <div class="d-flex justify-content-between flex-wrap gap-2 mb-3 align-items-center">
+      <div class="d-flex flex-wrap gap-2 align-items-center flex-grow-1" style="max-width: 900px;">
+        <input type="text" id="searchClientOrders" class="form-control" style="flex: 1 1 240px; min-width: 200px;" placeholder="Search PI #, Client, or Product..." aria-label="Search client orders" autocomplete="off" oninput="App.Utils.debouncedFilter(this, () => App.Client.filterOrders(this.value))">
+
+        <div class="list-date" data-list="order" data-module="Client" data-noun="PI / Estimates"></div>
+
+        <div class="dropdown list-sort" data-list="order" data-module="Client" data-state="orderSortBy"
+             data-default="orderNumberDesc" data-noun="PI / Estimates">
+          <button type="button" class="btn list-ctl list-sort-btn" id="orderSortBtn"
+                  data-bs-toggle="dropdown" aria-expanded="false" aria-label="Sort PI / Estimates" title="Sort">
+            <i class="bi bi-arrow-down-up" aria-hidden="true"></i>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end list-menu list-sort-menu" aria-labelledby="orderSortBtn">
+            <li><h6 class="dropdown-header">Sort by</h6></li>
+            <li><button type="button" class="dropdown-item" data-sort="orderNumberDesc">PI # (Newest first)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="orderNumberAsc">PI # (Oldest first)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="dateDesc">Date (Newest first)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="dateAsc">Date (Oldest first)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="clientAsc">Client (A&ndash;Z)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="clientDesc">Client (Z&ndash;A)</button></li>
+          </ul>
+        </div>
       </div>
       <div class="d-flex gap-2 flex-wrap justify-content-end">
         <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteOrders" type="button" onclick="App.Client.bulkDeleteOrders()" style="white-space: nowrap;">
@@ -78,13 +100,13 @@
     </div>
 
     <div class="table-responsive">
-      <table class="table table-hover table-bordered align-middle mb-0">
+      <table class="table table-hover table-bordered align-middle mb-0" data-list="order">
         <thead class="table-dark">
           <tr>
             <th scope="col" style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllOrders" class="form-check-input" onclick="App.Client.toggleSelectAllOrders(this)"></th>
-            <th scope="col" style="width: 12%;">PI / Estimate #</th>
-            <th scope="col" style="width: 10%;">Date</th>
-            <th scope="col" style="width: 18%;">Client</th>
+            <th scope="col" style="width: 12%;" data-sort-keys="orderNumberDesc,orderNumberAsc">PI / Estimate #</th>
+            <th scope="col" style="width: 10%;" data-sort-keys="dateDesc,dateAsc">Date</th>
+            <th scope="col" style="width: 18%;" data-sort-keys="clientAsc,clientDesc">Client</th>
             <th scope="col" style="width: 32%;">Products</th>
             <th scope="col" style="width: 12%; text-align: center;">Status</th>
             <th scope="col" style="width: 12%; text-align: center;">Actions</th>

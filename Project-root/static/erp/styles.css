@@ -1655,6 +1655,307 @@
   }
 
   /* ─────────────────────────────────────────────────────────────────────
+     ONE-ROW LIST TOOLBARS: the date button, the ⇅ sort menu and sortable
+     column headers (App.ListControls in core.js). Both buttons are a
+     .form-control's height, so search · date · ⇅ line up on one row.
+     Placed after BUTTONS so these win over the .btn base rules.
+     ───────────────────────────────────────────────────────────────────── */
+  .list-date,
+  .list-sort {
+    --list-accent: var(--secondary-color);
+    --list-set-bg: rgb(99 102 241 / 10%);
+    --list-set-ink: var(--secondary-dark);
+    --list-hover-bg: rgb(99 102 241 / 8%);
+
+    position: relative;
+    flex: 0 0 auto;
+  }
+
+  [data-theme="dark"] .list-date,
+  [data-theme="dark"] .list-sort {
+    --list-accent: var(--primary-color);
+    --list-set-bg: rgb(129 140 248 / 16%);
+    --list-set-ink: #c7d2fe;
+    --list-hover-bg: rgb(129 140 248 / 12%);
+  }
+
+  /* Bootstrap draws .btn from these variables in every state (hover,
+     pressed, menu open), so setting them keeps the field colours in all of
+     them; the app's own .btn rule sets no background of its own. */
+  .btn.list-ctl {
+    --bs-btn-color: var(--text-primary);
+    --bs-btn-bg: var(--bg-light);
+    --bs-btn-border-color: var(--border-color);
+    --bs-btn-hover-color: var(--text-primary);
+    --bs-btn-hover-bg: var(--bg-light);
+    --bs-btn-hover-border-color: var(--list-accent);
+    --bs-btn-active-color: var(--text-primary);
+    --bs-btn-active-bg: var(--bg-light);
+    --bs-btn-active-border-color: var(--list-accent);
+
+    height: 39px;
+    padding: 0 12px;
+    border: 1px solid var(--bs-btn-border-color);
+    border-radius: var(--border-radius-sm);
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  .btn.list-ctl:hover:not(:disabled),
+  .btn.list-ctl:active {
+    transform: none;
+    box-shadow: none;
+  }
+
+  .btn.list-ctl:focus-visible {
+    outline: 2px solid var(--list-accent);
+    outline-offset: 1px;
+    box-shadow: none;
+  }
+
+  /* A filter is set, or the order is not the list's default: say so on the
+     button itself, so nothing narrowing the list is ever out of sight. */
+  .list-date.is-set .btn.list-ctl,
+  .btn.list-sort-btn.is-set {
+    --bs-btn-color: var(--list-set-ink);
+    --bs-btn-bg: var(--list-set-bg);
+    --bs-btn-border-color: var(--list-accent);
+    --bs-btn-hover-color: var(--list-set-ink);
+    --bs-btn-hover-bg: var(--list-set-bg);
+    --bs-btn-active-color: var(--list-set-ink);
+    --bs-btn-active-bg: var(--list-set-bg);
+  }
+
+  .list-date-group {
+    display: flex;
+  }
+
+  .btn.list-date-btn {
+    justify-content: flex-start;
+    min-width: 150px;
+  }
+
+  .list-date.is-set .btn.list-date-btn {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    font-weight: 600;
+  }
+
+  .list-date-caret {
+    margin-left: auto;
+    padding-left: 4px;
+    font-size: 11px;
+    opacity: 0.75;
+  }
+
+  .btn.list-date-clear {
+    width: 36px;
+    margin-left: -1px;
+    padding: 0;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    font-size: 12px;
+  }
+
+  /* .btn's display would otherwise beat the attribute. */
+  .btn.list-date-clear[hidden] {
+    display: none;
+  }
+
+  .btn.list-sort-btn {
+    width: 39px;
+    padding: 0;
+    font-size: 16px;
+  }
+
+  .list-menu {
+    --bs-dropdown-bg: var(--bg-light);
+    --bs-dropdown-color: var(--text-primary);
+    --bs-dropdown-border-color: var(--border-color);
+    --bs-dropdown-border-radius: var(--border-radius-lg);
+    --bs-dropdown-link-color: var(--text-primary);
+    --bs-dropdown-link-hover-color: var(--text-primary);
+    --bs-dropdown-link-hover-bg: var(--list-hover-bg);
+    --bs-dropdown-link-active-color: var(--list-set-ink);
+    --bs-dropdown-link-active-bg: var(--list-set-bg);
+    --bs-dropdown-header-color: var(--text-muted);
+
+    padding: 6px;
+    box-shadow: var(--shadow-lg);
+    font-size: 14px;
+  }
+
+  .list-sort-menu {
+    min-width: 230px;
+  }
+
+  .list-sort-menu .dropdown-header {
+    padding: 6px 10px 4px;
+    font: 600 11px/1.4 Outfit, sans-serif;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  .list-sort-menu .dropdown-item {
+    position: relative;
+    display: block;
+    padding: 7px 10px 7px 32px;
+    border-radius: var(--border-radius-sm);
+    font-size: 14px;
+    text-align: left;
+  }
+
+  .list-sort-menu .dropdown-item.is-current {
+    font-weight: 600;
+  }
+
+  .list-sort-menu .dropdown-item.is-current::before {
+    content: "\f272"; /* bi-check2 */
+    position: absolute;
+    top: 50%;
+    left: 10px;
+    transform: translateY(-50%);
+    font-family: bootstrap-icons !important;
+    color: var(--list-accent);
+  }
+
+  .list-date-menu {
+    width: 340px;
+    max-width: calc(100vw - 16px);
+    padding: 12px;
+  }
+
+  .list-date-presets {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-bottom: 2px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .list-date-preset {
+    justify-content: flex-start;
+    padding: 7px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 500;
+    text-align: left;
+  }
+
+  .list-date-preset:hover {
+    border-color: var(--list-accent);
+    background: var(--list-hover-bg);
+  }
+
+  .list-date-preset[aria-pressed="true"] {
+    border-color: var(--list-accent);
+    background: var(--list-set-bg);
+    color: var(--list-set-ink);
+    font-weight: 600;
+  }
+
+  .list-date-preset:focus-visible,
+  .list-date-reset:focus-visible {
+    outline: 2px solid var(--list-accent);
+    outline-offset: 2px;
+  }
+
+  .list-date-caption {
+    display: block;
+    margin: 10px 0 4px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  .list-date-menu .form-control {
+    width: 138px;
+    height: 34px;
+    padding: 4px 8px;
+    font-size: 13px;
+  }
+
+  .list-date-range {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .list-date-and {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .list-date-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 14px;
+  }
+
+  .list-date-reset {
+    padding: 4px 2px;
+    border: 0;
+    background: none;
+    color: var(--list-set-ink);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  /* Sortable headers. The label becomes a button (App.ListControls
+     .wrapHeader); colours follow the header's own text, so the arrow reads
+     on the dark ledger heads and on Wastage's amber one alike. */
+  .th-sort-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 2px;
+    background: none;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .th-sort-btn:active {
+    transform: none;
+  }
+
+  .th-sort-btn:focus-visible {
+    outline: 2px solid currentcolor;
+    outline-offset: 3px;
+  }
+
+  .th-sort-ind {
+    margin-left: 6px;
+    font-size: 10px;
+    opacity: 0.4;
+    transition: opacity var(--transition-fast);
+  }
+
+  .th-sort-btn:hover .th-sort-ind {
+    opacity: 0.85;
+  }
+
+  th.th-sortable[aria-sort="ascending"] .th-sort-ind,
+  th.th-sortable[aria-sort="descending"] .th-sort-ind {
+    opacity: 1;
+  }
+
+  th.th-sortable[aria-sort="ascending"],
+  th.th-sortable[aria-sort="descending"] {
+    box-shadow: inset 0 -2px 0 currentcolor;
+  }
+
+  /* ─────────────────────────────────────────────────────────────────────
      CARDS & CONTAINERS
      ───────────────────────────────────────────────────────────────────── */
   .card {
