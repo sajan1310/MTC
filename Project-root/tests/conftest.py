@@ -36,6 +36,38 @@ from app import create_app
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
+# Settings that reach a real Google account.
+#
+# config.py runs load_dotenv(override=True) the moment `app` is imported, and
+# again on every reload, so on a developer's machine the process environment
+# carries whatever .env does: a service-account key, and the ID of the
+# spreadsheet production mirrors into. A test that reaches
+# backup_service.perform_full_backup() without clearing them does a real
+# export -- of the developer's local database, into production's spreadsheet.
+# One did, on every local run of this suite from 2026-09-17 to 2026-09-30,
+# twenty times, and nothing ever failed: CI has no .env, so there the same
+# call is skipped.
+LIVE_GOOGLE_SETTINGS = (
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "BACKUP_SPREADSHEET_ID",
+    "GAS_MIRROR_SPREADSHEET_ID",
+    "SPREADSHEET_ID",
+    "DRIVE_FOLDER_ID",
+)
+
+
+@pytest.fixture(autouse=True)
+def no_live_google(monkeypatch):
+    """No test can reach the real spreadsheet, whatever it forgets to clear.
+
+    Per test rather than once at import, because reloading config puts every
+    one of these back. A test that wants the configured behaviour sets its
+    own value, pointing at its own fake.
+    """
+    for name in LIVE_GOOGLE_SETTINGS:
+        monkeypatch.delenv(name, raising=False)
+    return LIVE_GOOGLE_SETTINGS
+
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_db():
