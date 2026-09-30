@@ -15,6 +15,8 @@ import os
 import sys
 from unittest.mock import MagicMock
 
+import pytest
+
 
 _MIGRATION_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "../../scripts/migration")
@@ -470,3 +472,46 @@ def test_to_cell_value_covers_all_types():
     assert sheets_client.to_cell_value({"a": 1}) == '{"a": 1}'
     assert sheets_client.to_cell_value(True) is True
     assert sheets_client.to_cell_value("text") == "text"
+
+
+def _answers_then_succeeds(status):
+    """A Sheets call that gets `status` back from Google once, then works."""
+    from googleapiclient.errors import HttpError
+
+    calls = []
+
+    def call():
+        calls.append(status)
+        if len(calls) == 1:
+            raise HttpError(MagicMock(status=status, reason="from Google"), b"")
+        return "written"
+
+    return call, calls
+
+
+def test_a_bad_gateway_from_google_is_retried(monkeypatch):
+    """2026-09-30: one 502 on the ninth of 46 tabs failed a whole export.
+    Google's own page for it says to try again in 30 seconds; the retry list
+    said 429, 500 and 503, and with_retry gave up on the spot."""
+    monkeypatch.setattr(sheets_client.time, "sleep", lambda _seconds: None)
+
+    for status in (502, 504):
+        call, calls = _answers_then_succeeds(status)
+
+        assert sheets_client.with_retry(call) == "written"
+        assert len(calls) == 2
+
+
+def test_a_request_google_refuses_is_not_retried(monkeypatch):
+    """The other edge. A 403 is as wrong the sixth time as the first, and
+    retrying it turns an immediate answer into a minute and a half of
+    waiting for the same one."""
+    from googleapiclient.errors import HttpError
+
+    monkeypatch.setattr(sheets_client.time, "sleep", lambda _seconds: None)
+    call, calls = _answers_then_succeeds(403)
+
+    with pytest.raises(HttpError):
+        sheets_client.with_retry(call)
+
+    assert len(calls) == 1
