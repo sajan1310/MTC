@@ -58,6 +58,10 @@ function loadPrintModule() {
     // swallows as "offline", and every download test silently exercises the
     // fallback instead of the path it names.
     fetch: (...args) => global.fetch(...args),
+    // Not a language built-in, so absent from a fresh context unless handed
+    // in. print.js works without it; with it, giving up on a render also
+    // cancels the request, which is what the tests below check.
+    AbortController: global.AbortController,
     URL: global.URL,
     Blob,
     TextDecoder,
@@ -593,6 +597,170 @@ describe('server-rendered downloads', () => {
       expect(warn).toHaveBeenCalled();
       expect(fetchCalls).toHaveLength(0);
       warn.mockRestore();
+    });
+  });
+
+  // fetch() waits for ever, and "Preparing…" covers exactly that wait, so a
+  // reply that never reaches the page leaves the button spinning, disabled,
+  // until the tab is reloaded. The report that found this: the server
+  // rendered three production sheets in 2.5 s and answered 200, and one desk
+  // "kept on loading".
+  describe('a render whose reply never arrives', () => {
+    const docs = [
+      { filename: 'PRD_1.pdf', html: '<p>1</p>' },
+      { filename: 'PRD_2.pdf', html: '<p>2</p>' },
+      { filename: 'PRD_3.pdf', html: '<p>3</p>' },
+    ];
+    const never = () => new Promise(() => {});
+    let toasts;
+    let btn;
+
+    beforeEach(() => {
+      // Reloaded under fake timers: the module keeps the setTimeout it was
+      // handed, so timers faked afterwards would not reach it.
+      jest.useFakeTimers();
+      ({ Print, printCalls, App } = loadPrintModule());
+      Print.saveBlob = (blob, filename) => saved.push(filename);
+      toasts = [];
+      App.Utils = { showToast: (msg, isError) => toasts.push({ msg, isError }) };
+
+      document.body.insertAdjacentHTML('beforeend',
+        '<button id="btnDownload">Download PDFs (3)</button>');
+      btn = document.getElementById('btnDownload');
+    });
+
+    afterEach(() => jest.useRealTimers());
+
+    it('gives up, says why, and hands the button back', async () => {
+      setupFetch(never);
+
+      const result = Print.downloadMany(docs, 'PRD_260930.zip', { buttonId: 'btnDownload' });
+      expect(btn.disabled).toBe(true);
+
+      // Still inside the allowance: nothing has been decided yet.
+      await jest.advanceTimersByTimeAsync(Print._renderWaitMs({ documents: docs }) - 1);
+      expect(btn.disabled).toBe(true);
+      expect(toasts).toEqual([]);
+
+      await jest.advanceTimersByTimeAsync(1);
+
+      expect(await result).toBe(false);
+      expect(btn.disabled).toBe(false);
+      expect(btn.innerHTML).toBe('Download PDFs (3)');
+      expect(saved).toEqual([]);
+      expect(printCalls).toEqual([]);
+      expect(toasts).toHaveLength(1);
+      expect(toasts[0].isError).toBe(true);
+      // From this computer's side. "The server did not answer" is what sent
+      // the first diagnosis to the server, which had answered every time.
+      expect(toasts[0].msg).toMatch(/No PDF reached this computer/);
+      expect(toasts[0].msg).not.toMatch(/server (did not|could not)/i);
+    });
+
+    it('cancels the request it stopped waiting for', async () => {
+      setupFetch(never);
+
+      const result = Print.downloadOne('<p>x</p>', 'PRD_1');
+      const { signal } = global.fetch.mock.calls[0][1];
+      expect(signal.aborted).toBe(false);
+
+      await jest.advanceTimersByTimeAsync(Print._renderWaitMs({}));
+      await result;
+
+      expect(signal.aborted).toBe(true);
+    });
+
+    // What a browser's fetch does when its signal aborts: reject. `never`
+    // above ignores the signal, so it cannot show this -- it took a run in
+    // real Chrome to find that the rejection won the race against the limit
+    // and was read as "No connection to the server", which also switches
+    // downloads off for the rest of the session.
+    it('does not mistake its own cancellation for a lost connection', async () => {
+      global.fetch = jest.fn((url, init) => new Promise((resolve, reject) => {
+        init.signal.addEventListener('abort', () =>
+          reject(Object.assign(new Error('The user aborted a request.'), { name: 'AbortError' })));
+      }));
+
+      const result = Print.downloadMany(docs, 'x.zip', { buttonId: 'btnDownload' });
+      await jest.advanceTimersByTimeAsync(Print._renderWaitMs({ documents: docs }));
+
+      expect(await result).toBe(false);
+      expect(toasts[0].msg).toMatch(/No PDF reached this computer/);
+      expect(toasts[0].msg).not.toMatch(/No connection/);
+      expect(Print.serverPdfAvailable).not.toBe(false);
+    });
+
+    // The same, once the reply has started: the body read is what rejects.
+    it('does not mistake a cancelled file for a dropped connection', async () => {
+      global.fetch = jest.fn((url, init) => Promise.resolve({
+        ok: true,
+        status: 200,
+        blob: () => new Promise((resolve, reject) => {
+          init.signal.addEventListener('abort', () =>
+            reject(Object.assign(new Error('The user aborted a request.'), { name: 'AbortError' })));
+        }),
+      }));
+
+      const result = Print.downloadMany(docs, 'x.zip');
+      await jest.advanceTimersByTimeAsync(Print.RENDER_BODY_WAIT_MS);
+
+      expect(await result).toBe(false);
+      expect(toasts).toHaveLength(1);
+      expect(toasts[0].msg).toMatch(/began to arrive and then stopped/);
+    });
+
+    // One lost reply is not a server that cannot render: the next press has
+    // to reach the server again, not fail from memory.
+    it('does not stop asking for the rest of the session', async () => {
+      setupFetch(never);
+      const first = Print.downloadMany(docs, 'x.zip');
+      await jest.advanceTimersByTimeAsync(Print.RENDER_WAIT_MAX_MS);
+      await first;
+
+      setupFetch(okZip([['PRD_1.pdf', '%PDF-one']]));
+      expect(await Print.downloadMany(docs, 'x.zip')).toBe(true);
+      expect(fetchCalls).toHaveLength(1);
+      expect(saved).toEqual(['PRD_1.pdf']);
+    });
+
+    it('reports a file that starts to arrive and then stops', async () => {
+      setupFetch(() => Promise.resolve({ ok: true, status: 200, blob: never }));
+
+      const result = Print.downloadMany(docs, 'x.zip', { buttonId: 'btnDownload' });
+      await jest.advanceTimersByTimeAsync(Print.RENDER_BODY_WAIT_MS);
+
+      expect(await result).toBe(false);
+      expect(btn.disabled).toBe(false);
+      expect(toasts[0].msg).toMatch(/began to arrive and then stopped/);
+    });
+
+    // A connection that drops mid-file rejects rather than hangs. It used to
+    // escape as an unhandled rejection: button restored, nothing said.
+    it('reports a file cut off by a dropped connection', async () => {
+      setupFetch(() => Promise.resolve({
+        ok: true, status: 200, blob: () => Promise.reject(new TypeError('network error')),
+      }));
+
+      expect(await Print.downloadMany(docs, 'x.zip')).toBe(false);
+      expect(toasts[0].msg).toMatch(/began to arrive and then stopped/);
+    });
+
+    it('allows a larger batch longer, up to just past the server\'s own limit', () => {
+      const batch = n => ({ documents: Array.from({ length: n }, () => ({})) });
+
+      expect(Print._renderWaitMs({ html: '<p>x</p>' })).toBe(32000);
+      expect(Print._renderWaitMs(batch(3))).toBe(36000);
+      expect(Print._renderWaitMs(batch(200))).toBe(130000);
+      // gunicorn and nginx cut a request at 120 s; their answer must win.
+      expect(Print.RENDER_WAIT_MAX_MS).toBeGreaterThan(120000);
+    });
+
+    it('leaves no timer running once the file is here', async () => {
+      setupFetch(okZip([['PRD_1.pdf', '%PDF-one']]));
+
+      expect(await Print.downloadMany(docs, 'x.zip')).toBe(true);
+
+      expect(jest.getTimerCount()).toBe(0);
     });
   });
 

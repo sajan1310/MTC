@@ -411,7 +411,12 @@
 // Dashboard's Quick Actions loaded it, so the list came up empty. return.js
 // and issue.js are precached, so without the bump an installed client keeps
 // the empty list.
-const CACHE_NAME = 'erp-shell-v83';
+// v84: Download PDF and Share stop waiting. print.js gave a render no time
+// limit, so a reply that never reached the page left the button spinning and
+// disabled until the tab was reloaded; it now gives up, says the file did not
+// arrive, and hands the button back. print.js is precached, so without the
+// bump an installed client keeps the button that waits for ever.
+const CACHE_NAME = 'erp-shell-v84';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

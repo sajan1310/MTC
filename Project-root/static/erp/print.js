@@ -523,22 +523,84 @@ App.Print = {
   // should have to do from a toast.
   lastDownloadError: null,
 
+  // How long a render may go unanswered before the button stops waiting.
+  //
+  // fetch() has no time limit of its own, and "Preparing…" covers exactly
+  // this one wait -- so a reply that never reaches the page leaves the button
+  // spinning, and disabled, until the tab is reloaded. Reported 2026-09-30:
+  // the server rendered three sheets in 2.5 s and answered 200 each time,
+  // while the desk that asked "kept on loading".
+  //
+  // A render runs at under a second a document, one after another, so the
+  // allowance grows with the batch. It stops just past the 120 s gunicorn and
+  // nginx allow a request, so for an export that really takes that long the
+  // server's own answer is the one that arrives.
+  RENDER_WAIT_MS: 30000,
+  RENDER_WAIT_PER_DOCUMENT_MS: 2000,
+  RENDER_WAIT_MAX_MS: 130000,
+  // From the reply starting to the whole file being here.
+  RENDER_BODY_WAIT_MS: 60000,
+
+  _renderWaitMs(body) {
+    const documents = Array.isArray(body && body.documents) ? body.documents.length : 1;
+    return Math.min(
+      this.RENDER_WAIT_MS + documents * this.RENDER_WAIT_PER_DOCUMENT_MS,
+      this.RENDER_WAIT_MAX_MS
+    );
+  },
+
+  TIMED_OUT: {},
+
+  // `pending`, or TIMED_OUT once `ms` has passed. Giving up also aborts the
+  // request, so the connection is released rather than left open behind a
+  // page that has stopped waiting on it.
+  _within(ms, controller, pending) {
+    let timer;
+    let timedOut = false;
+    const limit = new Promise(resolve => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        resolve(this.TIMED_OUT);
+        if (controller) controller.abort();
+      }, ms);
+    });
+    // An aborted request rejects, and it can do so before `limit` is seen to
+    // have resolved. That rejection is the limit being applied, not a failure
+    // of its own -- read as one, it reports "no connection" and switches
+    // downloads off for the session.
+    const settled = pending.catch(err => {
+      if (timedOut) return this.TIMED_OUT;
+      throw err;
+    });
+    return Promise.race([settled, limit]).finally(() => clearTimeout(timer));
+  },
+
   // POSTs `body` and returns a Blob, or null when this server cannot render.
   async _postForBlob(url, body) {
     if (this.serverPdfAvailable === false) return null;
 
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+
     let res;
     try {
-      res = await fetch(url, {
+      res = await this._within(this._renderWaitMs(body), controller, fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': this._csrfToken() },
         credentials: 'same-origin',
-        body: JSON.stringify(body)
-      });
+        body: JSON.stringify(body),
+        signal: controller ? controller.signal : undefined
+      }));
     } catch (err) {
       // Never completed: offline, or the server is unreachable.
       this.lastDownloadError = 'offline';
       this.serverPdfAvailable = false;
+      return null;
+    }
+
+    if (res === this.TIMED_OUT) {
+      // Not latched off: the server may have answered and the reply been lost
+      // on the way, and the next attempt can succeed.
+      this.lastDownloadError = 'no-reply';
       return null;
     }
 
@@ -565,9 +627,22 @@ App.Print = {
       console.warn('[PDF] server render failed:', res.status);
       return null;
     }
-    this.lastDownloadError = null;
     this.serverPdfAvailable = true;
-    return await res.blob();
+
+    // The reply has started; the file itself can still stop part-way.
+    let blob;
+    try {
+      blob = await this._within(this.RENDER_BODY_WAIT_MS, controller, res.blob());
+    } catch {
+      // Dropped mid-file rather than stalled. Same outcome: no file.
+      blob = this.TIMED_OUT;
+    }
+    if (blob === this.TIMED_OUT) {
+      this.lastDownloadError = 'cut-off';
+      return null;
+    }
+    this.lastDownloadError = null;
+    return blob;
   },
 
   // Hands a Blob to the browser as a download under `filename`.
@@ -611,6 +686,16 @@ App.Print = {
       'Print still works meanwhile.',
     rejected: 'The server refused the request, which usually means the session ' +
       'expired. Reload the page and try again.',
+    // Worded from this computer's side on purpose. The server may well have
+    // rendered and sent the file -- "the server did not answer" would send
+    // the reader to the wrong machine.
+    'no-reply': 'No PDF reached this computer in time, so nothing was ' +
+      'downloaded. Try once more. If it keeps failing here but works on ' +
+      'another computer, the cause is on this one, not the server. ' +
+      'Print still works meanwhile.',
+    'cut-off': 'The PDF began to arrive and then stopped, so nothing was ' +
+      'downloaded. That is the connection to the server, not the document. ' +
+      'Try once more; Print still works meanwhile.',
     failed: 'The server could not render this document. Nothing was downloaded.'
   },
 
