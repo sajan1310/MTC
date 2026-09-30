@@ -1,4 +1,5 @@
 import os
+import select
 import threading
 from contextlib import contextmanager
 from urllib.parse import urlparse
@@ -243,6 +244,38 @@ def allow_nested_connections():
         _nesting.depth = previous
 
 
+def _server_hung_up(conn) -> bool:
+    """Has the server already dropped this idle pooled connection?
+
+    `conn.closed` only knows what THIS side has done. When Postgres restarts,
+    every idle backend is terminated and psycopg2 does not find out until its
+    next round trip -- so the connection still looks open, and the request
+    that draws it from the pool is the one that fails. On 2026-09-30
+    needrestart restarted Postgres under a running app after a library
+    update: eight pooled connections, and eight failures before the pool had
+    worked through them.
+
+    An idle connection has nothing to read. If its socket is readable the
+    server has spoken unprompted, and the one thing it says unprompted is
+    goodbye -- the FATAL, and the end-of-stream behind it, are sitting in the
+    buffer. So ask the socket. That is one system call, about 2us against
+    90us for a SELECT 1, which matters because every get_conn() pays it; it
+    is the same test urllib3 applies to its keep-alive pool. Nothing in this
+    application LISTENs -- notifications are what would make a live
+    connection readable -- and even a false alarm costs a reconnect, not a
+    request.
+    """
+    if conn.closed:
+        return True
+    try:
+        readable, _, _ = select.select([conn], [], [], 0)
+    except (OSError, ValueError):
+        # Could not ask (a descriptor past select()'s range, say). Hand the
+        # connection out as before rather than discard one that may be fine.
+        return False
+    return bool(readable)
+
+
 @contextmanager
 def get_conn(cursor_factory=None, autocommit=False):
     """
@@ -287,8 +320,13 @@ def get_conn(cursor_factory=None, autocommit=False):
         # Get connection from pool
         conn = db_pool.getconn()
 
-        # Verify connection is still alive (handles stale connections)
-        if conn.closed:
+        # Verify connection is still alive (handles stale connections). A
+        # restart drops every idle connection at once, so the replacement can
+        # be just as dead: keep drawing. The pool holds at most minconn idle,
+        # and past those it opens a fresh one.
+        for _ in range(db_pool.minconn + 1):
+            if not _server_hung_up(conn):
+                break
             # Try to log warning if Flask app context is available
             try:
                 from flask import current_app
@@ -297,6 +335,9 @@ def get_conn(cursor_factory=None, autocommit=False):
             except (ImportError, RuntimeError):
                 print("WARNING: Stale connection detected, reconnecting...")
             db_pool.putconn(conn, close=True)
+            # Cleared first: if the pool cannot supply another, the handlers
+            # below must not touch the one that has already been handed back.
+            conn = None
             conn = db_pool.getconn()
 
         conn.autocommit = autocommit
@@ -316,7 +357,10 @@ def get_conn(cursor_factory=None, autocommit=False):
             current_app.logger.error(f"Database connection error: {e}")
         except (ImportError, RuntimeError):
             print(f"ERROR: Database connection error: {e}")
-        if conn and not autocommit:
+        # A connection the server dropped is already closed on this side, and
+        # rolling it back raises InterfaceError -- replacing the error that
+        # says what happened with "connection already closed".
+        if conn and not conn.closed and not autocommit:
             conn.rollback()
         # Close bad connection instead of returning to pool
         if conn:
