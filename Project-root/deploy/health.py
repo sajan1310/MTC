@@ -52,7 +52,8 @@ HEALTH_URL = os.getenv("MTC_HEALTH_URL", "http://127.0.0.1:8000/health")
 # The units this application actually stands on. nginx is last because it is
 # the only one whose failure is visible to a user as something other than an
 # error page, and postgresql is first because everything else's failure is
-# usually a symptom of it.
+# usually a symptom of it. `postgresql` is only the name to start from: on
+# Debian it is an umbrella, and watched_units() swaps in the real cluster.
 UNITS = ("postgresql", "redis-server", "nginx", "mtc")
 
 WIDTH = 74
@@ -137,7 +138,8 @@ class Panel:
             glyph, word, colour = MARKS[state]
             mark = getattr(self.ink, colour)(glyph if self.ink.enabled else word)
 
-        text = f"    {mark}  {label:<17} {value}"
+        # 18 is `postgresql@17-main`, the longest label the panel draws.
+        text = f"    {mark}  {label:<18} {value}"
         if note:
             text += self.ink.dim(f"   {note}")
         self.lines.append(text)
@@ -200,6 +202,63 @@ def fetch_health(url: str, timeout: float = 5.0) -> tuple[int | None, dict, str]
         return None, {}, str(getattr(exc, "reason", exc))
     except Exception as exc:  # noqa: BLE001
         return None, {}, f"{type(exc).__name__}: {exc}"
+
+
+def postgres_clusters() -> tuple[str, ...]:
+    """The units Postgres really runs as, behind Debian's `postgresql`.
+
+    On Debian and Ubuntu `postgresql.service` is an umbrella: it runs
+    /bin/true and then sits at "active (exited)" for as long as the machine
+    is up, whatever the database is doing. The server itself is an instance
+    unit, `postgresql@17-main`. On 2026-09-30 this panel reported the
+    umbrella as "up 18h" two minutes after the cluster had been restarted --
+    directly above the 503 that the restart explained.
+
+    Asked for rather than named, so a major-version upgrade does not leave
+    the panel watching a unit that no longer exists. `--all` keeps a cluster
+    that has stopped in the list, and that is the row this is here to draw.
+    """
+    try:
+        raw = subprocess.run(
+            [
+                "systemctl",
+                "list-units",
+                "--all",
+                "--plain",
+                "--no-legend",
+                "postgresql@*.service",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout
+    except Exception:  # noqa: BLE001
+        return ()
+
+    clusters = []
+    for line in raw.splitlines():
+        # UNIT LOAD ACTIVE SUB DESCRIPTION. "not-found" is a name something
+        # still refers to after the cluster behind it was dropped.
+        fields = line.split()
+        if len(fields) >= 2 and fields[1] == "loaded":
+            clusters.append(fields[0].removesuffix(".service"))
+    return tuple(sorted(clusters))
+
+
+def watched_units(names: tuple[str, ...] = UNITS) -> tuple[str, ...]:
+    """UNITS, with the postgresql umbrella swapped for its clusters.
+
+    Where there are none -- another distribution, a container, a host
+    without systemd -- the plain name is the real unit, and stays.
+    """
+    clusters = postgres_clusters()
+    out: list[str] = []
+    for name in names:
+        if name == "postgresql" and clusters:
+            out.extend(clusters)
+        else:
+            out.append(name)
+    return tuple(out)
 
 
 def unit_states(names: tuple[str, ...]) -> dict[str, dict]:
@@ -589,7 +648,7 @@ def build(
 
 def collect(url: str) -> tuple[int | None, dict, str, dict, dict]:
     status, payload, error = fetch_health(url)
-    return status, payload, error, unit_states(UNITS), host_stats()
+    return status, payload, error, unit_states(watched_units()), host_stats()
 
 
 def main(argv: list[str] | None = None) -> int:

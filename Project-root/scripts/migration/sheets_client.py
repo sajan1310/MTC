@@ -75,7 +75,11 @@ def with_retry(fn, *, attempts=6, base_delay=1.5):
             return fn()
         except HttpError as exc:
             last_exc = exc
-            if exc.resp.status not in (429, 500, 503):
+            # 502 and 504 are Google's front end failing to reach the Sheets
+            # backend -- "try again in 30 seconds", in its own words. They
+            # were missing from this list, so on 2026-09-30 a single 502 on
+            # the ninth of 46 tabs failed the whole export at once.
+            if exc.resp.status not in (429, 500, 502, 503, 504):
                 raise
         except (TimeoutError, ConnectionError, socket.timeout, OSError) as exc:
             last_exc = exc

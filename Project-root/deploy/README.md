@@ -63,6 +63,11 @@ works from cron. It reads `/health` for the application's own vitals and the
 host for unit states, root disk, memory and load — and still draws when the
 application is down, which is when it is worth having.
 
+The database row is the cluster, `postgresql@17-main`, not `postgresql`. On
+Debian that one is an umbrella that stays "active (exited)" whatever the
+database is doing, so its uptime is the machine's. The cluster's name is also
+the one to give `systemctl status` and `journalctl -u`.
+
 ### Take a snapshot before you touch something
 
 ```bash
