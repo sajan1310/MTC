@@ -30,6 +30,12 @@
 //   updateWastage(wastageId, formData) (module_wastage.js), which source
 //   has but this port previously lacked; save/enter-saved-mode UX mirrors
 //   App.Issue's identical pattern in issue.js.
+// - Wastage is a sub-tab of this tab (switchSubTab), not the collapsible
+//   section the source nested under the returns table, which took a scroll
+//   past every return to reach.
+// - A wastage line can be written off the Warehouse Pool as well as Items
+//   Stock (migration 048): the form has a second table for processed items,
+//   filled from getWarehousePoolData.
 
 App.Return = {
   // Mirrors App.Item.ensureLoaded -- lets a caller outside the Return
@@ -39,6 +45,28 @@ App.Return = {
   async ensureLoaded() {
     if (App.State.globalReturns && App.State.globalReturns.length) return;
     await this.loadData();
+  },
+
+  // The tab's own entry point (core.js showTab). Returns always load --
+  // other screens read them through ensureLoaded -- and the Wastage list
+  // too when it is the sub-tab on show, so coming back to it after logging
+  // wastage from the Dashboard lists that record.
+  enterTab() {
+    const loads = [this.loadData()];
+    if (document.getElementById('wastageSubTab')?.style.display === 'block') {
+      loads.push(App.Wastage.loadData());
+    }
+    return Promise.all(loads);
+  },
+
+  switchSubTab(id) {
+    $$('.return-sub-tab').forEach(t => { t.style.display = t.id === id ? 'block' : 'none'; });
+    $$('#returnSubTabs .nav-link').forEach(btn => btn.classList.toggle('active', btn.id === `btn-${id}`));
+
+    // Fetched on every visit, as the Warehouse Pool sub-tab is: the list
+    // can change while it is hidden (the Dashboard's Log Wastage tile).
+    if (id === 'wastageSubTab') return App.Wastage.loadData();
+    return Promise.resolve();
   },
 
   async loadData() {
@@ -542,9 +570,12 @@ App.Return = {
   }
 };
 
-// ── Wastage Log -- nested inside the Return Ledger tab/view ────────────
+// ── Wastage Log -- the Return Ledger tab's Wastage sub-tab ─────────────
 App.Wastage = {
-  _reviewOpen: false,
+  // Warehouse Pool buckets a line can be written off, asked for each time
+  // the form opens (loadPoolBuckets) -- so colours and Available are no
+  // older than Api.call's 15-second read cache, which any save clears.
+  _poolBuckets: [],
 
   async loadData() {
     const tbody = document.getElementById('wastageTableBody');
@@ -564,23 +595,6 @@ App.Wastage = {
       this.applyFilters();
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to load wastage records.', true);
-    }
-  },
-
-  toggleReview() {
-    this._reviewOpen = !this._reviewOpen;
-    const section = document.getElementById('wastageReviewSection');
-    const btn = document.getElementById('btnToggleWastageReview');
-    if (!section) return;
-
-    if (this._reviewOpen) {
-      section.style.display = 'block';
-      if (btn) btn.innerHTML = '<i class="bi bi-eye-slash me-2"></i>Hide Wastage';
-      if (!App.State.globalWastage.length) this.loadData();
-      else this.renderTable();
-    } else {
-      section.style.display = 'none';
-      if (btn) btn.innerHTML = '<i class="bi bi-eye me-2"></i>Review Wastage';
     }
   },
 
@@ -607,8 +621,10 @@ App.Wastage = {
     App.State.filteredWastage = App.State.globalWastage.filter(w => {
       if (!App.Utils.inDateRange(w.dateRaw, w.date, range.from, range.to)) return false;
       if (term) {
+        // "pool" finds every record written off the Warehouse Pool.
         const itemsText = (w.items || []).map(it =>
-          `${it.name || ''} ${it.size || ''} ${it.reason || ''}`
+          `${it.name || ''} ${it.size || ''} ${it.color || ''} ${it.productTag || ''} ${it.reason || ''}`
+          + (it.sourceType === 'POOL' ? ' warehouse pool' : '')
         ).join(' ');
         const haystack = `${w.wastageId || ''} ${w.vendor || ''} ${itemsText} ${w.remarks || ''}`;
         if (!App.Utils.matchesKeywords(haystack, term)) return false;
@@ -681,10 +697,15 @@ App.Wastage = {
       const checkedAttr = App.Selection.isSelected(App.State.selectedWastage, key) ? 'checked' : '';
 
       const itemsPreview = (w.items || []).slice(0, 3).map(it => {
+        const isPool = it.sourceType === 'POOL';
         const namePart = escapeHtml(it.name || '—');
-        const sizePart = it.size ? ` (${escapeHtml(it.size)})` : '';
+        // A pool line has no size; its colour (and product, if tagged) is
+        // what tells its bucket apart.
+        const detail = isPool ? [it.color, it.productTag].filter(Boolean).join(' · ') : it.size;
+        const detailPart = detail ? ` (${escapeHtml(detail)})` : '';
+        const poolBadge = isPool ? ' <span class="badge bg-secondary" title="Written off the Warehouse Pool">Pool</span>' : '';
         const reasonPart = it.reason ? ` — <em>${escapeHtml(it.reason)}</em>` : '';
-        return `${namePart}${sizePart} ×${it.qty}${reasonPart}`;
+        return `${namePart}${detailPart} ×${it.qty}${poolBadge}${reasonPart}`;
       }).join('<br>') + (w.items.length > 3 ? `<br><em>+${w.items.length - 3} more…</em>` : '');
 
       const vendorBadge = w.vendor
@@ -738,9 +759,49 @@ App.Wastage = {
   // Every row's Item/Size suggestions and the vendor box read Items Master
   // (#itemList and #vendorList, App.Item.populateDatalists), which neither
   // this tab nor the Dashboard's "Log Wastage" tile ever loaded -- see
-  // App.Return.ensureFormData.
+  // App.Return.ensureFormData. The Warehouse Pool rows read the pool's
+  // buckets, and Process Master for the process names beside them.
   async ensureFormData() {
-    if (App.Item) await App.Item.ensureLoaded();
+    await Promise.all([
+      App.Item ? App.Item.ensureLoaded() : Promise.resolve(),
+      App.Process ? App.Process.ensureLoaded() : Promise.resolve(),
+      this.loadPoolBuckets()
+    ]);
+  },
+
+  // Every bucket a line can be written off: the pool's own rows, less the
+  // sub-group ones (countsTowardTotal false) -- a packing set recorded per
+  // colour on units already counted under their main colour holds no stock
+  // of its own, and saveWastage refuses them.
+  async loadPoolBuckets() {
+    try {
+      const res = await Api.call('getWarehousePoolData');
+      if (!res?.success) throw new Error(res?.message || 'The server refused the request.');
+      this._poolBuckets = (Array.isArray(res.data) ? res.data : [])
+        .filter(b => String(b.outputItemName || '').trim() && b.countsTowardTotal !== false);
+    } catch (err) {
+      this._poolBuckets = [];
+      App.Utils.showToast(`Warehouse Pool items could not be loaded: ${err.message || err}`, true);
+    }
+    this.populatePoolItemList();
+  },
+
+  populatePoolItemList() {
+    const list = document.getElementById('wastagePoolItemList');
+    if (!list) return;
+    const processNames = new Map((App.State.globalProcesses || []).map(p => [p.processId, p.processName]));
+    const byName = new Map();
+    this._poolBuckets.forEach(b => {
+      const name = String(b.outputItemName).trim();
+      const entry = byName.get(name.toLowerCase()) || { name, processes: new Set() };
+      if (processNames.get(b.processId)) entry.processes.add(processNames.get(b.processId));
+      byName.set(name.toLowerCase(), entry);
+    });
+    list.innerHTML = [...byName.values()]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(e => `<option value="${escapeHtml(e.name)}"${e.processes.size
+        ? ` label="${escapeHtml([...e.processes].join(', '))}"` : ''}></option>`)
+      .join('');
   },
 
   async openWastageModal() {
@@ -752,6 +813,9 @@ App.Wastage = {
     if (dateInput) dateInput.value = todayIso();
     const tbody = document.getElementById('wastageItemsBody');
     if (tbody) tbody.innerHTML = this.getRowHtml();
+    const poolBody = document.getElementById('wastagePoolItemsBody');
+    if (poolBody) poolBody.innerHTML = '';
+    this.updatePoolEmptyHint();
     safeModalShow('logWastageModal');
   },
 
@@ -771,10 +835,18 @@ App.Wastage = {
     document.getElementById('wastageVendor').value = w.vendor || '';
     document.querySelector('#wastageForm [name="remarks"]').value = w.remarks || '';
 
+    const lines = w.items || [];
     const tbody = document.getElementById('wastageItemsBody');
     if (tbody) {
-      tbody.innerHTML = (w.items || []).map(item => this.getRowHtml(item)).join('') || this.getRowHtml();
+      tbody.innerHTML = lines.filter(item => item.sourceType !== 'POOL')
+        .map(item => this.getRowHtml(item)).join('') || this.getRowHtml();
     }
+    const poolBody = document.getElementById('wastagePoolItemsBody');
+    if (poolBody) {
+      poolBody.innerHTML = lines.filter(item => item.sourceType === 'POOL')
+        .map(item => this.getPoolRowHtml(item)).join('');
+    }
+    this.updatePoolEmptyHint();
 
     const title = document.getElementById('wastageModalTitle');
     if (title) title.innerHTML = `<i class="bi bi-pencil-square me-2"></i>Edit Wastage ${escapeHtml(w.wastageId)}`;
@@ -790,18 +862,115 @@ App.Wastage = {
     tbody.insertAdjacentHTML('beforeend', this.getRowHtml());
   },
 
+  // No `required` on a row's fields: a record can be all pool lines, and a
+  // browser-required blank row here would refuse to submit it. A row with
+  // no item name is skipped instead, and submit() checks the rest.
   getRowHtml(item = {}) {
     const rowUid = `wastage-${++App.State.rowSeq}`;
     return `
     <tr data-row-uid="${rowUid}">
-      <td><input type="text" class="form-control w-item-name" list="itemList" value="${escapeHtml(item.name || '')}" required placeholder="Item name"></td>
+      <td><input type="text" class="form-control w-item-name" list="itemList" value="${escapeHtml(item.name || '')}" placeholder="Item name"></td>
       <td><input type="text" class="form-control w-item-size" list="sizeList-${rowUid}" value="${escapeHtml(item.size || '')}" placeholder="Size">
           <datalist class="row-size-list" id="sizeList-${rowUid}"></datalist></td>
-      <td><input type="number" class="form-control w-item-qty" step="0.01" value="${escapeHtml(String(item.qty ?? ''))}" required min="0.01" placeholder="Qty"></td>
+      <td><input type="number" class="form-control w-item-qty" step="0.01" value="${escapeHtml(String(item.qty ?? ''))}" min="0.01" placeholder="Qty"></td>
       <td><input type="text" class="form-control item-unit" list="unitList" value="${escapeHtml(item.unit || 'Pcs')}"></td>
-      <td><input type="text" class="form-control w-item-reason" value="${escapeHtml(item.reason || '')}" required placeholder="e.g. Broken during cutting, Expired…"></td>
+      <td><input type="text" class="form-control w-item-reason" value="${escapeHtml(item.reason || '')}" placeholder="e.g. Broken during cutting, Expired…"></td>
       <td><button type="button" class="btn btn-outline-danger btn-sm" data-action="remove-row">✕</button></td>
     </tr>`;
+  },
+
+  // ── Warehouse Pool rows ──────────────────────────────────────────────
+  // One bucket per (Output Item Name, Product Tag, Colour), the key
+  // warehouse_service gives it. The <select> carries tag and colour joined
+  // by U+241F, the separator the Notify links already use for two-part keys.
+  BUCKET_SEP: '␟',
+
+  poolBucketValue(productTag, color) {
+    return `${productTag || ''}${this.BUCKET_SEP}${color || ''}`;
+  },
+
+  bucketsFor(name) {
+    const key = String(name || '').trim().toLowerCase();
+    if (!key) return [];
+    return this._poolBuckets
+      .filter(b => String(b.outputItemName).trim().toLowerCase() === key)
+      .sort((a, b) => String(a.color || '').localeCompare(String(b.color || ''))
+        || String(a.productTag || '').localeCompare(String(b.productTag || '')));
+  },
+
+  _bucketLabel(productTag, color) {
+    return [color || 'No colour', productTag ? `Product ${productTag}` : ''].filter(Boolean).join(' · ');
+  },
+
+  // `selected` is the line's saved {productTag, color} when editing, else
+  // null. An item with just one bucket picks it; with several, nothing is
+  // picked until the operator chooses -- a colour guessed for them would
+  // take the units off the wrong shelf.
+  _bucketOptionsHtml(name, selected) {
+    const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+    const buckets = this.bucketsFor(name);
+    const chosen = selected
+      ? buckets.find(b => same(b.productTag, selected.productTag) && same(b.color, selected.color))
+      : (buckets.length === 1 ? buckets[0] : null);
+
+    const options = buckets.map(b => `<option value="${escapeHtml(this.poolBucketValue(b.productTag, b.color))}"${
+      b === chosen ? ' selected' : ''}>${escapeHtml(`${this._bucketLabel(b.productTag, b.color)} — ${formatQty(b.availableQty)} available`)}</option>`);
+
+    // A record saved against a bucket the pool no longer lists keeps it, so
+    // opening the record to correct its date does not quietly move or drop
+    // the write-off. saveWastage accepts a bucket the record already had.
+    if (selected && !chosen && String(name || '').trim()) {
+      options.unshift(`<option value="${escapeHtml(this.poolBucketValue(selected.productTag, selected.color))}" selected>${
+        escapeHtml(`${this._bucketLabel(selected.productTag, selected.color)} — no longer in the pool`)}</option>`);
+    }
+    if (!options.length) {
+      return `<option value="">${String(name || '').trim() ? 'Not in the Warehouse Pool' : 'Choose the item first'}</option>`;
+    }
+    if (!selected && !chosen) options.unshift('<option value="" selected>Choose a colour…</option>');
+    return options.join('');
+  },
+
+  getPoolRowHtml(item = {}) {
+    const rowUid = `wastage-pool-${++App.State.rowSeq}`;
+    const selected = item.name ? { productTag: item.productTag || '', color: item.color || '' } : null;
+    return `
+    <tr data-row-uid="${rowUid}">
+      <td><input type="text" class="form-control wp-item-name" list="wastagePoolItemList" value="${escapeHtml(item.name || '')}" placeholder="Painted frame, fitted rim…" aria-label="Processed item"></td>
+      <td><select class="form-select wp-bucket" aria-label="Colour / Product">${this._bucketOptionsHtml(item.name || '', selected)}</select></td>
+      <td><input type="number" class="form-control wp-qty" step="1" min="1" value="${escapeHtml(String(item.qty ?? ''))}" placeholder="Qty" aria-label="Qty in pieces"></td>
+      <td><input type="text" class="form-control wp-reason" value="${escapeHtml(item.reason || '')}" placeholder="e.g. Paint run, dent, weld crack…" aria-label="Reason for wastage"></td>
+      <td><button type="button" class="btn btn-outline-danger btn-sm wp-remove" onclick="App.Wastage.removePoolRow(this)" aria-label="Remove">✕</button></td>
+    </tr>`;
+  },
+
+  addPoolRow() {
+    const tbody = document.getElementById('wastagePoolItemsBody');
+    if (!tbody) return;
+    tbody.insertAdjacentHTML('beforeend', this.getPoolRowHtml());
+    this.updatePoolEmptyHint();
+    tbody.lastElementChild?.querySelector('.wp-item-name')?.focus();
+  },
+
+  // Unlike an Items Stock row (App.Utils.removeRow keeps the last one), the
+  // last pool row can go too: most records take nothing from the pool.
+  removePoolRow(btn) {
+    btn?.closest('tr')?.remove();
+    this.updatePoolEmptyHint();
+  },
+
+  updatePoolEmptyHint() {
+    const hasRows = !!document.querySelector('#wastagePoolItemsBody tr');
+    const wrap = document.getElementById('wastagePoolItemsBody')?.closest('.table-responsive');
+    if (wrap) wrap.style.display = hasRows ? '' : 'none';
+    const hint = document.getElementById('wastagePoolEmptyHint');
+    if (hint) hint.style.display = hasRows ? 'none' : '';
+  },
+
+  // A new item name means a new set of buckets; a colour picked for the old
+  // one would be the wrong shelf.
+  onPoolItemInput(input) {
+    const select = input.closest('tr')?.querySelector('.wp-bucket');
+    if (select) select.innerHTML = this._bucketOptionsHtml(input.value, null);
   },
 
   serializeForm() {
@@ -813,6 +982,7 @@ App.Wastage = {
       const name = $('.w-item-name', row)?.value?.trim();
       if (!name) return;
       items.push({
+        sourceType: 'ITEM',
         name,
         size: $('.w-item-size', row)?.value?.trim() || '',
         qty: toNumber($('.w-item-qty', row)?.value),
@@ -820,22 +990,59 @@ App.Wastage = {
         reason: $('.w-item-reason', row)?.value?.trim() || ''
       });
     });
+    // Pool rows named but with no colour chosen are reported back rather
+    // than sent: the server would refuse them anyway, and this says which.
+    const unpicked = [];
+    $$('#wastagePoolItemsBody tr').forEach(row => {
+      const name = $('.wp-item-name', row)?.value?.trim();
+      if (!name) return;
+      const bucket = $('.wp-bucket', row)?.value || '';
+      if (!bucket) {
+        unpicked.push(name);
+        return;
+      }
+      const [productTag, color] = bucket.split(this.BUCKET_SEP);
+      items.push({
+        sourceType: 'POOL',
+        name,
+        productTag: productTag || '',
+        color: color || '',
+        qty: toNumber($('.wp-qty', row)?.value),
+        unit: 'Pcs',
+        reason: $('.wp-reason', row)?.value?.trim() || ''
+      });
+    });
     formData.items = JSON.stringify(items);
-    return { formData, items };
+    return { formData, items, unpicked };
   },
 
   async submit(e) {
     e.preventDefault();
-    const { formData, items } = this.serializeForm();
+    const { formData, items, unpicked } = this.serializeForm();
+
+    if (unpicked.length) {
+      const name = unpicked[0];
+      App.Utils.showToast(this.bucketsFor(name).length
+        ? `Choose which colour of "${name}" was wasted.`
+        : `"${name}" is not in the Warehouse Pool. Pick it from the list.`, true);
+      return;
+    }
 
     if (!items.length) {
       App.Utils.showToast('Add at least one item to log wastage.', true);
       return;
     }
 
+    const label = it => (it.sourceType === 'POOL' && it.color ? `${it.name} (${it.color})` : it.name);
+    const missingQty = items.find(it => !(it.qty > 0));
+    if (missingQty) {
+      App.Utils.showToast(`Enter a quantity for "${label(missingQty)}".`, true);
+      return;
+    }
+
     const missingReason = items.find(it => !it.reason);
     if (missingReason) {
-      App.Utils.showToast(`Please enter a reason for "${missingReason.name}".`, true);
+      App.Utils.showToast(`Please enter a reason for "${label(missingReason)}".`, true);
       return;
     }
 
@@ -877,11 +1084,9 @@ App.Wastage = {
     const form = document.getElementById('wastageForm');
     if (!form) return;
     form.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = disabled; });
-    const addBtn = form.querySelector('button[onclick="App.Wastage.addRow()"]');
-    if (addBtn) addBtn.disabled = disabled;
-    form.querySelectorAll('#wastageItemsBody button[data-action="remove-row"]').forEach(el => {
-      el.disabled = disabled;
-    });
+    form.querySelectorAll(
+      '.wastage-add-btn, #wastageItemsBody button[data-action="remove-row"], #wastagePoolItemsBody .wp-remove'
+    ).forEach(el => { el.disabled = disabled; });
   },
 
   printCurrent() {
@@ -901,7 +1106,7 @@ App.Wastage = {
     if (existingId) existingId.value = '';
     this.setFormReadOnly(false);
     const title = document.getElementById('wastageModalTitle');
-    if (title) title.innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>Log Component Wastage';
+    if (title) title.innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>Log Wastage';
     const submitBtn = document.getElementById('wastageSubmitBtn');
     if (submitBtn) {
       submitBtn.style.display = '';
@@ -1106,6 +1311,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (e.target.matches('#wastageItemsBody .w-item-name')) {
       App.Utils.applyDependentSizeList(e.target, '.w-item-size');
+    }
+    // ...and each pool row's colours to the buckets of the item chosen.
+    if (e.target.matches('#wastagePoolItemsBody .wp-item-name')) {
+      App.Wastage.onPoolItemInput(e.target);
     }
   });
 });

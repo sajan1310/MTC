@@ -126,7 +126,11 @@
 // Receipt, and a selection of them goes out as one PDF each. The item form
 // keeps a vendor saved without a rate -- it came back missing, so the next
 // save deleted it.
-const CACHE_NAME = 'erp-mobile-shell-v74';
+// v75: a wastage record can write a processed item off the Warehouse Pool --
+// the form adds "+ Add from Warehouse Pool" lines (item, then colour), the
+// list and log name each line's colour, and the save shows the server's
+// warning when the write-off takes more than the pool holds.
+const CACHE_NAME = 'erp-mobile-shell-v75';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

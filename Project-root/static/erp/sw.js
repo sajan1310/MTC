@@ -416,7 +416,18 @@
 // disabled until the tab was reloaded; it now gives up, says the file did not
 // arrive, and hands the button back. print.js is precached, so without the
 // bump an installed client keeps the button that waits for ever.
-const CACHE_NAME = 'erp-shell-v84';
+// v85: Returns and Wastage are two sub-tabs of the Return tab, and wastage
+// can be written off the Warehouse Pool -- the form gains a second table
+// for processed items, the wastage note prints where a line came from, and
+// Ready to Dispatch shows finished goods written off. return.js, core.js,
+// dispatch.js and print-templates.js are precached, so without the bump an
+// installed client pairs the new tab markup with a return.js that has no
+// switchSubTab.
+// v86: the dashboard's WIP cards sit under one heading per lot date, oldest
+// first, instead of one card per stage merging every date. dashboard.js and
+// styles.css are precached, so without the bump an installed client keeps
+// drawing the merged cards from the new payload.
+const CACHE_NAME = 'erp-shell-v86';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

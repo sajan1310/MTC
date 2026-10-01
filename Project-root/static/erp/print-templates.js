@@ -952,9 +952,20 @@ const PrintTemplates = {
   // entries into the shared bulk container.
   wastageNote(w, deps) {
     const { esc, nameCase } = this._deps(deps);
+    // A line written off the Warehouse Pool names a processed item by its
+    // colour (and product, if tagged) rather than a size, and says where it
+    // came from -- the person signing needs to know which stock moved.
+    const itemCell = it => {
+      if (it.sourceType !== 'POOL') {
+        return `${esc(it.name || '')}${it.size ? ` <em>(${esc(it.size)})</em>` : ''}`;
+      }
+      const detail = [it.color, it.productTag].filter(Boolean).join(' · ');
+      return `${esc(it.name || '')}${detail ? ` <em>(${esc(detail)})</em>` : ''}`
+        + '<br><small style="color:#666;">Warehouse Pool</small>';
+    };
     const itemRows = (w.items || []).map(it => `
         <tr>
-          <td style="padding:6px 8px; border:1px solid #dee2e6;">${esc(it.name || '')}${it.size ? ` <em>(${esc(it.size)})</em>` : ''}</td>
+          <td style="padding:6px 8px; border:1px solid #dee2e6;">${itemCell(it)}</td>
           <td style="padding:6px 8px; border:1px solid #dee2e6;">${esc(String(it.qty || ''))} ${esc(it.unit || '')}</td>
           <td style="padding:6px 8px; border:1px solid #dee2e6;">${esc(it.reason || '—')}</td>
         </tr>`).join('');

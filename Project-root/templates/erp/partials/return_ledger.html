@@ -1,163 +1,164 @@
 <!-- Ported from Apps_Script/View_ReturnLedger.html + the returnGoodsModal/
-     logWastageModal sections of Apps_Script/Modals.html. Wastage review is
-     a collapsible section nested inside this same tab in source -- not a
-     separate nav tab -- so it's carried over here unchanged. -->
+     logWastageModal sections of Apps_Script/Modals.html. The source nested
+     Wastage review in this tab as a collapsible section under the returns
+     table, so reaching it meant scrolling past every return; it is a
+     sub-tab of its own here, the way Stock splits Items Stock from the
+     Warehouse Pool. -->
 
 <div id="returnLedger" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-returnLedger">
 
-  <!-- TOOLBAR: search · date · sort, then the actions, on one row. The
-       date button is built into .list-date by App.ListControls (core.js),
-       which also wires the ⇅ menu and the sortable column headers. -->
-  <div class="d-flex justify-content-between flex-wrap gap-2 mb-4 align-items-center">
+  <!-- Sub-tab Navigation Pills -->
+  <ul class="nav nav-pills mb-4" id="returnSubTabs">
+    <li class="nav-item">
+      <button class="nav-link active fw-bold text-dark" id="btn-returnsSubTab" type="button" onclick="App.Return.switchSubTab('returnsSubTab')">Returns</button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link fw-bold text-dark" id="btn-wastageSubTab" type="button" onclick="App.Return.switchSubTab('wastageSubTab')">Wastage</button>
+    </li>
+  </ul>
 
-    <div class="d-flex flex-grow-1 flex-wrap gap-2 align-items-center" style="max-width: 900px;">
-      <input type="text"
-             id="searchReturn"
-             class="form-control"
-             style="flex: 1 1 240px; min-width: 200px;"
-             placeholder="Search by Return#, Bill#, Vendor, or Item…"
-             autocomplete="off"
-             aria-label="Search Returns"
-             oninput="App.Utils.debouncedFilter(this, () => App.Return.filterData(this.value))">
+  <!-- RETURNS SUB-TAB (goods sent back to a vendor) -->
+  <div id="returnsSubTab" class="return-sub-tab">
 
-      <div class="list-date" data-list="return" data-module="Return" data-noun="returns"></div>
+    <!-- TOOLBAR: search · date · sort, then the actions, on one row. The
+         date button is built into .list-date by App.ListControls (core.js),
+         which also wires the ⇅ menu and the sortable column headers. -->
+    <div class="d-flex justify-content-between flex-wrap gap-2 mb-4 align-items-center">
 
-      <div class="dropdown list-sort" data-list="return" data-module="Return" data-state="returnSortBy"
-           data-default="dateDesc" data-noun="returns">
-        <button type="button" class="btn list-ctl list-sort-btn" id="returnSortBtn"
-                data-bs-toggle="dropdown" aria-expanded="false" aria-label="Sort returns" title="Sort">
-          <i class="bi bi-arrow-down-up" aria-hidden="true"></i>
+      <div class="d-flex flex-grow-1 flex-wrap gap-2 align-items-center" style="max-width: 900px;">
+        <input type="text"
+               id="searchReturn"
+               class="form-control"
+               style="flex: 1 1 240px; min-width: 200px;"
+               placeholder="Search by Return#, Bill#, Vendor, or Item…"
+               autocomplete="off"
+               aria-label="Search Returns"
+               oninput="App.Utils.debouncedFilter(this, () => App.Return.filterData(this.value))">
+
+        <div class="list-date" data-list="return" data-module="Return" data-noun="returns"></div>
+
+        <div class="dropdown list-sort" data-list="return" data-module="Return" data-state="returnSortBy"
+             data-default="dateDesc" data-noun="returns">
+          <button type="button" class="btn list-ctl list-sort-btn" id="returnSortBtn"
+                  data-bs-toggle="dropdown" aria-expanded="false" aria-label="Sort returns" title="Sort">
+            <i class="bi bi-arrow-down-up" aria-hidden="true"></i>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end list-menu list-sort-menu" aria-labelledby="returnSortBtn">
+            <li><h6 class="dropdown-header">Sort by</h6></li>
+            <li><button type="button" class="dropdown-item" data-sort="dateDesc">Date (Newest first)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="dateAsc">Date (Oldest first)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="returnNumberDesc">Return# (Newest first)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="returnNumberAsc">Return# (Oldest first)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="vendorAsc">Vendor (A&ndash;Z)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="vendorDesc">Vendor (Z&ndash;A)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="creditDesc">Credit (High&ndash;Low)</button></li>
+            <li><button type="button" class="dropdown-item" data-sort="creditAsc">Credit (Low&ndash;High)</button></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="d-flex gap-2 flex-wrap justify-content-end">
+        <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteReturns" type="button" onclick="App.Return.bulkDelete()" style="white-space: nowrap;">
+          <i class="bi bi-trash"></i> Delete Selected
         </button>
-        <ul class="dropdown-menu dropdown-menu-end list-menu list-sort-menu" aria-labelledby="returnSortBtn">
-          <li><h6 class="dropdown-header">Sort by</h6></li>
-          <li><button type="button" class="dropdown-item" data-sort="dateDesc">Date (Newest first)</button></li>
-          <li><button type="button" class="dropdown-item" data-sort="dateAsc">Date (Oldest first)</button></li>
-          <li><button type="button" class="dropdown-item" data-sort="returnNumberDesc">Return# (Newest first)</button></li>
-          <li><button type="button" class="dropdown-item" data-sort="returnNumberAsc">Return# (Oldest first)</button></li>
-          <li><button type="button" class="dropdown-item" data-sort="vendorAsc">Vendor (A&ndash;Z)</button></li>
-          <li><button type="button" class="dropdown-item" data-sort="vendorDesc">Vendor (Z&ndash;A)</button></li>
-          <li><button type="button" class="dropdown-item" data-sort="creditDesc">Credit (High&ndash;Low)</button></li>
-          <li><button type="button" class="dropdown-item" data-sort="creditAsc">Credit (Low&ndash;High)</button></li>
-        </ul>
+        <button class="btn btn-primary fw-bold shadow-sm"
+                type="button"
+                onclick="App.Return.openReturnModal()"
+                aria-label="Log goods returned to a vendor"
+                style="white-space: nowrap; padding: 10px 24px;">
+          <i class="bi bi-arrow-return-left me-2"></i>
+          Return Goods
+        </button>
       </div>
     </div>
 
-    <div class="d-flex gap-2 flex-wrap justify-content-end">
-      <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteReturns" type="button" onclick="App.Return.bulkDelete()" style="white-space: nowrap;">
-        <i class="bi bi-trash"></i> Delete Selected
-      </button>
-      <button class="btn btn-warning fw-bold shadow-sm text-dark"
+    <!-- RETURN LEDGER TABLE -->
+    <div class="table-responsive" style="border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+      <table class="table table-hover table-bordered align-middle mb-0"
+             role="table"
+             style="margin-bottom: 0;"
+             data-list="return">
+        <thead class="table-dark">
+          <tr role="row">
+            <th scope="col" role="columnheader" style="width: 4%; text-align: center;">
+              <input type="checkbox" id="selectAllReturns" class="form-check-input" onclick="App.Return.toggleSelectAll(this)">
+            </th>
+            <th scope="col" role="columnheader" style="width: 14%; min-width: 110px;" data-sort-keys="returnNumberDesc,returnNumberAsc">
+              <i class="bi bi-arrow-return-left me-2"></i>Return#
+            </th>
+            <th scope="col" role="columnheader" style="width: 12%; min-width: 100px;">
+              <i class="bi bi-receipt me-2"></i>Bill#
+            </th>
+            <th scope="col" role="columnheader" style="width: 12%; min-width: 120px;" data-sort-keys="dateDesc,dateAsc">
+              <i class="bi bi-calendar me-2"></i>Date
+            </th>
+            <th scope="col" role="columnheader" style="width: 14%; min-width: 130px;" data-sort-keys="vendorAsc,vendorDesc">
+              <i class="bi bi-truck me-2"></i>Vendor
+            </th>
+            <th scope="col" role="columnheader" style="width: 26%; min-width: 200px;">
+              <i class="bi bi-box-seam me-2"></i>Items Returned
+            </th>
+            <th scope="col" role="columnheader" style="width: 8%; min-width: 80px; text-align: center;">
+              <i class="bi bi-collection me-2"></i>Qty
+            </th>
+            <th scope="col" role="columnheader" style="width: 10%; min-width: 120px; text-align: right;" data-sort-keys="creditDesc,creditAsc">
+              <i class="bi bi-currency-rupee me-2"></i>Credit
+            </th>
+            <th scope="col" role="columnheader" style="width: 8%; min-width: 140px;">
+              <i class="bi bi-gear me-2"></i>Actions
+            </th>
+          </tr>
+        </thead>
+        <tbody id="returnTableBody" role="rowgroup">
+          <!-- Rows generated by App.Return.renderTable() -->
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Empty State -->
+    <div id="returnEmptyState"
+         class="text-center py-5 text-muted"
+         style="display: none;">
+      <div style="font-size: 48px; margin-bottom: 16px;">📤</div>
+      <h5>No Goods Returned Yet</h5>
+      <p style="margin-bottom: 20px;">
+        Log defective, excess, or wrong items sent back to a vendor — it'll be debited from Stock automatically.
+      </p>
+      <button class="btn btn-primary"
               type="button"
-              onclick="App.Wastage.openWastageModal()"
-              aria-label="Log component wastage"
-              style="white-space: nowrap; padding: 10px 20px;">
-        <i class="bi bi-exclamation-triangle me-2"></i>
-        Log Wastage
-      </button>
-      <button class="btn btn-outline-warning fw-bold shadow-sm"
-              type="button"
-              onclick="App.Wastage.toggleReview()"
-              id="btnToggleWastageReview"
-              aria-label="Review wastage records"
-              style="white-space: nowrap; padding: 10px 20px;">
-        <i class="bi bi-eye me-2"></i>
-        Review Wastage
-      </button>
-      <button class="btn btn-primary fw-bold shadow-sm"
-              type="button"
-              onclick="App.Return.openReturnModal()"
-              aria-label="Log goods returned to a vendor"
-              style="white-space: nowrap; padding: 10px 24px;">
-        <i class="bi bi-arrow-return-left me-2"></i>
-        Return Goods
+              onclick="App.Return.openReturnModal()">
+        Log First Return
       </button>
     </div>
+
+    <!-- Pagination -->
+    <div id="returnPagination" class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top"></div>
   </div>
 
-  <!-- RETURN LEDGER TABLE -->
-  <div class="table-responsive" style="border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-    <table class="table table-hover table-bordered align-middle mb-0"
-           role="table"
-           style="margin-bottom: 0;"
-           data-list="return">
-      <thead class="table-dark">
-        <tr role="row">
-          <th scope="col" role="columnheader" style="width: 4%; text-align: center;">
-            <input type="checkbox" id="selectAllReturns" class="form-check-input" onclick="App.Return.toggleSelectAll(this)">
-          </th>
-          <th scope="col" role="columnheader" style="width: 14%; min-width: 110px;" data-sort-keys="returnNumberDesc,returnNumberAsc">
-            <i class="bi bi-arrow-return-left me-2"></i>Return#
-          </th>
-          <th scope="col" role="columnheader" style="width: 12%; min-width: 100px;">
-            <i class="bi bi-receipt me-2"></i>Bill#
-          </th>
-          <th scope="col" role="columnheader" style="width: 12%; min-width: 120px;" data-sort-keys="dateDesc,dateAsc">
-            <i class="bi bi-calendar me-2"></i>Date
-          </th>
-          <th scope="col" role="columnheader" style="width: 14%; min-width: 130px;" data-sort-keys="vendorAsc,vendorDesc">
-            <i class="bi bi-truck me-2"></i>Vendor
-          </th>
-          <th scope="col" role="columnheader" style="width: 26%; min-width: 200px;">
-            <i class="bi bi-box-seam me-2"></i>Items Returned
-          </th>
-          <th scope="col" role="columnheader" style="width: 8%; min-width: 80px; text-align: center;">
-            <i class="bi bi-collection me-2"></i>Qty
-          </th>
-          <th scope="col" role="columnheader" style="width: 10%; min-width: 120px; text-align: right;" data-sort-keys="creditDesc,creditAsc">
-            <i class="bi bi-currency-rupee me-2"></i>Credit
-          </th>
-          <th scope="col" role="columnheader" style="width: 8%; min-width: 140px;">
-            <i class="bi bi-gear me-2"></i>Actions
-          </th>
-        </tr>
-      </thead>
-      <tbody id="returnTableBody" role="rowgroup">
-        <!-- Rows generated by App.Return.renderTable() -->
-      </tbody>
-    </table>
-  </div>
+  <!-- ═══════════════════════════════════════════════════════════
+       WASTAGE SUB-TAB (material lost or scrapped -- raw material from
+       Items Stock, or a processed item from the Warehouse Pool)
+       ═══════════════════════════════════════════════════════════ -->
+  <div id="wastageSubTab" class="return-sub-tab" style="display: none;">
 
-  <!-- Empty State -->
-  <div id="returnEmptyState"
-       class="text-center py-5 text-muted"
-       style="display: none;">
-    <div style="font-size: 48px; margin-bottom: 16px;">📤</div>
-    <h5>No Goods Returned Yet</h5>
-    <p style="margin-bottom: 20px;">
-      Log defective, excess, or wrong items sent back to a vendor — it'll be debited from Stock automatically.
-    </p>
-    <button class="btn btn-primary"
-            type="button"
-            onclick="App.Return.openReturnModal()">
-      Log First Return
-    </button>
-  </div>
+    <!-- TOOLBAR: the same one row as Returns above -- search · date · sort,
+         then the actions. The date button is built into .list-date by
+         App.ListControls (core.js), which also wires the ⇅ menu and the
+         sortable column headers below. -->
+    <div class="d-flex justify-content-between flex-wrap gap-2 mb-4 align-items-center">
 
-  <!-- Pagination -->
-  <div id="returnPagination" class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top"></div>
-
-  <!-- WASTAGE REVIEW SECTION (collapsible) -->
-  <div id="wastageReviewSection" style="display: none; margin-top: 32px;">
-    <div class="d-flex justify-content-between align-items-center mb-3 border-bottom pb-2">
-      <h5 class="fw-bold text-warning mb-0">
-        <i class="bi bi-exclamation-triangle me-2"></i>Wastage Records
-      </h5>
-      <div class="d-flex gap-2 flex-wrap align-items-center">
-        <!-- A fixed width, not just a min-width: Bootstrap's .form-control is
-             width:100%, which in this wrapping row claims a whole line, and
-             this group only ever sizes to its content, so the date and sort
-             buttons ended up underneath. -->
+      <div class="d-flex flex-grow-1 flex-wrap gap-2 align-items-center" style="max-width: 900px;">
         <input type="text"
                id="searchWastage"
-               class="form-control form-control-sm"
-               placeholder="Search by item, vendor, reason…"
-               style="flex: 0 1 auto; width: 260px; min-width: 200px;"
+               class="form-control"
+               style="flex: 1 1 240px; min-width: 200px;"
+               placeholder="Search by Wastage ID, item, colour, vendor or reason…"
                autocomplete="off"
+               aria-label="Search wastage records"
                oninput="App.Utils.debouncedFilter(this, () => App.Wastage.filterData(this.value))">
-        <!-- The date button is built into .list-date by App.ListControls
-             (core.js), which also wires the ⇅ menu and the sortable
-             column headers below. -->
+
         <div class="list-date" data-list="wastage" data-module="Wastage" data-noun="wastage records"></div>
+
         <div class="dropdown list-sort" data-list="wastage" data-module="Wastage" data-state="wastageSortBy"
              data-default="dateDesc" data-noun="wastage records">
           <button type="button" class="btn list-ctl list-sort-btn" id="wastageSortBtn"
@@ -174,11 +175,22 @@
             <li><button type="button" class="dropdown-item" data-sort="qtyAsc">Total Qty (Low&ndash;High)</button></li>
           </ul>
         </div>
-        <button class="btn btn-sm btn-success fw-bold d-none" id="btnPrintSelectedWastage" type="button" onclick="App.Wastage.printSelected()" style="white-space: nowrap;">
+      </div>
+
+      <div class="d-flex gap-2 flex-wrap justify-content-end">
+        <button class="btn btn-success fw-bold shadow-sm d-none" id="btnPrintSelectedWastage" type="button" onclick="App.Wastage.printSelected()" style="white-space: nowrap;">
           <i class="bi bi-printer"></i> Print Selected
         </button>
-        <button class="btn btn-sm btn-danger fw-bold d-none" id="btnBulkDeleteWastage" type="button" onclick="App.Wastage.bulkDelete()" style="white-space: nowrap;">
+        <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteWastage" type="button" onclick="App.Wastage.bulkDelete()" style="white-space: nowrap;">
           <i class="bi bi-trash"></i> Delete Selected
+        </button>
+        <button class="btn btn-warning fw-bold shadow-sm text-dark"
+                type="button"
+                onclick="App.Wastage.openWastageModal()"
+                aria-label="Log wastage"
+                style="white-space: nowrap; padding: 10px 20px;">
+          <i class="bi bi-exclamation-triangle me-2"></i>
+          Log Wastage
         </button>
       </div>
     </div>
@@ -213,7 +225,7 @@
     <div id="wastageEmptyState" class="text-center py-5 text-muted" style="display: none;">
       <div style="font-size: 48px; margin-bottom: 16px;">🗑️</div>
       <h5>No Wastage Records Yet</h5>
-      <p style="margin-bottom: 20px;">Log component-wise material losses — they'll be debited from Stock automatically.</p>
+      <p style="margin-bottom: 20px;">Log material lost or scrapped — raw material comes off Items Stock, and a processed item that came out defective comes off the Warehouse Pool.</p>
       <button class="btn btn-warning text-dark" type="button" onclick="App.Wastage.openWastageModal()">Log First Wastage</button>
     </div>
 
@@ -291,7 +303,7 @@
   <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
     <div class="modal-content shadow-lg">
       <div class="modal-header bg-warning text-dark">
-        <h5 class="modal-title fw-bold" id="wastageModalTitle"><i class="bi bi-exclamation-triangle me-2"></i>Log Component Wastage</h5>
+        <h5 class="modal-title fw-bold" id="wastageModalTitle"><i class="bi bi-exclamation-triangle me-2"></i>Log Wastage</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body bg-light">
@@ -313,7 +325,11 @@
             </div>
           </div>
 
-          <h6 class="text-secondary border-bottom pb-1 fw-bold">Items Wasted</h6>
+          <!-- Two sources, two tables: their columns differ (a raw item has
+               a size and a unit; a pool bucket has a colour and counts
+               pieces), and one record can hold both. A row left blank in
+               either is ignored on save, so neither table needs filling. -->
+          <h6 class="text-secondary border-bottom pb-1 fw-bold">From Items Stock <span class="fw-normal small text-muted">&mdash; raw material</span></h6>
           <div class="table-responsive">
             <table class="table table-bordered bg-white shadow-sm">
               <thead class="table-light">
@@ -330,7 +346,31 @@
             </table>
           </div>
 
-          <button type="button" class="btn btn-outline-warning btn-sm mb-3 fw-bold" onclick="App.Wastage.addRow()">+ Add Item</button>
+          <button type="button" class="btn btn-outline-warning btn-sm mb-4 fw-bold wastage-add-btn" onclick="App.Wastage.addRow()">+ Add Item</button>
+
+          <h6 class="text-secondary border-bottom pb-1 fw-bold">From Warehouse Pool <span class="fw-normal small text-muted">&mdash; a processed item that came out defective, e.g. a painted frame</span></h6>
+          <!-- Filled from getWarehousePoolData each time the form opens, so
+               the colours and the Available figures are the pool's own. -->
+          <datalist id="wastagePoolItemList"></datalist>
+          <div class="table-responsive">
+            <table class="table table-bordered bg-white shadow-sm mb-2">
+              <thead class="table-light">
+                <tr>
+                  <th scope="col">Processed Item *</th>
+                  <!-- Wide enough to read a tagged bucket whole: "Red ·
+                       Product KALPI-26 — 18 available". -->
+                  <th scope="col" style="width:33%;">Colour / Product *</th>
+                  <th scope="col" style="width:9%;">Qty (Pcs) *</th>
+                  <th scope="col" style="width:20%;">Reason for Wastage *</th>
+                  <th scope="col" style="width:5%;"><span class="visually-hidden">Remove</span></th>
+                </tr>
+              </thead>
+              <tbody id="wastagePoolItemsBody"></tbody>
+            </table>
+          </div>
+          <p id="wastagePoolEmptyHint" class="small text-muted mb-2">Nothing from the Warehouse Pool on this record.</p>
+
+          <button type="button" class="btn btn-outline-warning btn-sm mb-3 fw-bold wastage-add-btn" onclick="App.Wastage.addPoolRow()">+ Add from Warehouse Pool</button>
 
           <div class="text-end mt-2">
             <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>

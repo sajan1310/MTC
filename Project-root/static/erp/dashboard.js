@@ -195,7 +195,10 @@ App.Dashboard = {
   },
 
   _focusKey(el) {
-    return el.dataset.processid || el.dataset.productid || el.dataset.tab || '';
+    const key = el.dataset.processid || el.dataset.productid || el.dataset.tab || '';
+    // A stage with lots on two dates has a card under each, so the date is
+    // part of which one had focus.
+    return el.dataset.day ? `${key}|${el.dataset.day}` : key;
   },
 
   // Deliberately matches by iterating rather than by building a selector
@@ -252,8 +255,8 @@ App.Dashboard = {
 
       this.renderKpis(data.kpis);
       this.renderStageChart(data.pipeline, data.upcoming);
-      this.renderPipeline(data.pipeline);
-      this.renderUpcoming(data.upcoming);
+      this.renderPipeline(data.pipeline, data.pipelineByDate);
+      this.renderUpcoming(data.upcoming, data.upcomingByDate);
       this.renderLowStock(data.lowStockItems, data.lowStockTotalCount);
       this.renderReadyToDispatch(data.readyToDispatchItems, data.readyToDispatchTotalCount);
       this.renderContractorPayables(data.contractorPayables, data.contractorPayablesTotalCount);
@@ -747,6 +750,10 @@ App.Dashboard = {
       peakTitle: 'More units are sitting at this stage than at any other',
       ageTitle: days => `Oldest lot at this stage was logged ${days} day${days === 1 ? '' : 's'} ago`,
       ageSrText: days => `oldest lot ${days} day${days === 1 ? '' : 's'} old`,
+      // The same badge on a date heading, where every lot under it shares
+      // the one date.
+      dayAgeTitle: days => `Logged ${days} day${days === 1 ? '' : 's'} ago and still in progress`,
+      dayAgeSrText: days => `logged ${days} day${days === 1 ? '' : 's'} ago`,
     },
     upcoming: {
       containerId: 'dashboardUpcoming',
@@ -758,6 +765,8 @@ App.Dashboard = {
       peakTitle: 'More units are queued at this stage than at any other',
       ageTitle: days => `Oldest lot here has been waiting ${days} day${days === 1 ? '' : 's'}`,
       ageSrText: days => `waiting ${days} day${days === 1 ? '' : 's'}`,
+      dayAgeTitle: days => `Logged ${days} day${days === 1 ? '' : 's'} ago and not started yet`,
+      dayAgeSrText: days => `waiting ${days} day${days === 1 ? '' : 's'}`,
     },
   },
 
@@ -994,15 +1003,22 @@ App.Dashboard = {
     return `<svg viewBox="0 0 120 120" class="dash-donut" aria-hidden="true">${arcs}</svg>`;
   },
 
-  renderPipeline(pipeline) {
-    this._renderStageList(pipeline, this.STAGE_LISTS.pipeline);
+  renderPipeline(pipeline, byDate) {
+    this._renderStageList(pipeline, byDate, this.STAGE_LISTS.pipeline);
   },
 
-  renderUpcoming(upcoming) {
-    this._renderStageList(upcoming, this.STAGE_LISTS.upcoming);
+  renderUpcoming(upcoming, byDate) {
+    this._renderStageList(upcoming, byDate, this.STAGE_LISTS.upcoming);
   },
 
-  _renderStageList(stages, config) {
+  // `stages` are the stage totals, which the summary line and the peak
+  // badge read. `byDate` are the same lots grouped by the date each was
+  // logged, oldest first (dashboard_service._get_stage_rollups), and when
+  // present the cards are drawn under those dates: one card per stage per
+  // date, so a lot left waiting since last week no longer shares a card
+  // with this morning's. Without it -- a payload from before the server
+  // sent one -- the cards are the single grid they always were.
+  _renderStageList(stages, byDate, config) {
     const el = document.getElementById(config.containerId);
     if (!el) return;
     if (!stages || stages.length === 0) {
@@ -1025,6 +1041,13 @@ App.Dashboard = {
     const totalQty = stages.reduce((sum, p) => sum + qtyOf(p), 0);
     const totalLots = stages.reduce((sum, p) => sum + toNumber(p.totalLotCount), 0);
     const peakQty = Math.max(...stages.map(qtyOf));
+    // "Longest queue" / "most WIP" is a fact about a STAGE, so it is read
+    // off the stage totals even when the cards are split by date -- a stage
+    // holding the most units overall keeps the badge on each of its cards,
+    // rather than whichever single day happened to be biggest.
+    const peakIds = new Set(stages.length > 1 && peakQty > 0
+      ? stages.filter(p => qtyOf(p) === peakQty).map(p => p.processId)
+      : []);
 
     const summary =
       `<div class="dash-wip-summary">
@@ -1033,49 +1056,101 @@ App.Dashboard = {
          <span>across <strong>${stages.length}</strong> stage${stages.length === 1 ? '' : 's'}</span>
        </div>`;
 
-    const cards = stages.map((p, i) => {
-      const qty = qtyOf(p);
-      const isPeak = qty === peakQty && peakQty > 0;
-      const groups = this._informativeGroups(p);
-      const shown = groups.slice(0, this.PIPELINE_CHIP_LIMIT);
-      const hidden = groups.length - shown.length;
+    if (Array.isArray(byDate) && byDate.length) {
+      el.innerHTML = summary + byDate.map(day => this._stageDayHtml(day, peakIds, config)).join('');
+      return;
+    }
 
-      const chips = groups.length === 0 ? '' : `
-        <span class="dash-wip-chips">
-          ${shown.map(g => `
-            <span class="dash-wip-chip" title="${escapeHtml(g.title)}">
-              <span class="dash-wip-chip-title">${escapeHtml(g.title)}</span>
-              <span class="dash-wip-chip-qty">${formatQty(g.qty)}</span>
-            </span>`).join('')}
-          ${hidden > 0 ? `<span class="dash-wip-chip dash-wip-chip-more">+${hidden} more</span>` : ''}
-        </span>`;
-
-      const flags = `
-        <span class="dash-wip-flags">
-          ${isPeak && stages.length > 1
-            ? `<span class="dash-wip-peak" title="${escapeHtml(config.peakTitle)}">${escapeHtml(config.peakLabel)}</span>`
-            : ''}
-          ${this._ageBadge(p, config)}
-        </span>`;
-
-      return `
-        <button type="button" class="dash-wip-card" data-action="dash-pipeline-stage"
-                data-processid="${encodeURIComponent(p.processId)}"
-                title="View ${escapeHtml(p.processName)} in Production">
-          <span class="dash-wip-card-head">
-            <span class="dash-wip-seq">${i + 1}</span>
-            <span class="dash-wip-name">${escapeHtml(p.processName)}</span>
-          </span>
-          <span class="dash-wip-card-figure">
-            <span class="dash-wip-qty">${formatQty(qty)}<small> units</small></span>
-            <span class="dash-wip-lots">${p.totalLotCount} lot${p.totalLotCount === 1 ? '' : 's'}</span>
-          </span>
-          ${flags}
-          ${chips}
-        </button>`;
-    }).join('');
-
+    const cards = stages
+      .map((p, i) => this._stageCardHtml(p, i, config, { isPeak: peakIds.has(p.processId) }))
+      .join('');
     el.innerHTML = summary + `<div class="dash-wip-grid" data-variant="${config.variant}">${cards}</div>`;
+  },
+
+  // One date's lots: a heading saying when, and how much, over the same
+  // card grid. The age badge moves off the cards onto the heading -- every
+  // lot under it shares the one date, so on each card it would only repeat
+  // itself -- and today and yesterday are named rather than aged.
+  _stageDayHtml(day, peakIds, config) {
+    const age = day.ageDays;
+    const word = age === 0 ? 'Today' : age === 1 ? 'Yesterday' : '';
+    const date = this._dayDate(day.date);
+    const headId = `${config.containerId}-day-${day.date || 'undated'}`;
+    const lots = toNumber(day.totalLotCount);
+
+    const heading = `
+      <h4 class="dash-wip-day-head" id="${escapeHtml(headId)}">
+        <span class="dash-wip-day-name">${escapeHtml(word || date || 'No date')}</span>
+        ${word && date ? `<span class="dash-wip-day-date">${escapeHtml(date)}</span>` : ''}
+        ${word ? '' : this._ageBadge({ oldestDays: age },
+          { ageTitle: config.dayAgeTitle, ageSrText: config.dayAgeSrText })}
+        <span class="dash-wip-day-sum"><strong>${formatQty(day.totalQty)}</strong> units
+          &middot; ${lots} lot${lots === 1 ? '' : 's'}</span>
+      </h4>`;
+
+    const cards = (day.stages || [])
+      .map((p, i) => this._stageCardHtml(p, i, config,
+        { isPeak: peakIds.has(p.processId), showAge: false, day: day.date || 'undated' }))
+      .join('');
+
+    return `
+      <div class="dash-wip-day">
+        ${heading}
+        <div class="dash-wip-grid" data-variant="${config.variant}" aria-labelledby="${escapeHtml(headId)}">${cards}</div>
+      </div>`;
+  },
+
+  // "27 Sep 2026", the wording the list toolbars' date button uses. Built
+  // from the parts rather than new Date(iso): a bare ISO date parses as UTC
+  // midnight, which a browser west of Greenwich shows as the day before.
+  _dayDate(iso) {
+    const [y, m, d] = String(iso || '').split('-').map(Number);
+    if (!y || !m || !d) return '';
+    return `${d} ${App.ListControls.MONTHS[m - 1]} ${y}`;
+  },
+
+  // One stage's card. `day` names the date group it sits in, so focus can
+  // find it again after a refresh; `showAge` is off under a date heading,
+  // which carries the age for every card below it.
+  _stageCardHtml(p, i, config, { isPeak = false, showAge = true, day = '' } = {}) {
+    const qty = toNumber(p.totalQty);
+    const groups = this._informativeGroups(p);
+    const shown = groups.slice(0, this.PIPELINE_CHIP_LIMIT);
+    const hidden = groups.length - shown.length;
+
+    const chips = groups.length === 0 ? '' : `
+      <span class="dash-wip-chips">
+        ${shown.map(g => `
+          <span class="dash-wip-chip" title="${escapeHtml(g.title)}">
+            <span class="dash-wip-chip-title">${escapeHtml(g.title)}</span>
+            <span class="dash-wip-chip-qty">${formatQty(g.qty)}</span>
+          </span>`).join('')}
+        ${hidden > 0 ? `<span class="dash-wip-chip dash-wip-chip-more">+${hidden} more</span>` : ''}
+      </span>`;
+
+    // Left out altogether when there is nothing to flag: the card is a
+    // flex column with a gap, and an empty row would still take one.
+    const flagged = [
+      isPeak ? `<span class="dash-wip-peak" title="${escapeHtml(config.peakTitle)}">${escapeHtml(config.peakLabel)}</span>` : '',
+      showAge ? this._ageBadge(p, config) : ''
+    ].join('');
+    const flags = flagged ? `<span class="dash-wip-flags">${flagged}</span>` : '';
+
+    return `
+      <button type="button" class="dash-wip-card" data-action="dash-pipeline-stage"
+              data-processid="${encodeURIComponent(p.processId)}"${day ? ` data-day="${escapeHtml(day)}"` : ''}
+              title="View ${escapeHtml(p.processName)} in Production">
+        <span class="dash-wip-card-head">
+          <span class="dash-wip-seq">${i + 1}</span>
+          <span class="dash-wip-name">${escapeHtml(p.processName)}</span>
+        </span>
+        <span class="dash-wip-card-figure">
+          <span class="dash-wip-qty">${formatQty(qty)}<small> units</small></span>
+          <span class="dash-wip-lots">${p.totalLotCount} lot${p.totalLotCount === 1 ? '' : 's'}</span>
+        </span>
+        ${flags}
+        ${chips}
+      </button>`;
   },
 
   async openPipelineStage(processId) {

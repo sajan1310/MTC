@@ -2620,6 +2620,37 @@
     color: var(--text-primary);
   }
 
+  /* One block per production date, oldest first (App.Dashboard.
+     _stageDayHtml): a heading naming the date, its age and its share of
+     the units, over that date's own card grid. Quieter than the In
+     Progress / Upcoming subheads above it, which it sits under. */
+  .dash-wip-day + .dash-wip-day {
+    margin-top: 14px;
+  }
+
+  .dash-wip-day-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+    margin: 0 0 8px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .dash-wip-day-date,
+  .dash-wip-day-sum {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-muted);
+  }
+
+  .dash-wip-day-sum strong {
+    font-family: Outfit, sans-serif;
+    color: var(--text-secondary);
+  }
+
   /* auto-fill, not auto-fit: with two or three stages, auto-fit would
      stretch each card across a third of a metre of screen and undo the
      whole point of the change. auto-fill keeps a card card-sized and lets

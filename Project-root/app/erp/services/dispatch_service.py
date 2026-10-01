@@ -195,8 +195,8 @@ def _compute_ready_to_dispatch_map(cur) -> dict:
     }
 
     cur.execute(
-        "SELECT output_item_name, process_id, product_tag, color, produced_qty, consumed_qty "
-        "FROM erp.warehouse_pool WHERE counts_toward_total"
+        "SELECT output_item_name, process_id, product_tag, color, produced_qty, consumed_qty, "
+        "wasted_qty FROM erp.warehouse_pool WHERE counts_toward_total"
     )
     pool_rows = cur.fetchall()
     if not pool_rows:
@@ -270,6 +270,7 @@ def _compute_ready_to_dispatch_map(cur) -> dict:
                 "differentiator": diff_value,
                 "producedQty": 0.0,
                 "dispatchedQty": 0.0,
+                "wastedQty": 0.0,
                 # One Product Tag can accumulate credits from several
                 # Completed lots logged with different Colors to Produce
                 # combinations. The aggregate above is color-blind by design,
@@ -279,16 +280,23 @@ def _compute_ready_to_dispatch_map(cur) -> dict:
             },
         )
         produced = float(r["produced_qty"] or 0)
-        consumed = float(r["consumed_qty"] or 0)
+        # A finished-goods bucket's consumption is its dispatches -- plus,
+        # since migration 048, anything written off as wastage. That part is
+        # carried on its own so it is not reported as shipped; Ready is still
+        # produced - consumed, exactly as before.
+        wasted = float(r["wasted_qty"] or 0)
+        dispatched = float(r["consumed_qty"] or 0) - wasted
         entry["producedQty"] += produced
-        entry["dispatchedQty"] += consumed
+        entry["dispatchedQty"] += dispatched
+        entry["wastedQty"] += wasted
 
         color_label = str(r["color"] or "").strip()
         color_entry = entry["colors"].setdefault(
-            color_label, {"producedQty": 0.0, "dispatchedQty": 0.0}
+            color_label, {"producedQty": 0.0, "dispatchedQty": 0.0, "wastedQty": 0.0}
         )
         color_entry["producedQty"] += produced
-        color_entry["dispatchedQty"] += consumed
+        color_entry["dispatchedQty"] += dispatched
+        color_entry["wastedQty"] += wasted
 
     return result
 
@@ -323,7 +331,7 @@ def _ready_available_qty_for(ready_map: dict, product_id: str) -> float:
     for k, entry in ready_map.items():
         base = k.split("||", 1)[0]
         if base in wanted:
-            total += entry["producedQty"] - entry["dispatchedQty"]
+            total += entry["producedQty"] - entry["dispatchedQty"] - entry["wastedQty"]
     return total
 
 
@@ -505,7 +513,10 @@ def get_ready_to_dispatch_data():
             "differentiator": r["differentiator"],
             "producedQty": r["producedQty"],
             "dispatchedQty": r["dispatchedQty"],
-            "readyQty": r["producedQty"] - r["dispatchedQty"],
+            # Finished goods written off as wastage (migration 048) -- gone,
+            # but not dispatched.
+            "wastedQty": r["wastedQty"],
+            "readyQty": r["producedQty"] - r["dispatchedQty"] - r["wastedQty"],
             # Committed to other still-open Dispatch Plan cards. Pooled per
             # productId the same way the plan's own availability GUARD pools
             # it (see _ready_available_qty_for) -- not scoped to this row's
@@ -523,7 +534,10 @@ def get_ready_to_dispatch_data():
                         "color": color,
                         "producedQty": c["producedQty"],
                         "dispatchedQty": c["dispatchedQty"],
-                        "readyQty": c["producedQty"] - c["dispatchedQty"],
+                        "wastedQty": c["wastedQty"],
+                        "readyQty": c["producedQty"]
+                        - c["dispatchedQty"]
+                        - c["wastedQty"],
                     }
                     for color, c in r["colors"].items()
                 ),

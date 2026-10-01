@@ -248,7 +248,6 @@ def _propagate_item_identity_change(
         "BILL_LINES",
         "BOM_LINES",
         "RETURN_LINES",
-        "WASTAGE_LINES",
         "ISSUE_LINES",
     ):
         table = config_maps.TABLE_NAMES.get(sheet_key)
@@ -256,6 +255,23 @@ def _propagate_item_identity_change(
             rename_utils.rename_composite_key(
                 cur, table, "item_name", "size", old_name, old_size, new_name, new_size
             )
+
+    # Wastage: only ITEM lines, for the reason Process Components below
+    # gives -- a line written off the Warehouse Pool (migration 048) names an
+    # upstream process's Output Item Name, which process_service's
+    # _rename_pool_output_item_name_everywhere renames.
+    if table := config_maps.TABLE_NAMES.get("WASTAGE_LINES"):
+        rename_utils.rename_composite_key(
+            cur,
+            table,
+            "item_name",
+            "size",
+            old_name,
+            old_size,
+            new_name,
+            new_size,
+            extra_where=" AND source_type != 'POOL'",
+        )
 
     # Stock Group membership is a set, one row per item/size per group, and
     # the only rename target here with a unique index on the key. Merging two
@@ -410,9 +426,10 @@ def _get_item_keys_in_use(cur, items: list) -> set:
 # item -- whether that's leftover damage from before a fix existed, or a
 # brand new gap in a cascade that hasn't been added yet.
 #
-# POOL-sourced rows (Process Components / Production Components Consumed)
-# are skipped -- their "item name" is an upstream process's Output Item
-# Name (Warehouse Pool), not an Items Master reference.
+# POOL-sourced rows (Process Components / Production Components Consumed /
+# Wastage written off the pool) are skipped -- their "item name" is an
+# upstream process's Output Item Name (Warehouse Pool), not an Items Master
+# reference.
 
 
 def _get_valid_item_identity_keys(cur) -> set:
@@ -532,7 +549,7 @@ def get_item_identity_drift_report():
             """
             SELECT h.wastage_id, l.item_name, l.size
             FROM erp.wastage_lines l JOIN erp.wastage_headers h ON h.id = l.header_id
-            WHERE h.deleted_at IS NULL
+            WHERE h.deleted_at IS NULL AND l.source_type != 'POOL'
             """
         )
         for row in cur.fetchall():
@@ -1785,6 +1802,7 @@ def get_item_ledger_data(item_name):
             FROM erp.wastage_lines l
             JOIN erp.wastage_headers h ON h.id = l.header_id
             WHERE h.deleted_at IS NULL AND lower(btrim(l.item_name)) = %s
+              AND l.source_type != 'POOL'
             """,
             (target_lower,),
         )

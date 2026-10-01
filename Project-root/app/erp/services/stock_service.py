@@ -141,6 +141,11 @@ def _iter_completed_production_components(cur):
 #   - every header filtered on deleted_at IS NULL
 #   - a blank item name is skipped (`if not key.split("|")[0]: continue`)
 #   - keys are lower(strip(...)), matching f'{name.strip().lower()}|{size...}'
+#
+# A wastage line written off the Warehouse Pool (source_type 'POOL',
+# migration 048) is excluded: it names a pool bucket, not an Items Master
+# item, and debits the pool instead -- the same split production's POOL
+# components already have.
 _MOVEMENT_SQL = """
     SELECT lower(btrim(item_name))                  AS name_k,
            lower(btrim(COALESCE(size, '')))         AS size_k,
@@ -159,7 +164,7 @@ _MOVEMENT_SQL = """
         SELECT l.item_name, l.size, -l.base_qty
           FROM erp.wastage_lines l
           JOIN erp.wastage_headers h ON h.id = l.header_id
-         WHERE h.deleted_at IS NULL
+         WHERE h.deleted_at IS NULL AND l.source_type <> 'POOL'
         UNION ALL
         SELECT l.item_name, l.size, -l.base_qty
           FROM erp.issue_lines l
@@ -240,7 +245,7 @@ _MOVEMENT_SQL_FOR_ITEMS = """
         SELECT l.item_name, l.size, -l.base_qty
           FROM erp.wastage_lines l
           JOIN erp.wastage_headers h ON h.id = l.header_id
-         WHERE h.deleted_at IS NULL
+         WHERE h.deleted_at IS NULL AND l.source_type <> 'POOL'
            AND (lower(l.item_name), lower(COALESCE(l.size, ''))) IN %(keys)s
         UNION ALL
         SELECT l.item_name, l.size, -l.base_qty
