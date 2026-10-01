@@ -147,7 +147,7 @@ App.Dispatch = {
         <td><strong>${escapeHtml(r.productName)}</strong></td>
         <td class="text-center">${App.Production.formatQty(r.producedQty)}</td>
         <td class="text-center">${App.Production.formatQty(r.dispatchedQty)}</td>
-        <td class="text-center ${readyClass}">${App.Production.formatQty(r.readyQty)}</td>
+        <td class="text-center ${readyClass}">${App.Production.formatQty(r.readyQty)}${this.wastedNote(r.wastedQty)}</td>
         <td class="text-center">${colorsCell}</td>
         <td class="text-center">
           <button class="btn btn-sm btn-success btn-action" ${r.readyQty > 0 ? '' : 'disabled'} onclick="App.Dispatch.openCreateDispatchModal('${escapeHtml(r.productId)}')">Dispatch</button>
@@ -156,6 +156,15 @@ App.Dispatch = {
     });
 
     tbody.innerHTML = html;
+  },
+
+  // Finished goods written off as wastage are neither dispatched nor ready,
+  // so without this line Produced - Dispatched would not come to Ready and
+  // nothing on the row would say why.
+  wastedNote(wastedQty) {
+    return wastedQty > 0
+      ? `<div class="small text-muted fw-normal">${App.Production.formatQty(wastedQty)} wasted</div>`
+      : '';
   },
 
   // Read-only detail popup for one row's own color makeup -- see
@@ -185,7 +194,7 @@ App.Dispatch = {
           <td>${colorCell}</td>
           <td class="text-center">${App.Production.formatQty(c.producedQty)}</td>
           <td class="text-center">${App.Production.formatQty(c.dispatchedQty)}</td>
-          <td class="text-center ${readyClass}">${App.Production.formatQty(c.readyQty)}</td>
+          <td class="text-center ${readyClass}">${App.Production.formatQty(c.readyQty)}${this.wastedNote(c.wastedQty)}</td>
         </tr>`;
       }).join('');
       body.innerHTML = rows || '<tr><td colspan="4" class="text-center text-muted p-3">No color data recorded for this product.</td></tr>';

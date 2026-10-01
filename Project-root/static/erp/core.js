@@ -220,8 +220,8 @@ const App = {
     returnSortBy: 'dateDesc',
     selectedReturns: [],
 
-    // Wastage Log's own pagination/filter/selection state -- nested inside
-    // the Return Ledger tab/view (Script_Return.html's App.Wastage).
+    // Wastage Log's own pagination/filter/selection state -- the Return
+    // Ledger tab's Wastage sub-tab (Script_Return.html's App.Wastage).
     globalWastage: [],
     filteredWastage: [],
     wastageCurrentPage: 1,
@@ -632,6 +632,7 @@ const App = {
       return: {
         tab: 'returnLedger',
         async goto(value) {
+          App.Return.switchSubTab('returnsSubTab');
           await App.Return.loadData();
           const idx = App.State.globalReturns.findIndex(r => String(r.returnNumber) === String(value));
           if (idx > -1) App.Return.openEditModal(idx);
@@ -2440,7 +2441,7 @@ const App = {
       } else if (id === 'billLedger' && typeof App.Bill !== 'undefined') {
         loadPromise = App.Bill.loadData();
       } else if (id === 'returnLedger' && typeof App.Return !== 'undefined') {
-        loadPromise = App.Return.loadData();
+        loadPromise = App.Return.enterTab();
       } else if (id === 'stockTab' && typeof App.Stock !== 'undefined') {
         loadPromise = App.Stock.loadData();
       } else if (id === 'productsTab' && typeof App.Products !== 'undefined') {

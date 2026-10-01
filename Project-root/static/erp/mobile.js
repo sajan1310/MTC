@@ -10024,6 +10024,11 @@ MApp.Issue = {
 // ================================================================
 // WASTAGE LOG (Phase 3, More tab) — read + create + delete, same scope
 // call as Issued Stock above (no edit-existing UI on mobile).
+//
+// A line is raw material off Items Stock, or -- since migration 048 -- a
+// processed item off the Warehouse Pool (a painted frame that came out
+// defective): sourceType 'POOL', named by its bucket's item, colour and
+// product tag, as desktop's form sends it.
 // ================================================================
 MApp.Wastage = {
   SELECT: {
@@ -10039,6 +10044,7 @@ MApp.Wastage = {
       { key: 'vendor', weight: 9, label: 'Vendor' },
       { key: 'items', weight: 8, label: 'Item', get: r => (r.items || []).map(i => i && i.name) },
       { key: 'sizes', weight: 4, label: 'Size', get: r => (r.items || []).map(i => i && i.size) },
+      { key: 'colors', weight: 4, label: 'Colour', get: r => (r.items || []).map(i => i && i.color) },
       { key: 'remarks', weight: 3, label: 'Remarks' },
       { key: 'date', weight: 2, label: 'Date', get: r => MApp.Util.formatDateDisplay(r.dateRaw) }
     ]
@@ -10048,7 +10054,28 @@ MApp.Wastage = {
   filtered: [],
   searchTerm: '',
   items: [],
+  // Warehouse Pool buckets a line can be written off (sub-group buckets
+  // excluded -- they hold no stock of their own), and process names for
+  // the picker, both fetched as the form opens.
+  poolBuckets: [],
+  processNames: {},
   lines: [],
+
+  _blankLine(sourceType = 'ITEM') {
+    return sourceType === 'POOL'
+      ? { sourceType: 'POOL', name: '', color: '', productTag: '', unit: 'Pcs', qty: '', reason: '', picked: false }
+      : { sourceType: 'ITEM', name: '', size: '', unit: 'Pcs', qty: '', reason: '' };
+  },
+
+  // A pool line is told apart by its colour (and product, if tagged), an
+  // item line by its size.
+  _lineName(it) {
+    if (!it) return '';
+    const detail = it.sourceType === 'POOL'
+      ? [it.color, it.productTag].filter(Boolean).join(' · ')
+      : it.size;
+    return `${it.name || ''}${detail ? ` (${detail})` : ''}`;
+  },
 
   async open() {
     const listEl = document.getElementById('wastage-log-list');
@@ -10087,7 +10114,8 @@ MApp.Wastage = {
       columns: [
         { label: 'Date', get: r => MApp.Util.formatDateDisplay(r.rec.dateRaw) },
         { label: 'Vendor', get: r => MApp.Util.formatNameCase(r.rec.vendor || '') },
-        { label: 'Item', get: r => (r.it && r.it.name) || '' },
+        // A pool line's colour goes with its name; it has no size.
+        { label: 'Item', get: r => (r.it && r.it.sourceType === 'POOL' ? this._lineName(r.it) : (r.it && r.it.name)) || '' },
         { label: 'Size', get: r => (r.it && r.it.size) || '' },
         { label: 'Qty', align: 'right', get: r => MApp.Util.formatQty(r.it && r.it.qty) },
         { label: 'Remarks', get: r => r.rec.remarks || '' }
@@ -10189,7 +10217,10 @@ MApp.Wastage = {
     const page = MApp.Paging.take('wastage', this.filtered, () => this.render());
     MApp.SearchBox.setCount('wastage-log-search', page.shown, page.total, page.meta);
     listEl.innerHTML = page.rows.map((r, i) => {
-      const itemSummary = (r.items || []).map(it => `${MApp.Util.escapeHtml(it.name)} (${MApp.Util.formatQty(it.qty)} ${MApp.Util.escapeHtml(it.unit || '')})`).join(', ');
+      const itemSummary = (r.items || []).map(it => {
+        const colour = it.sourceType === 'POOL' && it.color ? ` · ${MApp.Util.escapeHtml(it.color)}` : '';
+        return `${MApp.Util.escapeHtml(it.name)}${colour} (${MApp.Util.formatQty(it.qty)} ${MApp.Util.escapeHtml(it.unit || '')})`;
+      }).join(', ');
       return `
       <div class="mb-card">
         <div class="mb-card-row">
@@ -10232,11 +10263,16 @@ MApp.Wastage = {
     this.editingWastageId = record ? record.wastageId : null;
     this._editingRecord = record || null;
     this.lines = record && (record.items || []).length
-      ? record.items.map(it => ({
-        name: it.name || '', size: it.size || '', unit: it.unit || 'Pcs',
-        qty: it.qty, reason: it.reason || ''
-      }))
-      : [{ name: '', size: '', unit: 'Pcs', qty: '', reason: '' }];
+      ? record.items.map(it => (it.sourceType === 'POOL'
+        ? {
+          sourceType: 'POOL', name: it.name || '', color: it.color || '', productTag: it.productTag || '',
+          unit: 'Pcs', qty: it.qty, reason: it.reason || '', picked: true
+        }
+        : {
+          sourceType: 'ITEM', name: it.name || '', size: it.size || '', unit: it.unit || 'Pcs',
+          qty: it.qty, reason: it.reason || ''
+        }))
+      : [this._blankLine()];
 
     const titleEl = document.querySelector('#sheet-wastage-form h2');
     if (titleEl) titleEl.textContent = record ? 'Edit Wastage' : 'Log Wastage';
@@ -10253,10 +10289,24 @@ MApp.Wastage = {
 
     try {
       // Always refetch (not just "if empty") so an item added earlier in
-      // this same session shows up in the picker without a page reload.
-      const itemsRes = await MApp.Api.call('getItemsData');
+      // this same session shows up in the picker without a page reload --
+      // and the pool's colours and Available figures are today's. A pool
+      // that will not load leaves Items Stock lines working; the process
+      // names are only labels.
+      const [itemsRes, poolRes, procRes] = await Promise.all([
+        MApp.Api.call('getItemsData'),
+        MApp.Api.call('getWarehousePoolData').catch(() => null),
+        MApp.Api.callCached('getProcessData').catch(() => null)
+      ]);
       if (stale()) return;
       this.items = (itemsRes && itemsRes.success) ? (itemsRes.data || []) : [];
+      this.poolLoadFailed = !(poolRes && poolRes.success);
+      this.poolBuckets = (poolRes && poolRes.success ? (poolRes.data || []) : [])
+        .filter(b => String(b.outputItemName || '').trim() && b.countsTowardTotal !== false);
+      this.processNames = {};
+      (procRes && procRes.success ? (procRes.data || []) : []).forEach(p => {
+        this.processNames[p.processId] = p.processName;
+      });
       document.getElementById('wastage-form-body').innerHTML = this._formHtml();
     } catch (err) {
       MApp.Toast.error('Could not load reference data: ' + (err.message || ''));
@@ -10288,7 +10338,8 @@ MApp.Wastage = {
 
       <div class="mapp-section-label">Items</div>
       <div id="wastage-form-lines">${this._linesHtml()}</div>
-      <button type="button" class="mb-btn mb-btn-secondary mb-mt-2 mb-mb-4" onclick="MApp.Wastage.addLine()">+ Add Item</button>
+      <button type="button" class="mb-btn mb-btn-secondary mb-mt-2" onclick="MApp.Wastage.addLine()">+ Add Item</button>
+      <button type="button" class="mb-btn mb-btn-secondary mb-mt-2 mb-mb-4" onclick="MApp.Wastage.addLine('POOL')">+ Add from Warehouse Pool</button>
 
       <div class="mb-field">
         <label for="wastage-form-remarks">Remarks (optional)</label>
@@ -10299,36 +10350,144 @@ MApp.Wastage = {
 
   _linesHtml() {
     if (this.lines.length === 0) return '<div class="mb-text-sm mb-text-steel mb-mb-2">No items added yet.</div>';
+    const esc = MApp.Util.escapeHtml;
     return this.lines.map((line, i) => `
       <div class="mb-card" style="padding:var(--mb-sp-3);">
+        ${line.sourceType === 'POOL' ? `
+        <div class="mb-card-sub mb-mb-2">From Warehouse Pool</div>
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Processed item</label>
+          <button type="button" class="mb-picker-field${line.name ? '' : ' mb-placeholder'}" onclick="MApp.Wastage.pickPoolItem(${i})">${line.name ? esc(line.name) : 'Choose a processed item...'}</button>
+        </div>
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Colour</label>
+          <button type="button" class="mb-picker-field${line.picked ? '' : ' mb-placeholder'}" onclick="MApp.Wastage.pickPoolBucket(${i})"${line.name ? '' : ' disabled'}>${line.picked ? esc(this._bucketLabel(line.productTag, line.color)) : 'Choose a colour...'}</button>
+        </div>
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Quantity (pcs)</label>
+          <input type="number" inputmode="numeric" min="0" step="1" value="${line.qty === '' ? '' : line.qty}" oninput="MApp.Wastage.updateLine(${i}, 'qty', this.value)">
+        </div>` : `
         <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
           <label>Item</label>
-          <button type="button" class="mb-picker-field${line.name ? '' : ' mb-placeholder'}" onclick="MApp.Wastage.pickLineItem(${i})">${line.name ? MApp.Util.escapeHtml(line.name) + (line.size ? ` (${MApp.Util.escapeHtml(line.size)})` : '') : 'Choose an item...'}</button>
+          <button type="button" class="mb-picker-field${line.name ? '' : ' mb-placeholder'}" onclick="MApp.Wastage.pickLineItem(${i})">${line.name ? esc(line.name) + (line.size ? ` (${esc(line.size)})` : '') : 'Choose an item...'}</button>
         </div>
         <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
           <label>Quantity</label>
           <input type="number" inputmode="decimal" min="0" step="1" value="${line.qty === '' ? '' : line.qty}" oninput="MApp.Wastage.updateLine(${i}, 'qty', this.value)">
-        </div>
+        </div>`}
         <div class="mb-field" style="margin-bottom:0;">
           <label>Reason</label>
-          <input type="text" value="${MApp.Util.escapeHtml(line.reason || '')}" oninput="MApp.Wastage.updateLineText(${i}, 'reason', this.value)">
+          <input type="text" value="${esc(line.reason || '')}" oninput="MApp.Wastage.updateLineText(${i}, 'reason', this.value)">
         </div>
         ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" onclick="MApp.Wastage.removeLine(${i})">Remove</button>` : ''}
       </div>
     `).join('');
   },
 
-  addLine() {
-    this.lines.push({ name: '', size: '', unit: 'Pcs', qty: '', reason: '' });
+  _renderLines() {
     const el = document.getElementById('wastage-form-lines');
     if (el) el.innerHTML = this._linesHtml();
   },
 
+  addLine(sourceType = 'ITEM') {
+    this.lines.push(this._blankLine(sourceType));
+    this._renderLines();
+  },
+
   removeLine(i) {
     this.lines.splice(i, 1);
-    if (this.lines.length === 0) this.lines.push({ name: '', size: '', unit: 'Pcs', qty: '', reason: '' });
-    const el = document.getElementById('wastage-form-lines');
-    if (el) el.innerHTML = this._linesHtml();
+    if (this.lines.length === 0) this.lines.push(this._blankLine());
+    this._renderLines();
+  },
+
+  // ── Warehouse Pool lines ─────────────────────────────────────────────
+  // A bucket is (Output Item Name, Product Tag, Colour) -- desktop's form
+  // keys it the same way, with the same U+241F separator.
+  _bucketKey(productTag, color) {
+    return `${productTag || ''}␟${color || ''}`;
+  },
+
+  _bucketLabel(productTag, color) {
+    return [color || 'No colour', productTag ? `Product ${productTag}` : ''].filter(Boolean).join(' · ');
+  },
+
+  _bucketsFor(name) {
+    const key = String(name || '').trim().toLowerCase();
+    return (this.poolBuckets || [])
+      .filter(b => String(b.outputItemName).trim().toLowerCase() === key)
+      .sort((a, b) => String(a.color || '').localeCompare(String(b.color || ''))
+        || String(a.productTag || '').localeCompare(String(b.productTag || '')));
+  },
+
+  async pickPoolItem(i) {
+    const line = this.lines[i];
+    if (!line) return;
+    const byName = new Map();
+    (this.poolBuckets || []).forEach(b => {
+      const name = String(b.outputItemName).trim();
+      const entry = byName.get(name.toLowerCase()) || { name, processes: new Set(), available: 0 };
+      if (this.processNames[b.processId]) entry.processes.add(this.processNames[b.processId]);
+      entry.available += Number(b.availableQty) || 0;
+      byName.set(name.toLowerCase(), entry);
+    });
+    if (!byName.size) {
+      MApp.Toast.error(this.poolLoadFailed
+        ? 'The Warehouse Pool could not be loaded. Close this form and open it again.'
+        : 'There is nothing in the Warehouse Pool to write off.');
+      return;
+    }
+    const items = [...byName.values()]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(e => ({
+        value: e.name, label: e.name, sublabel: [...e.processes].join(', '),
+        detail: `${MApp.Util.formatQty(e.available)} available`
+      }));
+    const picked = await MApp.Picker.open({ title: 'Choose a processed item', items, selectedValue: line.name });
+    if (!picked || this.lines[i] !== line) return;
+    if (picked.value !== line.name) {
+      // Another item, other buckets: a colour chosen for the last one would
+      // be the wrong shelf.
+      line.color = '';
+      line.productTag = '';
+      line.picked = false;
+    }
+    line.name = picked.value;
+    const buckets = this._bucketsFor(line.name);
+    if (buckets.length === 1) {
+      line.color = buckets[0].color || '';
+      line.productTag = buckets[0].productTag || '';
+      line.picked = true;
+    }
+    this._renderLines();
+  },
+
+  async pickPoolBucket(i) {
+    const line = this.lines[i];
+    if (!line || !line.name) return;
+    const buckets = this._bucketsFor(line.name);
+    if (!buckets.length) {
+      MApp.Toast.error(`"${line.name}" is not in the Warehouse Pool any more.`);
+      return;
+    }
+    const items = buckets.map(b => ({
+      value: this._bucketKey(b.productTag, b.color),
+      label: b.color || 'No colour',
+      sublabel: b.productTag ? `Product ${b.productTag}` : '',
+      detail: `${MApp.Util.formatQty(b.availableQty)} available`
+    }));
+    const picked = await MApp.Picker.open({
+      title: 'Choose the colour',
+      items,
+      selectedValue: line.picked ? this._bucketKey(line.productTag, line.color) : null,
+      searchable: items.length > 6
+    });
+    if (!picked || this.lines[i] !== line) return;
+    const bucket = buckets.find(b => this._bucketKey(b.productTag, b.color) === picked.value);
+    if (!bucket) return;
+    line.color = bucket.color || '';
+    line.productTag = bucket.productTag || '';
+    line.picked = true;
+    this._renderLines();
   },
 
   updateLine(i, key, value) {
@@ -10355,11 +10514,15 @@ MApp.Wastage = {
     this.lines[i].size = match ? match.size : '';
     this.lines[i].unit = match ? match.baseUnit : 'Pcs';
 
-    const el = document.getElementById('wastage-form-lines');
-    if (el) el.innerHTML = this._linesHtml();
+    this._renderLines();
   },
 
   async save() {
+    const unpicked = this.lines.find(l => l.sourceType === 'POOL' && l.name && !l.picked);
+    if (unpicked) {
+      MApp.Toast.error(`Choose which colour of "${unpicked.name}" was wasted.`);
+      return;
+    }
     const validLines = this.lines.filter(l => l.name && l.qty > 0);
     if (validLines.length === 0) {
       MApp.Toast.error('Add at least one item with a name and quantity greater than zero.');
@@ -10370,7 +10533,15 @@ MApp.Wastage = {
       date: document.getElementById('wastage-form-date')?.value || MApp.Util.todayInputValue(),
       vendor: (document.getElementById('wastage-form-vendor')?.value || '').trim(),
       remarks: (document.getElementById('wastage-form-remarks')?.value || '').trim(),
-      items: JSON.stringify(validLines.map(l => ({ name: l.name, size: l.size || '', unit: l.unit || 'Pcs', qty: l.qty, reason: l.reason || '' })))
+      items: JSON.stringify(validLines.map(l => (l.sourceType === 'POOL'
+        ? {
+          sourceType: 'POOL', name: l.name, color: l.color || '', productTag: l.productTag || '',
+          unit: 'Pcs', qty: l.qty, reason: l.reason || ''
+        }
+        : {
+          sourceType: 'ITEM', name: l.name, size: l.size || '', unit: l.unit || 'Pcs',
+          qty: l.qty, reason: l.reason || ''
+        })))
     };
     if (this.editingWastageId) formData.existingWastageId = this.editingWastageId;
 
@@ -10378,10 +10549,14 @@ MApp.Wastage = {
     const saveBtn = document.getElementById('wastage-form-save-btn');
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
 
-    const res = await MApp.Util.mutateSimple(
-      'saveWastage', [formData], isEdit ? 'Wastage updated.' : 'Wastage logged.'
-    );
+    // The server's own message, not a fixed one: a write-off taking more
+    // than the pool holds saves with a Warning in it, and the operator
+    // should see that rather than a plain "logged" (the Log Lot form shows
+    // its pool warning the same way).
+    const res = await MApp.Util.mutateSimple('saveWastage', [formData], null);
     if (res.success) {
+      const message = res.message || (isEdit ? 'Wastage updated.' : 'Wastage logged.');
+      (String(message).includes('Warning') ? MApp.Toast.error : MApp.Toast.success).call(MApp.Toast, message);
       this.closeForm();
       this.open();
       return;

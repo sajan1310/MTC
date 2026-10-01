@@ -282,6 +282,12 @@ def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
     if table := config_maps.TABLE_NAMES.get("WAREHOUSE_POOL_OPENING"):
         _rename_color_token_in_column(cur, table, "color", old, new)
 
+    # A wastage line written off the pool names its bucket's colour
+    # (migration 048); left stale, the write-off would miss the renamed
+    # bucket and open a phantom negative one. ITEM lines carry no colour.
+    if table := config_maps.TABLE_NAMES.get("WASTAGE_LINES"):
+        _rename_color_token_in_column(cur, table, "color", old, new)
+
     if table := config_maps.TABLE_NAMES.get("PROCESS_COLOR_LINKS"):
         _rename_color_token_in_either_column(
             cur,

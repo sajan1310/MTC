@@ -24,7 +24,9 @@ tagged/untagged key that spans more than one color) landed in Phase 4a
 (Dispatch), guarded via `TABLE_NAMES.get("DISPATCH_HEADERS"/"DISPATCH_
 LINES")` the same way -- Dispatch itself moved from a flat table to
 header+lines in migration 023, so Pass 3 reads a join now, but the
-aggregation algorithm is unchanged (see the query's own comment).
+aggregation algorithm is unchanged (see the query's own comment). Pass 2b
+(debit processed goods written off as wastage) landed with migration 048,
+guarded on WASTAGE_HEADERS/WASTAGE_LINES the same way.
 
 getPoolAvailableQty is a genuine exception to this port's usual
 {success, data, message} envelope: the source function returns a bare
@@ -678,6 +680,12 @@ def _build_warehouse_pool_buckets(
                 "color": str(color or "").strip(),
                 "producedQty": 0.0,
                 "consumedQty": 0.0,
+                # The part of consumedQty that was written off as wastage
+                # (migration 048). Never subtracted on its own --
+                # consumedQty already includes it -- but Ready to Dispatch
+                # reads consumed as "Dispatched", and needs this to tell the
+                # two apart.
+                "wastedQty": 0.0,
                 # Every credit as (effective moment, qty), so a drain can ask
                 # what this bucket held on the day it is settling rather than
                 # what it holds once all of history is in. See _available_at.
@@ -796,6 +804,7 @@ def _build_warehouse_pool_buckets(
                 # means.
                 bucket["producedQty"] = r["countedQty"]
                 bucket["consumedQty"] = 0.0
+                bucket["wastedQty"] = 0.0
                 # The count REPLACES the credits behind it too -- they are
                 # inside the counted figure, so leaving them would let a
                 # drain spend them a second time.
@@ -1365,6 +1374,87 @@ def _build_warehouse_pool_buckets(
                         at=lot_at,
                     )
 
+        # Pass 2b: debit Warehouse Pool wastage (migration 048) -- processed
+        # goods written off as defective, e.g. painted frames that came out
+        # of the booth with a run in them.
+        #
+        # Placed between the colour-specific debits above and the
+        # colour-agnostic settlement below, for the reason those two are
+        # already in that order: a wastage line names its bucket outright,
+        # so it is an explicit claim and lands before the drains share out
+        # what is left. Settled after them, a drain could pay a lot out of
+        # frames that were already in the scrap bin.
+        #
+        # After Pass 2 rather than before it on purpose, too. Pass 2 decides
+        # whether a recipe token names a real bucket by whether that bucket
+        # EXISTS, and a wastage line opening one first would change its
+        # answer.
+        if (
+            wastage_headers_table := config_maps.TABLE_NAMES.get("WASTAGE_HEADERS")
+        ) and (wastage_lines_table := config_maps.TABLE_NAMES.get("WASTAGE_LINES")):
+            cur.execute(
+                f"""
+                SELECT h.wastage_id, h.wastage_date, h.created_at,
+                       l.item_name, l.product_tag, l.color, l.qty, l.base_qty, l.reason
+                FROM {wastage_lines_table} l
+                JOIN {wastage_headers_table} h ON h.id = l.header_id
+                WHERE h.deleted_at IS NULL AND l.source_type = 'POOL'
+                ORDER BY h.wastage_date, h.id, l.id
+                """
+            )
+            for row in cur.fetchall():
+                item_name = str(row["item_name"] or "").strip()
+                if not item_name:
+                    continue
+                qty = float(row["base_qty"] or 0) or float(row["qty"] or 0)
+                tag = str(row["product_tag"] or "").strip()
+                color = str(row["color"] or "").strip()
+
+                # The line names a bucket the operator picked off the live
+                # pool, so it is normally an exact key. The one way it stops
+                # being one is a composite colour whose segment order has
+                # moved since -- reordering a recipe re-orders every lot's
+                # bucket name (see _compose_lot_color_key) -- which is the
+                # same combination under a new spelling. Matched on the
+                # order-independent identity, and only where exactly one
+                # bucket carries it. Nothing looser than that: a line that
+                # names no live bucket opens one and goes negative, which is
+                # the signal that it needs looking at.
+                key = (item_name.lower(), tag.lower(), color.lower())
+                if color and key not in buckets:
+                    want_order_key = _color_order_key(color)
+                    order_matches = [
+                        b
+                        for b in buckets.values()
+                        if b["outputItemName"].lower() == key[0]
+                        and b["productTag"].lower() == key[1]
+                        and _color_order_key(b["color"]) == want_order_key
+                    ]
+                    if len(order_matches) == 1:
+                        color = order_matches[0]["color"]
+
+                bucket = get_bucket(
+                    item_name,
+                    producing_process_by_item.get(item_name.lower(), ""),
+                    tag,
+                    color,
+                )
+                wastage_at = _effective_at(row["wastage_date"], row.get("created_at"))
+                if frozen(bucket, wastage_at):
+                    # Already gone when somebody counted this shelf.
+                    continue
+                bucket["consumedQty"] += qty
+                bucket["wastedQty"] += qty
+                record(
+                    bucket,
+                    row["wastage_date"],
+                    "Wastage",
+                    str(row["wastage_id"] or ""),
+                    str(row["reason"] or ""),
+                    -qty,
+                    at=wastage_at,
+                )
+
         # Settle the COMMON-scoped consumption held back above.
         #
         # A COMMON component means "this recipe consumes the item whatever
@@ -1728,8 +1818,9 @@ def _recalculate_warehouse_pool(cur) -> None:
         cur.execute(
             """
             INSERT INTO erp.warehouse_pool
-                (output_item_name, process_id, product_tag, produced_qty, consumed_qty, available_qty, color, counts_toward_total)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                (output_item_name, process_id, product_tag, produced_qty, consumed_qty, available_qty, color,
+                 counts_toward_total, wasted_qty)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 bucket["outputItemName"],
@@ -1740,6 +1831,7 @@ def _recalculate_warehouse_pool(cur) -> None:
                 bucket["producedQty"] - bucket["consumedQty"],
                 bucket["color"],
                 _bucket_counts_as_units(bucket),
+                bucket["wastedQty"],
             ),
         )
 

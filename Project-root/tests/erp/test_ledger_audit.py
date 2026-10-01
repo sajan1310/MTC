@@ -243,6 +243,64 @@ def test_over_consumed_item_detected(erp_app, erp_client):
     assert match["overBy"] == 1
 
 
+def test_wastage_written_off_the_pool_is_not_an_over_consumed_item(erp_app, erp_client):
+    """A processed item written off the Warehouse Pool (migration 048) was
+    never billed -- it was made here -- so measuring it against bills would
+    report every write-off as over-consumption."""
+    output = _unique_name("PaintedFrame")
+    process = _rpc(
+        erp_client,
+        "saveProcess",
+        [
+            {
+                "processName": _unique_name("Painting"),
+                "lotPrefix": uuid.uuid4().hex[:6].upper(),
+                "outputItemName": output,
+                "sequence": 1,
+                "isFinalStage": False,
+                "active": True,
+                "components": [],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert process["success"] is True, process["message"]
+    _rpc(
+        erp_client,
+        "saveWarehousePoolOpening",
+        [{"processId": process["data"]["processId"], "qty": 10}],
+        mutation=True,
+    )
+    saved = _rpc(
+        erp_client,
+        "saveWastage",
+        [
+            {
+                "date": "01/01/2026",
+                "items": [
+                    {
+                        "sourceType": "POOL",
+                        "name": output,
+                        "qty": 2,
+                        "reason": "Paint run",
+                    }
+                ],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert saved["success"] is True, saved["message"]
+
+    with erp_app.app_context():
+        result = ledger_audit_service.compute_internal_ledger_audit_findings()
+
+    assert not [
+        f
+        for f in result["findings"]
+        if f["type"] == "over_consumed_item" and f["itemName"] == output
+    ]
+
+
 def test_run_internal_ledger_audit_writes_summary_row(erp_app):
     with erp_app.app_context():
         result = ledger_audit_service.run_internal_ledger_audit()

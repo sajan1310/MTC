@@ -200,6 +200,11 @@ def compute_internal_ledger_audit_findings() -> dict:
     def _add_consumption(records, field):
         for rec in records:
             for item in rec["items"]:
+                # Written off the Warehouse Pool (migration 048): a processed
+                # item that was never billed, so it has no bill to be
+                # over-consumed against.
+                if item.get("sourceType") == "POOL":
+                    continue
                 key = _item_key(item["name"], item["size"])
                 entry = consumed_by_item.get(key)
                 if entry is None:

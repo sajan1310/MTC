@@ -240,6 +240,13 @@ def _rename_pool_output_item_name_everywhere(cur, old_name: str, new_name: str) 
             cur, table, config_maps.to_snake_case("outputItemName"), old, new
         )
 
+    # Wastage written off the pool (migration 048) names its bucket by this
+    # same Output Item Name. ITEM lines are Items Master's to rename.
+    if table := config_maps.TABLE_NAMES.get("WASTAGE_LINES"):
+        rename_utils.rename_in_column(
+            cur, table, "item_name", old, new, extra_where=" AND source_type = 'POOL'"
+        )
+
     if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
         # Credit side: any lot's own output_item_name.
         rename_utils.rename_in_column(cur, table, "output_item_name", old, new)
