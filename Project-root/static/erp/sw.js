@@ -423,7 +423,11 @@
 // dispatch.js and print-templates.js are precached, so without the bump an
 // installed client pairs the new tab markup with a return.js that has no
 // switchSubTab.
-const CACHE_NAME = 'erp-shell-v85';
+// v86: the dashboard's WIP cards sit under one heading per lot date, oldest
+// first, instead of one card per stage merging every date. dashboard.js and
+// styles.css are precached, so without the bump an installed client keeps
+// drawing the merged cards from the new payload.
+const CACHE_NAME = 'erp-shell-v86';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

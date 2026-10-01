@@ -12,7 +12,7 @@ depending on what else happened to exist at the time.
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 from app.erp.services import bom_service
 
@@ -376,6 +376,53 @@ def test_dashboard_splits_the_same_stage_across_both_lists(erp_client):
     queued = next(p for p in dash["upcoming"] if p["processId"] == process_id)
     assert running["totalQty"] == 4
     assert queued["totalQty"] == 9
+
+
+def test_dashboard_groups_each_status_by_lot_date_oldest_first(erp_client):
+    """The WIP cards draw each stage's lots under the date they were logged,
+    oldest first, so a lot waiting since last week no longer shares a card
+    with this morning's. The stage totals the chart reads stay whole."""
+    _payload, process_id = _save_process(erp_client)
+    today = date.today()
+    four_days_ago = today - timedelta(days=4)
+    _save_lot(erp_client, process_id, "Pending", qty=7, date=today.isoformat())
+    _save_lot(erp_client, process_id, "Pending", qty=3, date=four_days_ago.isoformat())
+    _save_lot(
+        erp_client, process_id, "In Progress", qty=2, date=four_days_ago.isoformat()
+    )
+
+    dash = _rpc(erp_client, "getDashboardData").get_json()["data"]
+
+    queued = next(p for p in dash["upcoming"] if p["processId"] == process_id)
+    assert queued["totalQty"] == 10
+    assert queued["totalLotCount"] == 2
+    assert queued["oldestDays"] == 4
+
+    groups = dash["upcomingByDate"]
+    dated = [g["date"] for g in groups if g["date"]]
+    assert dated == sorted(dated)  # oldest first; other tests' lots share this database
+
+    def mine(day_groups):
+        return {
+            g["date"]: next(s for s in g["stages"] if s["processId"] == process_id)
+            for g in day_groups
+            if any(s["processId"] == process_id for s in g["stages"])
+        }
+
+    upcoming = mine(groups)
+    assert list(upcoming) == [four_days_ago.isoformat(), today.isoformat()]
+    assert upcoming[four_days_ago.isoformat()]["totalQty"] == 3
+    assert upcoming[today.isoformat()]["totalQty"] == 7
+
+    old_day = next(g for g in groups if g["date"] == four_days_ago.isoformat())
+    assert old_day["ageDays"] == 4
+    # A day's own figures are its stages' figures, nothing else.
+    for g in groups:
+        assert g["totalQty"] == round(sum(s["totalQty"] for s in g["stages"]), 2)
+        assert g["totalLotCount"] == sum(s["totalLotCount"] for s in g["stages"])
+
+    # In Progress keeps its own dates.
+    assert list(mine(dash["pipelineByDate"])) == [four_days_ago.isoformat()]
 
 
 def test_dashboard_stage_reports_the_age_of_its_oldest_lot(erp_client):

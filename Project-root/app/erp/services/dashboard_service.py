@@ -266,14 +266,12 @@ def _stage_group_title(model_name: str, color, size) -> str:
     return " ".join(x for x in parts if x) or "Unspecified"
 
 
-def _get_stage_rollups(production_lots: list) -> dict:
-    """Per-process rollups keyed by lot status, in process sequence.
+def _build_stages(lots: list, processes: list, today: date) -> list:
+    """`lots` folded into one entry per process stage, in process sequence.
 
-    Returns {"In Progress": [stage, ...], "Pending": [stage, ...]} -- the
-    WIP pipeline and the Upcoming Lots queue respectively. They are built
-    in ONE pass over the lots and share a single process-master read; the
-    alternative (calling a per-status version twice) would double
-    get_process_data, the only query this function makes.
+    The caller narrows `lots` first -- to one status, and for a date group
+    to one date as well -- so the same fold serves both the stage totals and
+    each day's share of them.
 
     Each stage carries `oldestDays`, the age of the oldest lot sitting in
     it. Units alone say how much is somewhere; age says whether it is
@@ -287,35 +285,30 @@ def _get_stage_rollups(production_lots: list) -> dict:
     pipeline summary's "N lots" was inflated by exactly the amount of
     colour tracking the shop does.
     """
-    processes = process_service.get_process_data(True)["data"]
+    # {process_key: {group title: {"qty", "lots": {lot id, ...}}}}
+    groups_by_process: dict = {}
+    # {process_key: {lot id, ...}} -- a lot spanning several groups is still
+    # one lot at its stage.
+    lots_by_process: dict = {}
+    # {process_key: earliest production_date seen}
+    oldest_by_process: dict = {}
 
-    # {status: {process_key: {group title: {"qty", "lots": {lot id, ...}}}}}
-    groups_by_status: dict = {status: {} for status in _ACTIVE_PRODUCTION_STATUSES}
-    # {status: {process_key: {lot id, ...}}} -- a lot spanning several groups
-    # is still one lot at its stage.
-    lots_by_status: dict = {status: {} for status in _ACTIVE_PRODUCTION_STATUSES}
-    # {status: {process_key: earliest production_date seen}}
-    oldest_by_status: dict = {status: {} for status in _ACTIVE_PRODUCTION_STATUSES}
-
-    for lot in production_lots or []:
-        status = lot.get("status")
-        if status not in _ACTIVE_PRODUCTION_STATUSES:
-            continue
+    for lot in lots:
         process_key = str(lot.get("processId") or "").strip().lower()
         if not process_key:
             continue
 
         lot_id = lot.get("rowIdx")
-        bucket = groups_by_status[status].setdefault(process_key, {})
-        lots_by_status[status].setdefault(process_key, set()).add(lot_id)
+        bucket = groups_by_process.setdefault(process_key, {})
+        lots_by_process.setdefault(process_key, set()).add(lot_id)
         model_name = str(lot.get("productName") or "").strip()
         breakdown = lot.get("colorBreakdown") or []
 
         lot_date = date_utils.to_safe_date(lot.get("date"))
         if lot_date:
-            seen = oldest_by_status[status].get(process_key)
+            seen = oldest_by_process.get(process_key)
             if seen is None or lot_date < seen:
-                oldest_by_status[status][process_key] = lot_date
+                oldest_by_process[process_key] = lot_date
 
         def add_to_group(
             color, size, qty, bucket=bucket, model_name=model_name, lot_id=lot_id
@@ -332,49 +325,97 @@ def _get_stage_rollups(production_lots: list) -> dict:
         else:
             add_to_group("", "", float(lot.get("qty") or 0))
 
+    stages = []
+    for p in processes:
+        process_key = p["processId"].strip().lower()
+        total_lot_count = len(lots_by_process.get(process_key, ()))
+        if total_lot_count == 0:
+            continue
+        groups = sorted(
+            (
+                {
+                    "title": title,
+                    "qty": _round2(entry["qty"]),
+                    "lotCount": len(entry["lots"]),
+                }
+                for title, entry in groups_by_process.get(process_key, {}).items()
+            ),
+            key=lambda g: g["qty"],
+            reverse=True,
+        )
+        oldest = oldest_by_process.get(process_key)
+        stages.append(
+            {
+                "processId": p["processId"],
+                "processName": p["processName"],
+                # The stage chart bands its columns by this. Six distinct
+                # values across 262 processes, so it is the one grouping
+                # here with a low enough cardinality to label an axis -- a
+                # process NAME cannot be labelled under a thin column, but
+                # "Packing" over a band of them can.
+                "processType": p.get("processType") or "",
+                "sequence": p["sequence"],
+                "totalQty": _round2(sum(g["qty"] for g in groups)),
+                "totalLotCount": total_lot_count,
+                "oldestDays": max(0, (today - oldest).days) if oldest else None,
+                "groups": groups,
+            }
+        )
+    stages.sort(key=lambda p: p["sequence"])
+    return stages
+
+
+def _get_stage_rollups(production_lots: list) -> dict:
+    """Per-process rollups keyed by lot status, in process sequence.
+
+    Returns {"In Progress": {"stages", "byDate"}, "Pending": {...}} -- the
+    WIP pipeline and the Upcoming Lots queue respectively. Both statuses
+    share a single process-master read, the only query this function makes;
+    the alternative (a per-status version called twice) would double it.
+
+    `stages` is one entry per stage over all of that status's lots: what
+    the stage chart and the section's totals read. `byDate` is the same
+    fold again, one group per production date, so the cards can say WHEN
+    each lot was logged rather than merging a lot from last week into the
+    same card as one from this morning -- which is what made a stage's age
+    badge the only clue that anything there was old. Oldest date first (the
+    user's call, 2026-10-01): in a queue, what has waited longest is what
+    to start, or chase, first.
+    """
+    processes = process_service.get_process_data(True)["data"]
     today = date.today()
+
     rollups: dict = {}
     for status in _ACTIVE_PRODUCTION_STATUSES:
-        stages = []
-        for p in processes:
-            process_key = p["processId"].strip().lower()
-            total_lot_count = len(lots_by_status[status].get(process_key, ()))
-            if total_lot_count == 0:
+        lots = [lot for lot in production_lots or [] if lot.get("status") == status]
+
+        by_day: dict = {}
+        for lot in lots:
+            by_day.setdefault(date_utils.to_safe_date(lot.get("date")), []).append(lot)
+
+        date_groups = []
+        # An undated lot cannot be placed in time, so it goes last rather
+        # than being dropped -- its units are still part of the totals.
+        for day in sorted(by_day, key=lambda d: (d is None, d or date.min)):
+            stages = _build_stages(by_day[day], processes, today)
+            if not stages:
+                # Every lot that day sits on a process no longer in Process
+                # Master; the stage totals leave those out too.
                 continue
-            groups = sorted(
-                (
-                    {
-                        "title": title,
-                        "qty": _round2(entry["qty"]),
-                        "lotCount": len(entry["lots"]),
-                    }
-                    for title, entry in groups_by_status[status]
-                    .get(process_key, {})
-                    .items()
-                ),
-                key=lambda g: g["qty"],
-                reverse=True,
-            )
-            oldest = oldest_by_status[status].get(process_key)
-            stages.append(
+            date_groups.append(
                 {
-                    "processId": p["processId"],
-                    "processName": p["processName"],
-                    # The stage chart bands its columns by this. Six distinct
-                    # values across 262 processes, so it is the one grouping
-                    # here with a low enough cardinality to label an axis --
-                    # a process NAME cannot be labelled under a thin column,
-                    # but "Packing" over a band of them can.
-                    "processType": p.get("processType") or "",
-                    "sequence": p["sequence"],
-                    "totalQty": _round2(sum(g["qty"] for g in groups)),
-                    "totalLotCount": total_lot_count,
-                    "oldestDays": max(0, (today - oldest).days) if oldest else None,
-                    "groups": groups,
+                    "date": day.isoformat() if day else "",
+                    "ageDays": max(0, (today - day).days) if day else None,
+                    "totalQty": _round2(sum(s["totalQty"] for s in stages)),
+                    "totalLotCount": sum(s["totalLotCount"] for s in stages),
+                    "stages": stages,
                 }
             )
-        stages.sort(key=lambda p: p["sequence"])
-        rollups[status] = stages
+
+        rollups[status] = {
+            "stages": _build_stages(lots, processes, today),
+            "byDate": date_groups,
+        }
 
     return rollups
 
@@ -653,8 +694,13 @@ def get_dashboard_data():
             # active statuses go to two different places on the page: the WIP
             # pipeline draws what is genuinely on the floor, Upcoming Lots
             # draws what is queued behind it.
-            "pipeline": stage_rollups[_STATUS_IN_PROGRESS],
-            "upcoming": stage_rollups[_STATUS_PENDING],
+            "pipeline": stage_rollups[_STATUS_IN_PROGRESS]["stages"],
+            "upcoming": stage_rollups[_STATUS_PENDING]["stages"],
+            # The same lots by production date, oldest first: what the
+            # cards draw. The two lists above stay whole for the stage
+            # chart and the phone's Home, which read stage totals.
+            "pipelineByDate": stage_rollups[_STATUS_IN_PROGRESS]["byDate"],
+            "upcomingByDate": stage_rollups[_STATUS_PENDING]["byDate"],
             "productionStatusBreakdown": production_status_breakdown,
             "dispatchTrend": dispatch_trend,
             "lowStockItems": low_stock_items,
