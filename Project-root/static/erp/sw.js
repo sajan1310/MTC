@@ -427,7 +427,20 @@
 // first, instead of one card per stage merging every date. dashboard.js and
 // styles.css are precached, so without the bump an installed client keeps
 // drawing the merged cards from the new payload.
-const CACHE_NAME = 'erp-shell-v86';
+// v87: Download PDF and Share. A web page that arrives where the file should
+// be (the login screen, after a session lapsed) is no longer saved or shared
+// as the PDF; one failed request no longer switches Download and Share off
+// for the tab; a single PO or Production Sheet keeps its frame; the
+// Production Sheet asks the server to keep it on one page and prints with
+// its own cell sizes; and Download PDF says "Preparing…" like Share. A
+// refusal shows the server's own reason; a stack of POs is drawn by the one
+// PO template; a Production Sheet's file name ends in its lot number. The PO
+// and Production Sheet lose their bottom rule (the top one stays), and the
+// Wastage popup gets the app's 6 mm page margins, so Chrome stops printing
+// its own date, link and page number on it.
+// print.js, po.js, production.js, return.js, core.js and styles.css are
+// precached, so without the bump an installed client keeps the old behaviour.
+const CACHE_NAME = 'erp-shell-v87';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

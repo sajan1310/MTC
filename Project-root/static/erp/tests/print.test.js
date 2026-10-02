@@ -350,6 +350,65 @@ describe('triggerBulk', () => {
     expect(pages).toHaveLength(1);
     expect(pages[0].innerHTML).toContain('Record 9');
   });
+
+  // POs and Production Sheets draw their own cells. Lifted into the bulk
+  // container, the print rules repainted them at 11px with grey borders --
+  // for a sheet, undoing the sizes it was fitted to one page with.
+  describe('pages that draw their own cells', () => {
+    const bulk = () => document.getElementById('print-bulk-container');
+
+    it('mark the bulk container for that job, and only that job', () => {
+      Print.triggerBulk(records, build, 'PRD_260930', { cellsOwn: true });
+      expect(bulk().classList.contains('print-cells-own')).toBe(true);
+
+      window.dispatchEvent(new Event('afterprint'));
+      expect(bulk().classList.contains('print-cells-own')).toBe(false);
+    });
+
+    // The Dispatch Plan prints through the same container and relies on
+    // the baseline cell styling.
+    it('leave nothing behind for the next job through that container', () => {
+      Print.triggerBulk(records, build, 'PRD_260930', { cellsOwn: true });
+      window.dispatchEvent(new Event('afterprint'));
+
+      Print.trigger('print-bulk-container', 'Dispatch Plan - 2026-10-02');
+      expect(bulk().classList.contains('print-cells-own')).toBe(false);
+    });
+
+    it('never strip the class from a template that carries it in its markup', () => {
+      const po = document.getElementById('print-po-container');
+      Print.trigger('print-po-container', 'PO_1204', { cellsOwn: true });
+      window.dispatchEvent(new Event('afterprint'));
+      expect(po.classList.contains('print-cells-own')).toBe(true);
+    });
+  });
+});
+
+describe('liftPage', () => {
+  // A bulk print page that is the container as Print Sheet prints it: with
+  // its frame, without the ids every page would repeat and without the
+  // class @media print hides.
+  it('lifts the container with its frame, minus ids and the container class', () => {
+    document.body.insertAdjacentHTML('beforeend',
+      '<div id="print-x-container" class="print-container print-cells-own" ' +
+      'style="display:none;border-top:4px solid green"><div id="inner">A</div></div>');
+
+    const holder = document.createElement('div');
+    holder.innerHTML = Print.liftPage('print-x-container');
+    const page = holder.firstElementChild;
+
+    expect(page.id).toBe('');
+    expect(page.querySelector('[id]')).toBeNull();
+    expect(page.classList.contains('print-container')).toBe(false);
+    expect(page.classList.contains('print-cells-own')).toBe(true);
+    expect(page.style.display).toBe('block');
+    expect(page.style.borderTop).toContain('4px');
+    expect(page.textContent).toBe('A');
+  });
+
+  it('is empty for a container that is not on the page', () => {
+    expect(Print.liftPage('nope')).toBe('');
+  });
 });
 
 // ── Downloading a file, rather than opening a dialog ─────────────────
@@ -358,7 +417,9 @@ describe('triggerBulk', () => {
 // builder HTML to a renderer that returns bytes. What has to hold:
 //   - a 503 (this deployment cannot render) latches OFF for the session, so a
 //     40-record export does not make 40 pointless round trips;
-//   - a per-document 5xx does NOT latch, because the next one may be fine;
+//   - a per-document 5xx does NOT latch, because the next one may be fine,
+//     and neither does a failed fetch -- the network comes back;
+//   - a web page that arrives where the file should be is never saved;
 //   - every failure still produces the document, via the print dialog.
 
 // Builds a real store-only ZIP, the same shape the server writes
@@ -555,6 +616,104 @@ describe('server-rendered downloads', () => {
       expect(await Print.downloadMany([], 'x.zip')).toBe(false);
       expect(fetchCalls).toHaveLength(0);
     });
+
+    // A VPN that pauses and resumes, a Wi-Fi bridge that drops one request:
+    // latched, every later press said "No connection" without trying, until
+    // the tab was reloaded.
+    it('does NOT latch off after a failed fetch -- the next press tries again', async () => {
+      App.Utils = { showToast: () => {} };
+      setupFetch(() => Promise.reject(new TypeError('Failed to fetch')));
+      expect(await Print.downloadMany(docs, 'x.zip')).toBe(false);
+
+      setupFetch(okZip());
+      expect(await Print.downloadMany(docs, 'x.zip')).toBe(true);
+      expect(fetchCalls).toHaveLength(1);
+      expect(saved).toEqual(['PO_1.pdf', 'PO_2.pdf']);
+      expect(Print.serverPdfAvailable).toBe(true);
+    });
+
+    // The PDF endpoints' own refusals name their reason. Every one of them
+    // used to be reported as "the session expired".
+    const refusal = (status, body) => () => Promise.resolve({
+      ok: false, status,
+      headers: { get: () => 'application/json' },
+      json: () => Promise.resolve(body),
+    });
+
+    it("shows the server's own reason for refusing an export", async () => {
+      const toasts = [];
+      App.Utils = { showToast: msg => toasts.push(msg) };
+      setupFetch(refusal(400, { success: false, message: 'Too many documents in one export (limit 200).' }));
+
+      await Print.downloadMany(docs, 'x.zip');
+
+      expect(toasts[0]).toBe('Too many documents in one export (limit 200). Nothing was downloaded.');
+    });
+
+    it('and for an account still awaiting approval', async () => {
+      const toasts = [];
+      App.Utils = { showToast: msg => toasts.push(msg) };
+      setupFetch(refusal(403, { success: false, message: "Your account is waiting for an administrator's approval, so it cannot make PDFs yet." }));
+
+      await Print.downloadMany(docs, 'x.zip');
+
+      expect(toasts[0]).toMatch(/waiting for an administrator's approval/);
+    });
+
+    // A token mismatch is a stale page: reloading is the right advice, and
+    // "CSRF error: ..." means nothing to the person reading it.
+    it('still advises a reload for a stale CSRF token', async () => {
+      const toasts = [];
+      App.Utils = { showToast: msg => toasts.push(msg) };
+      setupFetch(refusal(400, {
+        success: false, message: 'CSRF error: The CSRF tokens do not match.', error: 'The CSRF tokens do not match.',
+      }));
+
+      await Print.downloadMany(docs, 'x.zip');
+
+      expect(toasts[0]).toMatch(/session expired/i);
+      expect(toasts[0]).not.toMatch(/CSRF/);
+    });
+
+    it.each([
+      [413, /too large to send in one go/i],
+      [429, /wait a minute/i],
+      [504, /took too long/i],
+    ])('explains HTTP %i in its own words, not as a render failure', async (status, pattern) => {
+      const toasts = [];
+      App.Utils = { showToast: msg => toasts.push(msg) };
+      setupFetch(() => Promise.resolve({ ok: false, status }));
+
+      await Print.downloadMany(docs, 'x.zip');
+
+      expect(toasts[0]).toMatch(pattern);
+      expect(toasts[0]).not.toMatch(/could not render/i);
+    });
+
+    it("does not carry one refusal's words over to the next failure", async () => {
+      const toasts = [];
+      App.Utils = { showToast: msg => toasts.push(msg) };
+      setupFetch(refusal(400, { success: false, message: 'No documents supplied.' }));
+      await Print.downloadMany(docs, 'x.zip');
+      setupFetch(() => Promise.resolve({ ok: false, status: 500 }));
+      await Print.downloadMany(docs, 'x.zip');
+
+      expect(toasts[1]).toMatch(/could not render/i);
+    });
+
+    it('saves nothing when a web page arrives instead of the archive', async () => {
+      const toasts = [];
+      App.Utils = { showToast: msg => toasts.push(msg) };
+      setupFetch(() => Promise.resolve({
+        ok: true, status: 200, redirected: true,
+        headers: { get: () => 'text/html; charset=utf-8' },
+        blob: () => Promise.resolve(new Blob(['<!doctype html><title>Login</title>'])),
+      }));
+
+      expect(await Print.downloadMany(docs, 'x.zip')).toBe(false);
+      expect(saved).toEqual([]);
+      expect(toasts[0]).toMatch(/session expired/i);
+    });
   });
 
   describe('downloadOne', () => {
@@ -576,6 +735,38 @@ describe('server-rendered downloads', () => {
       await Print.downloadOne('<p>x</p>', 'Sheet', { landscape: true });
       expect(fetchCalls[0].body.landscape).toBe(true);
     });
+
+    // An expired session used to be answered with the login redirect, which
+    // fetch follows: the login page (or the ERP shell, for a remembered user)
+    // came back as a 200 and was saved as "PO_1204_Mahadev.pdf".
+    it.each([
+      ['a redirect to the login page', { redirected: true, type: 'text/html; charset=utf-8' }],
+      ['an HTML page with no redirect', { redirected: false, type: 'text/html; charset=utf-8' }],
+      ['JSON', { redirected: false, type: 'application/json' }],
+    ])('does not save %s as the PDF', async (_label, { redirected, type }) => {
+      const toasts = [];
+      App.Utils = { showToast: msg => toasts.push(msg) };
+      setupFetch(() => Promise.resolve({
+        ok: true, status: 200, redirected,
+        headers: { get: name => (name.toLowerCase() === 'content-type' ? type : null) },
+        blob: () => Promise.resolve(new Blob(['<!doctype html>'])),
+      }));
+
+      expect(await Print.downloadOne('<p>x</p>', 'PO_1204_Mahadev')).toBe(false);
+      expect(saved).toEqual([]);
+      expect(toasts[0]).toMatch(/session expired/i);
+    });
+
+    it('saves a reply that says it is a PDF', async () => {
+      setupFetch(() => Promise.resolve({
+        ok: true, status: 200, redirected: false,
+        headers: { get: () => 'application/pdf' },
+        blob: () => Promise.resolve(new Blob(['%PDF-'])),
+      }));
+
+      expect(await Print.downloadOne('<p>x</p>', 'PO_1204_Mahadev')).toBe(true);
+      expect(saved).toEqual(['PO_1204_Mahadev.pdf']);
+    });
   });
 
   describe('downloadContainer', () => {
@@ -586,6 +777,32 @@ describe('server-rendered downloads', () => {
       await Print.downloadContainer('print-bill-container', 'GR_1041');
 
       expect(fetchCalls[0].body.html).toContain('GR-1041');
+    });
+
+    // The container's own style is the document's frame -- the PO's red
+    // rule top and bottom and the padding inside them. Sent as innerHTML, a
+    // downloaded PO had none of it, while Print and the phone did.
+    it('sends the container itself, frame and all, revealed', async () => {
+      setupFetch(okBlob);
+      const po = document.getElementById('print-po-container');
+      po.setAttribute('style', 'display:none;border-top:5px solid #C0392B;padding:14px 20px;');
+
+      await Print.downloadContainer('print-po-container', 'PO_1204_Mahadev');
+
+      const html = fetchCalls[0].body.html;
+      expect(html).toMatch(/^<div id="print-po-container"/);
+      expect(html).toContain('border-top');
+      expect(html).toContain('display: block');
+      expect(html).not.toContain('display: none');
+      // and the page's own container is left as it was
+      expect(po.style.display).toBe('none');
+    });
+
+    it('passes onePage through to the renderer, off unless asked', async () => {
+      setupFetch(okBlob);
+      await Print.downloadContainer('print-po-container', 'PO_1');
+      await Print.downloadContainer('print-po-container', 'PRD_1', { onePage: true });
+      expect(fetchCalls.map(c => c.body.onePage)).toEqual([false, true]);
     });
 
     it('returns false and warns for a missing container', async () => {
@@ -883,12 +1100,27 @@ describe('docName', () => {
         .toBe('Production Sheet_210826');
     });
 
-    // Two lots of the same item on the same day genuinely collide here. The
-    // server de-duplicates inside a batch, so N records still yield N files.
-    it('collides for same item + same date, which the server then resolves', () => {
-      const a = Print.docNameFromLabel('Rim', '21/08/2026');
-      const b = Print.docNameFromLabel('Rim', '21/08/2026');
-      expect(a).toBe(b);
+    // Two lots of one item on one day used to share a name, so a stack of
+    // them came back as "Rim_210826.pdf" and "Rim_210826_2.pdf" with nothing
+    // to say which lot was which. The lot's own number keeps them apart.
+    it('ends with the record\'s own number, which keeps same-day lots apart', () => {
+      const a = Print.docNameFromLabel('Rim', '21/08/2026', 'Production Sheet', 'LOT-PKG014-0003');
+      const b = Print.docNameFromLabel('Rim', '21/08/2026', 'Production Sheet', 'LOT-PKG014-0004');
+      expect(a).toBe('Rim_210826_LOT-PKG014-0003');
+      expect(a).not.toBe(b);
+    });
+
+    it('without a number, still collides -- the server numbers the repeats', () => {
+      expect(Print.docNameFromLabel('Rim', '21/08/2026')).toBe(Print.docNameFromLabel('Rim', '21/08/2026'));
+    });
+
+    // The server caps a file name at 120 characters, extension included; a
+    // long label gives way so the number and date are never what is cut.
+    it('shortens a long label rather than lose the number off the end', () => {
+      const out = Print.docNameFromLabel('x'.repeat(130), '21/08/2026', 'Production Sheet', 'LOT-PKG014-0003');
+      expect(out.length).toBe(Print.DOC_LABEL_NAME_MAX);
+      expect(out.endsWith('_210826_LOT-PKG014-0003')).toBe(true);
+      expect(`${out}.pdf`.length).toBeLessThanOrEqual(120);
     });
   });
 

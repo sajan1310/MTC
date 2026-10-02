@@ -178,8 +178,8 @@ describe('production sheets', () => {
     expect(requests[0].body.zipName).toBe(MApp.Print.bulkZipName('PRD'));
     const docs = requests[0].body.documents;
     expect(docs.map(d => d.filename)).toEqual([
-      'Painted Frame Kalpi 20 inch_120926.pdf',
-      'Packed Kalpi 20 inch_130926.pdf'
+      'Painted Frame Kalpi 20 inch_120926_LOT-PNT-0041.pdf',
+      'Packed Kalpi 20 inch_130926_LOT-PKG-0018.pdf'
     ]);
     // Each file is its own lot's sheet, not the stack.
     expect(docs[0].html).toContain('LOT-PNT-0041');
@@ -197,11 +197,14 @@ describe('production sheets', () => {
     MApp.ProductionSheet._renderLot(LOTS[0], {
       items: ITEMS, colors: [], processes: PROCESSES
     }, false);
+    // onePage, as the single sheet's Download asks (printSheet's chooser):
+    // a sheet is fitted to one page, and the server keeps it there.
     const single = MApp.Print.capturePdfDocument(
-      'print-production-sheet-container', MApp.ProductionSheet.docName(LOTS[0]), false);
+      'print-production-sheet-container', MApp.ProductionSheet.docName(LOTS[0]), false, true);
 
     await choose(() => MApp.ProductionSheet.printSheets(LOTS), 'download');
     expect(requests[0].body.documents[0]).toEqual(single);
+    expect(single.onePage).toBe(true);
   });
 
   test('the Page choice reaches every file', async () => {
@@ -235,8 +238,8 @@ describe('production sheets', () => {
     expect(navigator.share).toHaveBeenCalledTimes(1);
     const { files, title } = navigator.share.mock.calls[0][0];
     expect(files.map(f => f.name)).toEqual([
-      'Painted Frame Kalpi 20 inch_120926.pdf',
-      'Packed Kalpi 20 inch_130926.pdf'
+      'Painted Frame Kalpi 20 inch_120926_LOT-PNT-0041.pdf',
+      'Packed Kalpi 20 inch_130926_LOT-PKG-0018.pdf'
     ]);
     expect(files.every(f => f.type === 'application/pdf')).toBe(true);
     expect(title).toMatch(/^PRD_\d{6}$/);

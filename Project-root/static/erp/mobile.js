@@ -2079,12 +2079,20 @@ MApp.Print = {
   },
 
   // Desktop's App.Print.docNameFromLabel: a document named after the thing
-  // it is about, in the operator's own words, plus its date --
-  // "20 inch Rider D-Gaddi Steel Rim S-Kid Type_210826".
-  docNameFromLabel(label, date, fallback = 'Document') {
-    const name = this.titleToFilename(label);
+  // it is about, in the operator's own words, plus its date and, where it
+  // has one, its own number --
+  // "20 inch Rider D-Gaddi Steel Rim S-Kid Type_210826_LOT-PKG014-0003".
+  // The number keeps two lots of one item on one day apart; the reasons are
+  // in print.js.
+  DOC_LABEL_NAME_MAX: 116,
+
+  docNameFromLabel(label, date, fallback = 'Document', key = '') {
     const stamp = this._docDate(date, 'ddmmyy');
-    return `${name === 'Document' ? fallback : name}_${stamp}`;
+    const id = String(key || '').trim() ? this.titleToFilename(key).slice(0, 24) : '';
+    const tail = `_${stamp}${id ? `_${id}` : ''}`;
+    const name = this.titleToFilename(label);
+    const head = name === 'Document' ? fallback : name;
+    return `${head.slice(0, this.DOC_LABEL_NAME_MAX - tail.length).trim()}${tail}`;
   },
 
   // ── Document names: CODE_KEY_PARTY[_YYMMDD] ──────────────────────────
@@ -2229,10 +2237,69 @@ MApp.Print = {
     return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
   },
 
-  // Set false the first time the server proves it cannot render, so the
-  // rest of the session stops asking and falls straight to the message.
+  // Set false the first time the server proves it cannot render (503) or
+  // has no endpoint (404), so the rest of the session stops asking and falls
+  // straight to the message. A failed fetch does NOT set it: a phone pauses
+  // its VPN and resumes it, and latched, every later tap said "No
+  // connection" without trying until the app was reloaded.
   serverPdfAvailable: null,
   lastPdfError: null,
+  // ...and, when the server named its own reason, its words for it.
+  lastPdfMessage: null,
+
+  // How long a render may go unanswered -- desktop's App.Print limits, for
+  // the same reason. fetch() has no time limit of its own, so a reply that
+  // never reached the phone left Download and Share doing nothing, and
+  // saying nothing, for as long as the screen stayed open.
+  RENDER_WAIT_MS: 30000,
+  RENDER_WAIT_PER_DOCUMENT_MS: 2000,
+  RENDER_WAIT_MAX_MS: 130000,
+  // From the reply starting to the whole file being here.
+  RENDER_BODY_WAIT_MS: 60000,
+
+  _renderWaitMs(body) {
+    const documents = Array.isArray(body && body.documents) ? body.documents.length : 1;
+    return Math.min(
+      this.RENDER_WAIT_MS + documents * this.RENDER_WAIT_PER_DOCUMENT_MS,
+      this.RENDER_WAIT_MAX_MS
+    );
+  },
+
+  TIMED_OUT: {},
+
+  // `pending`, or TIMED_OUT once `ms` has passed -- desktop's App.Print
+  // _within. Giving up also aborts the request, and the rejection that abort
+  // causes is the limit being applied, not a lost connection.
+  _within(ms, controller, pending) {
+    let timer;
+    let timedOut = false;
+    const limit = new Promise(resolve => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        resolve(this.TIMED_OUT);
+        if (controller) controller.abort();
+      }, ms);
+    });
+    const settled = pending.catch(err => {
+      if (timedOut) return this.TIMED_OUT;
+      throw err;
+    });
+    return Promise.race([settled, limit]).finally(() => clearTimeout(timer));
+  },
+
+  // Whether a 2xx reply is the file that was asked for: a PDF from the
+  // single endpoint, an archive from the batch one. A redirect, or any other
+  // type, is a page where the file should be -- the login screen after a
+  // session lapsed -- and saved or shared under the document's name it was a
+  // ".pdf" that would not open. Silent when the reply says nothing.
+  _isFileReply(res, url) {
+    if (res.redirected) return false;
+    const type = res.headers && typeof res.headers.get === 'function'
+      ? String(res.headers.get('Content-Type') || '').toLowerCase()
+      : '';
+    if (!type) return true;
+    return type.startsWith(url === '/erp/render-pdf-batch' ? 'application/zip' : 'application/pdf');
+  },
 
   // A Download button downloads. It does NOT quietly become a print
   // dialog -- the same reasoning desktop records: the user asked for a
@@ -2244,11 +2311,36 @@ MApp.Print = {
     'no-renderer': 'The server has no PDF renderer installed. Print still works meanwhile.',
     'no-endpoint': 'This server does not have the PDF endpoint — it is probably an older build and needs restarting. Print still works meanwhile.',
     rejected: 'The server refused the request, which usually means the session expired. Reload and try again.',
-    failed: 'The server could not render this document. Nothing was downloaded.'
+    // Worded from the phone's side, as desktop's are: the server may well
+    // have rendered and sent the file.
+    'no-reply': 'No PDF reached this phone in time, so nothing was downloaded. Try once more. Print still works meanwhile.',
+    'cut-off': 'The PDF began to arrive and then stopped, so nothing was downloaded. That is the connection, not the document. Try once more.',
+    // These three used to read "could not render this document" -- singular
+    // for a stack, and wrong about the cause.
+    'too-large': 'This is too much to send in one go, so nothing was downloaded. Pick fewer and try again.',
+    busy: 'The server is turning requests away for a moment, so nothing was downloaded. Wait a minute and try again.',
+    slow: 'The server took too long to make the PDFs, so nothing was downloaded. Pick fewer and try again.',
+    failed: 'The server could not render the PDF. Nothing was downloaded.'
   },
 
   reportPdfUnavailable() {
-    MApp.Toast.error(this.PDF_ERRORS[this.lastPdfError] || this.PDF_ERRORS.failed);
+    MApp.Toast.error(this.lastPdfMessage
+      ? `${this.lastPdfMessage} Nothing was downloaded.`
+      : (this.PDF_ERRORS[this.lastPdfError] || this.PDF_ERRORS.failed));
+  },
+
+  // The JSON envelope a refusal carried, or null -- desktop's App.Print
+  // _replyBody. A proxy's own error page (nginx's 413) is not read.
+  async _replyBody(res) {
+    const type = res.headers && typeof res.headers.get === 'function'
+      ? String(res.headers.get('Content-Type') || '').toLowerCase()
+      : '';
+    if (!type.includes('application/json') || typeof res.json !== 'function') return null;
+    try {
+      return await res.json();
+    } catch {
+      return null;
+    }
   },
 
   // Same status taxonomy as desktop's App.Print._postForBlob: which of
@@ -2256,32 +2348,57 @@ MApp.Print = {
   // reach the renderer" covers four situations that need different
   // answers.
   async _postForBlob(body, url = '/erp/render-pdf') {
+    this.lastPdfMessage = null;
     if (this.serverPdfAvailable === false) return null;
 
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
     let res;
     try {
-      res = await fetch(url, {
+      res = await this._within(this._renderWaitMs(body), controller, fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': this._csrfToken() },
         credentials: 'same-origin',
-        body: JSON.stringify(body)
-      });
+        body: JSON.stringify(body),
+        signal: controller ? controller.signal : undefined
+      }));
     } catch (err) {
       // Never completed: offline, or the server is unreachable. The
       // common case on this LAN, and the reason Print stays the fallback.
+      // Not latched (see serverPdfAvailable) -- the next tap tries again.
       this.lastPdfError = 'offline';
-      this.serverPdfAvailable = false;
       return null;
     }
+    if (res === this.TIMED_OUT) { this.lastPdfError = 'no-reply'; return null; }
 
     if (res.status === 503) { this.lastPdfError = 'no-renderer'; this.serverPdfAvailable = false; return null; }
     if (res.status === 404) { this.lastPdfError = 'no-endpoint'; this.serverPdfAvailable = false; return null; }
-    if (res.status === 401 || res.status === 403 || res.status === 400) { this.lastPdfError = 'rejected'; return null; }
+    if (res.status === 401) { this.lastPdfError = 'rejected'; return null; }
+    if (res.status === 400 || res.status === 403) {
+      // The PDF endpoints' own refusals name their reason ("Too many
+      // documents in one export", an account awaiting approval); a CSRF
+      // failure, which carries `error`, is a stale page a reload answers.
+      const said = await this._replyBody(res);
+      if (said && said.message && !said.error) this.lastPdfMessage = String(said.message);
+      this.lastPdfError = 'rejected';
+      return null;
+    }
+    if (res.status === 413) { this.lastPdfError = 'too-large'; return null; }
+    if (res.status === 429) { this.lastPdfError = 'busy'; return null; }
+    if (res.status === 504) { this.lastPdfError = 'slow'; return null; }
     if (!res.ok) { this.lastPdfError = 'failed'; return null; }
+    if (!this._isFileReply(res, url)) { this.lastPdfError = 'rejected'; return null; }
 
-    this.lastPdfError = null;
     this.serverPdfAvailable = true;
-    return await res.blob();
+    let blob;
+    try {
+      blob = await this._within(this.RENDER_BODY_WAIT_MS, controller, res.blob());
+    } catch {
+      // Dropped mid-file rather than stalled. Same outcome: no file.
+      blob = this.TIMED_OUT;
+    }
+    if (blob === this.TIMED_OUT) { this.lastPdfError = 'cut-off'; return null; }
+    this.lastPdfError = null;
+    return blob;
   },
 
   // ── What a PDF is rendered from ──────────────────────────────────────
@@ -2344,7 +2461,12 @@ MApp.Print = {
   // Renders whatever is currently inside a print container. The container
   // is populated by the same _populatePrintData the Print button uses, so
   // the downloaded file and the printed page are one document.
-  async _pdfFor(containerId, filename, landscape) {
+  //
+  // `onePage`: the document is laid out to fit one page (the Production
+  // Sheet), measured in this phone's fonts. The server has none of them, so
+  // it may shrink the sheet slightly to keep it on one page rather than
+  // spill its closing rule onto a second (pdf_render_service.ONE_PAGE_ZOOMS).
+  async _pdfFor(containerId, filename, landscape, onePage) {
     const el = document.getElementById(containerId);
     if (!el) return null;
     this.injectLogo();
@@ -2358,7 +2480,8 @@ MApp.Print = {
       // the grounds that the phone only reached narrow documents; it now
       // reaches the ledgers and pivots too.
       density: this.fitDensityFor(el.innerHTML),
-      filename
+      filename,
+      onePage: onePage === true
     });
   },
 
@@ -2368,7 +2491,10 @@ MApp.Print = {
 
   async download(containerId, filename, opts) {
     const name = this._pdfName(filename);
-    const blob = await this._pdfFor(containerId, name, opts && opts.landscape);
+    // The chooser has closed by now, so without this a render on mobile data
+    // was a few seconds of nothing at all -- a stack already says so.
+    MApp.Toast.show('Preparing the PDF…');
+    const blob = await this._pdfFor(containerId, name, opts && opts.landscape, opts && opts.onePage);
     if (!blob) { this.reportPdfUnavailable(); return false; }
     this.saveBlob(blob, name);
     return true;
@@ -2403,22 +2529,17 @@ MApp.Print = {
 
   async share(containerId, filename, opts) {
     const name = this._pdfName(filename);
-    const blob = await this._pdfFor(containerId, name, opts && opts.landscape);
+    MApp.Toast.show('Preparing the PDF…');
+    const blob = await this._pdfFor(containerId, name, opts && opts.landscape, opts && opts.onePage);
     if (!blob) { this.reportPdfUnavailable(); return false; }
 
-    try {
-      await navigator.share({
-        files: [new File([blob], name, { type: 'application/pdf' })],
-        title: name
-      });
-      return true;
-    } catch (err) {
-      // Dismissing the share sheet is not a failure and must not be
-      // reported as one -- it is the most common outcome of opening it.
-      if (err && err.name === 'AbortError') return false;
-      MApp.Toast.error('Could not share this document. It can still be downloaded.');
-      return false;
-    }
+    // Through _shareFiles, the way a stack shares. The tap that chose Share
+    // lapses after about five seconds, and a render that outlasts it is
+    // refused (NotAllowedError). That used to end in "Could not share"; now
+    // the operator is offered a Share button and the share rides on that
+    // press. Dismissing the sheet is still not reported as a failure.
+    const file = new File([blob], name, { type: 'application/pdf' });
+    return (await this._shareFiles([file], name, false, 'Share PDF')) === 'shared';
   },
 
   // ── Many documents, one file each ────────────────────────────────────
@@ -2515,7 +2636,9 @@ MApp.Print = {
           if (!(await ask())) return 'cancelled';
           continue;
         }
-        MApp.Toast.error('Could not share these documents. They can still be downloaded.');
+        MApp.Toast.error(files.length === 1
+          ? 'Could not share this document. It can still be downloaded.'
+          : 'Could not share these documents. They can still be downloaded.');
         return 'failed';
       }
     }
@@ -2555,7 +2678,7 @@ MApp.Print = {
   // A populated print container as the self-contained document the PDF
   // renderer is sent -- what _pdfFor sends for one, captured so a batch can
   // hold many.
-  capturePdfDocument(containerId, filename, landscape) {
+  capturePdfDocument(containerId, filename, landscape, onePage) {
     const el = document.getElementById(containerId);
     if (!el) return null;
     this.injectLogo();
@@ -2563,7 +2686,9 @@ MApp.Print = {
       filename: this._pdfName(filename),
       html: this.pdfDocumentHtml(el),
       landscape: landscape === true,
-      density: this.fitDensityFor(el.innerHTML)
+      density: this.fitDensityFor(el.innerHTML),
+      // See _pdfFor.
+      onePage: onePage === true
     };
   },
 
@@ -2603,7 +2728,9 @@ MApp.Print = {
   // record: { count, noun, zipName, documents(landscape) -> [{ filename,
   // html, landscape }] }. Print still prints the stack as one job through
   // `populate` -- a print dialog produces one document, whatever it is fed.
-  async chooseAction({ containerId, filename, title, populate, landscape, toggles, separate }) {
+  //
+  // `onePage` rides through to Download and Share -- see _pdfFor.
+  async chooseAction({ containerId, filename, title, populate, landscape, toggles, separate, onePage }) {
     const switches = toggles || [];
     const many = separate && separate.count > 1;
     const each = many ? `${separate.count} files, one per ${separate.noun || 'record'}` : '';
@@ -2629,7 +2756,7 @@ MApp.Print = {
         switches[Number(String(chosen.value).split(':')[1])].flip();
         continue;
       }
-      return this._runAction(chosen, { containerId, filename, landscape, populate, separate });
+      return this._runAction(chosen, { containerId, filename, landscape, populate, separate, onePage });
     }
   },
 
@@ -2637,7 +2764,7 @@ MApp.Print = {
   // document whose orientation is one of its own toggles (the Production
   // Sheet) has to print the way the toggle stands when Print is tapped,
   // not the way it stood when the list opened.
-  async _runAction(picked, { containerId, filename, landscape: orientation, populate, separate }) {
+  async _runAction(picked, { containerId, filename, landscape: orientation, populate, separate, onePage }) {
     if (separate && picked.value !== 'print') {
       const landscapeNow = typeof orientation === 'function' ? orientation() : orientation;
       const documents = (await separate.documents(landscapeNow)) || [];
@@ -2652,8 +2779,8 @@ MApp.Print = {
     if (typeof populate === 'function') await populate();
     const landscape = typeof orientation === 'function' ? orientation() : orientation;
     if (picked.value === 'print') { this.trigger(containerId, filename, { landscape }); return; }
-    if (picked.value === 'download') { await this.download(containerId, filename, { landscape }); return; }
-    await this.share(containerId, filename, { landscape });
+    if (picked.value === 'download') { await this.download(containerId, filename, { landscape, onePage }); return; }
+    await this.share(containerId, filename, { landscape, onePage });
   },
 
   // The stock / Warehouse Pool pivot, into desktop's own template.
@@ -15526,7 +15653,7 @@ MApp.ProductionSheet = {
   // typed, plus the lot's date. With none recorded desktop falls to the
   // lot's model, which reads 'General' when nothing matches.
   docName(lot) {
-    return MApp.Print.docNameFromLabel(lot.outputItemName || 'General', lot.date, 'Production Sheet');
+    return MApp.Print.docNameFromLabel(lot.outputItemName || 'General', lot.date, 'Production Sheet', lot.lotNumber);
   },
 
   async printSheet() {
@@ -15555,6 +15682,9 @@ MApp.ProductionSheet = {
       filename: this.docName(lot),
       title: `Production Sheet ${lot.lotNumber || ''}`.trim(),
       landscape,
+      // Fitted to one page in this phone's fonts; the server may shrink it
+      // slightly to keep it there (see MApp.Print._pdfFor).
+      onePage: true,
       toggles: [
         {
           on: landscape,
@@ -15617,6 +15747,10 @@ MApp.ProductionSheet = {
         : MApp.Print.docName({ type: 'PRD', date: true })),
       title: title || `Production Sheets (${list.length})`,
       landscape,
+      // The sheet draws its own cells (print-cells-own on its container),
+      // at the sizes its fit loop measured; the bulk container has to say
+      // the same, or Print repaints them at 11px and the page count with it.
+      cellsOwn: true,
       // Same Page preference the single-lot sheet uses, and the same
       // switch, so one operator's choice holds however they print.
       toggles: [{
@@ -15638,7 +15772,7 @@ MApp.ProductionSheet = {
           .map(lot => {
             this._renderLot(lot, lookups, isLandscape);
             return MApp.Print.capturePdfDocument(
-              'print-production-sheet-container', this.docName(lot), !!isLandscape);
+              'print-production-sheet-container', this.docName(lot), !!isLandscape, true);
           })
           .filter(Boolean)
       }

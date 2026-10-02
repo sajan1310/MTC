@@ -130,7 +130,16 @@
 // the form adds "+ Add from Warehouse Pool" lines (item, then colour), the
 // list and log name each line's colour, and the save shows the server's
 // warning when the write-off takes more than the pool holds.
-const CACHE_NAME = 'erp-mobile-shell-v75';
+// v76: Download and Share. A web page that arrives where the PDF should be
+// (the login screen, after a session lapsed) is no longer saved or shared;
+// a render gets a time limit; one failed request no longer switches PDFs off
+// until the app is reloaded; a single Share whose tap lapsed offers a Share
+// button instead of failing; a Production Sheet asks the server to keep it
+// on one page, and a stack of sheets prints with their own cell sizes. A
+// refusal shows the server's own reason, and a sheet's file name ends in its
+// lot number. The PO and Production Sheet keep their top rule and lose the
+// bottom one.
+const CACHE_NAME = 'erp-mobile-shell-v76';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

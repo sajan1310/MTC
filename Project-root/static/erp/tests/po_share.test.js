@@ -145,6 +145,27 @@ const rowOf = poNumber => {
 };
 const buttonIn = (row, label) => [...row.querySelectorAll('button')].find(b => b.textContent.trim() === label);
 
+// The documents keep their coloured rule along the top and have none along
+// the bottom -- asked for 2026-10-02, for the PO and the Production Sheet.
+describe('the document frames', () => {
+  const styleOf = id => document.getElementById(id).getAttribute('style');
+
+  test('the PO keeps its red top rule and has no bottom one', () => {
+    expect(styleOf('print-po-container')).toMatch(/border-top:\s*5px solid #C0392B/);
+    expect(styleOf('print-po-container')).not.toMatch(/border-bottom/);
+  });
+
+  test('the Production Sheet keeps its green top rule and has no closing one', () => {
+    const sheet = document.getElementById('print-production-sheet-container');
+    expect(styleOf('print-production-sheet-container')).toMatch(/border-top:\s*4px solid #198754/);
+    expect(styleOf('print-production-sheet-container')).not.toMatch(/border-bottom/);
+    expect(sheet.querySelector('.print-sheet-closing-accent')).toBeNull();
+    // and no other full-width green band closes it
+    const last = [...sheet.children].filter(el => el.tagName === 'DIV').pop();
+    expect(last.getAttribute('style') || '').not.toMatch(/background:\s*#198754/);
+  });
+});
+
 describe('a PO row', () => {
   test('offers Share beside Download PDF', () => {
     expect([...rowOf('1204').querySelectorAll('button')].map(b => b.textContent.trim()))
@@ -180,6 +201,24 @@ describe('a PO row', () => {
     expect(button.disabled).toBe(false);
     expect(button.textContent.trim()).toBe('Share');
   });
+
+  // It used to show nothing for the length of the render, and a second
+  // press saved the PO twice.
+  test('its Download PDF button does too, and a second press saves nothing more', async () => {
+    const button = buttonIn(rowOf('1204'), 'Download PDF');
+
+    button.click();
+    expect(button.disabled).toBe(true);
+    expect(button.textContent).toContain('Preparing');
+    button.click();
+    await settle();
+    await settle();
+
+    expect(requests).toHaveLength(1);
+    expect(saved).toEqual([NAMES[0]]);
+    expect(button.disabled).toBe(false);
+    expect(button.textContent.trim()).toBe('Download PDF');
+  });
 });
 
 describe('Share Selected', () => {
@@ -203,6 +242,38 @@ describe('Share Selected', () => {
     const { files } = navigator.share.mock.calls[0][0];
     expect(files.map(f => f.name)).toEqual(NAMES);
     expect(saved).toEqual(NAMES);   // from the download
+  });
+
+  // One PO layout, not two: the bulk paths used to draw their own copy of the
+  // PO (buildPOPrintPageHtml), which every PO change had to repeat.
+  test("each PO's file is the document its own Download PDF sends", async () => {
+    buttonIn(rowOf('1205'), 'Download PDF').click();
+    await settle();
+    const single = requests[0].body.html;
+
+    App.State.selectedPOs = ['1204', '1205'];
+    await App.PO.bulkDownloadPDF();
+
+    const bulk = requests[1].body.documents;
+    expect(bulk[1].html).toBe(single);
+    expect(bulk[0].html).toContain('1204');
+    expect(bulk[0].html).not.toContain('1205');
+    expect(typeof App.PO.buildPOPrintPageHtml).toBe('undefined');
+  });
+
+  test('and Print Selected prints the same PO, a page each, keeping its own cells', () => {
+    App.State.selectedPOs = ['1204', '1205'];
+    window.print = jest.fn();
+    App.PO.bulkPrint();
+
+    const pages = document.querySelectorAll('#print-bulk-body .bulk-print-page');
+    expect(pages).toHaveLength(2);
+    expect(pages[0].textContent).toContain('1204');
+    expect(pages[1].textContent).toContain('1205');
+    expect(pages[0].querySelector('[id]')).toBeNull();
+    expect(document.getElementById('print-bulk-container').classList.contains('print-cells-own')).toBe(true);
+    window.dispatchEvent(new Event('afterprint'));
+    expect(document.getElementById('print-bulk-container').classList.contains('print-cells-own')).toBe(false);
   });
 
   test('honours the Rates switch, as Download PDFs does', async () => {

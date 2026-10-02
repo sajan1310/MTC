@@ -2850,9 +2850,11 @@ body.mb-selecting {
     print-color-adjust: exact !important;
   }
 
-  /* Baseline cells for templates that do not style their own. The PO and
-     stock pivot carry print-cells-own and keep their inline look; applying
-     this to them would repaint their 1px #e5e5e5 borders #999. */
+  /* Baseline cells for templates that do not style their own. The PO, the
+     stock pivot and the Production Sheet carry print-cells-own and keep
+     their inline look; applying this to them would repaint their 1px
+     #e5e5e5 borders #999 -- and the sheet's cells, sized to fit one page,
+     at 11px, which put it back on two. */
   .print-container:not(.print-cells-own) td {
     border: 1px solid #999 !important;
     padding: 6px 8px !important;
@@ -2867,7 +2869,6 @@ body.mb-selecting {
   .print-container tr { break-inside: avoid; }
 
   /* A document's closing blocks stay whole. */
-  .print-container .print-sheet-closing-accent,
   .print-container #print-grand-total-container,
   .print-container #print-footer-meta,
   .print-container #print-signature {
