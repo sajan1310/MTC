@@ -8,7 +8,9 @@ WORKDIR /app
 # libpango/libharfbuzz back WeasyPrint (app/erp/services/pdf_render_service.py),
 # which renders the Download PDF exports. Tens of megabytes, not the ~400 MB a
 # headless browser cost -- which is why this one is installed unconditionally
-# rather than hidden behind a build arg that defaulted to off.
+# rather than hidden behind a build arg that defaulted to off. fonts-noto-core
+# gives it Gurmukhi and Devanagari; without it text in either script renders as
+# empty boxes (see deploy/provision.sh).
 #
 # postgresql-client is no longer needed to apply the schema -- the ERP
 # runner does the whole job now (MIG-001) -- but pg_dump/pg_restore ARE
@@ -20,6 +22,7 @@ RUN apt-get update \
         libpq-dev gcc \
         postgresql-client \
         libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 \
+        fonts-noto-core \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
