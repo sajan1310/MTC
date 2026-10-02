@@ -352,15 +352,23 @@ def _init_logging(app: Flask) -> None:
 
 
 def _client_wants_json() -> bool:
-    """True when the caller is the RPC layer rather than a browser navigation.
+    """True when the caller is a script rather than a browser navigation.
 
-    Used by both the unauthorized handler and the 503 handler below, which
-    have to agree: an /api/ caller gets the {success, data, message} envelope
-    every other RPC failure uses, and a page navigation gets HTML.
+    Used by the unauthorized, CSRF and 503 handlers, which have to agree: an
+    /api/ caller gets the {success, data, message} envelope every other RPC
+    failure uses, and a page navigation gets HTML.
+
+    A JSON request body counts too. The PDF endpoints (/erp/render-pdf and
+    /erp/render-pdf-batch) live outside /api/ and fetch() asks for */*, so an
+    expired session answered them with the login redirect. fetch follows it,
+    and the login page -- or the ERP shell, for a remembered user -- arrived
+    as a 200 that Download saved as "PO_1204_Mahadev.pdf" and Share sent on.
+    No browser navigation carries a JSON body, so this cannot catch one.
     """
     return (
         request.path.startswith("/api/")
         or request.accept_mimetypes.best == "application/json"
+        or request.is_json
     )
 
 

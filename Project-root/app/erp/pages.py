@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import re
+import unicodedata
+from urllib.parse import quote
 
 from flask import (
     Response,
@@ -205,6 +207,55 @@ def mobile_offline():
     return render_template("erp/mobile_offline.html")
 
 
+def _attachment(response: Response, filename: str) -> Response:
+    """Mark `response` as a download named `filename`, in any script.
+
+    A header value must be Latin-1 on the wire: gunicorn refuses anything past
+    U+00FF and answers 400 in place of the file. Production Sheets are named
+    in the operator's own words, so one Gurmukhi, Devanagari or curly-quote
+    character in an Output Item name made every Download and Share of that
+    sheet fail -- reported to the user as "session expired". The name goes as
+    RFC 6266 does it, the way Flask's own send_file does: an ASCII
+    `filename` for old clients and the real one, UTF-8 percent-encoded, as
+    `filename*`.
+    """
+    try:
+        filename.encode("ascii")
+    except UnicodeEncodeError:
+        simple = unicodedata.normalize("NFKD", filename)
+        simple = simple.encode("ascii", "ignore").decode("ascii").strip()
+        # A name written wholly in another script leaves only its extension.
+        stem, dot, ext = simple.rpartition(".")
+        if not stem.strip(" ._-"):
+            simple = f"Document.{ext}" if dot else "Document.pdf"
+        names = {
+            "filename": simple,
+            "filename*": "UTF-8''" + quote(filename, safe="!#$&+-.^_`|~"),
+        }
+    else:
+        names = {"filename": filename}
+    response.headers.set("Content-Disposition", "attachment", **names)
+    return response
+
+
+def _awaiting_approval():
+    """A 403 for an account not yet approved, else None.
+
+    The page routes send such a user to the waiting page and the RPC layer
+    refuses them; these two endpoints did neither, so a signup nobody had
+    approved could still keep a worker busy rendering.
+    """
+    if getattr(current_user, "role", None) != "pending_approval":
+        return None
+    return jsonify(
+        {
+            "success": False,
+            "message": "Your account is waiting for an administrator's "
+            "approval, so it cannot make PDFs yet.",
+        }
+    ), 403
+
+
 @erp_bp.route("/erp/render-pdf", methods=["POST"])
 @login_required
 def render_pdf():
@@ -218,7 +269,8 @@ def render_pdf():
     and this route is not exempt.
 
     Contract:
-      request  {"html": "<div>...</div>", "landscape": false, "filename": "..."}
+      request  {"html": "<div>...</div>", "landscape": false, "filename": "...",
+                "density": "", "onePage": false}
       200      application/pdf
       400      bad input
       503      cannot render here; the client falls back to the print dialog
@@ -226,12 +278,17 @@ def render_pdf():
     """
     from .services import pdf_render_service
 
+    refused = _awaiting_approval()
+    if refused:
+        return refused
+
     payload = request.get_json(silent=True) or {}
     try:
         pdf = pdf_render_service.render_pdf(
             payload.get("html"),
             landscape=bool(payload.get("landscape")),
             density=str(payload.get("density") or ""),
+            one_page=bool(payload.get("onePage")),
         )
     except ValueError as exc:
         return jsonify({"success": False, "message": str(exc)}), 400
@@ -248,13 +305,11 @@ def render_pdf():
         return jsonify({"success": False, "message": "Failed to render PDF."}), 500
 
     name = pdf_render_service.safe_filename(payload.get("filename"), "Document")
-    return Response(
-        pdf,
-        mimetype="application/pdf",
-        headers={
-            "Content-Disposition": f'attachment; filename="{name}"',
-            "Cache-Control": "no-store",
-        },
+    return _attachment(
+        Response(
+            pdf, mimetype="application/pdf", headers={"Cache-Control": "no-store"}
+        ),
+        name,
     )
 
 
@@ -277,6 +332,10 @@ def render_pdf_batch():
       400 / 503 as above.
     """
     from .services import pdf_render_service
+
+    refused = _awaiting_approval()
+    if refused:
+        return refused
 
     payload = request.get_json(silent=True) or {}
     try:
@@ -301,11 +360,9 @@ def render_pdf_batch():
     if not zip_name.lower().endswith(".zip"):
         zip_name += ".zip"
 
-    return Response(
-        blob,
-        mimetype="application/zip",
-        headers={
-            "Content-Disposition": f'attachment; filename="{zip_name}"',
-            "Cache-Control": "no-store",
-        },
+    return _attachment(
+        Response(
+            blob, mimetype="application/zip", headers={"Cache-Control": "no-store"}
+        ),
+        zip_name,
     )

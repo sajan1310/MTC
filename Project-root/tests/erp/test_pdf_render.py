@@ -13,6 +13,7 @@ trains people to ignore it.
 """
 
 import io
+import logging
 import zipfile
 
 import pytest
@@ -52,6 +53,19 @@ class TestSafeFilename:
         for value in ("", "   ", None, "...", "/"):
             assert svc.safe_filename(value, "Fallback") == "Fallback.pdf"
 
+    def test_a_long_name_keeps_its_extension(self):
+        """Cut at the end, a long name lost ".pdf" and arrived as a file
+        nothing would open."""
+        out = svc.safe_filename("x" * 130 + ".pdf")
+        assert out.endswith(".pdf")
+        assert len(out) == svc.MAX_FILENAME_CHARS
+        out = svc.safe_filename("y" * 200)
+        assert out.endswith(".pdf") and len(out) == svc.MAX_FILENAME_CHARS
+
+    def test_keeps_a_name_in_any_script(self):
+        """Production Sheets are named in the operator's own words."""
+        assert svc.safe_filename("ਪੰਜਾਬੀ – Rim_021026") == "ਪੰਜਾਬੀ – Rim_021026.pdf"
+
 
 class TestDedupeFilenames:
     def test_leaves_distinct_names_alone(self):
@@ -72,6 +86,12 @@ class TestDedupeFilenames:
         silently dropped by the extractor, so N records yield fewer files."""
         out = svc.dedupe_filenames(["Document.pdf"] * 40)
         assert len(set(n.lower() for n in out)) == 40
+
+    def test_a_numbered_name_never_lands_on_a_name_already_in_the_batch(self):
+        """The batch "A", "A", "A_2" used to come out as "A", "A_2", "A_2"."""
+        out = svc.dedupe_filenames(["A.pdf", "A.pdf", "A_2.pdf"])
+        assert len({n.lower() for n in out}) == 3
+        assert out[0] == "A.pdf" and out[2] == "A_2.pdf"
 
 
 # ── Input validation (no renderer needed) ────────────────────────────
@@ -105,6 +125,14 @@ class TestValidation:
         docs = [{"filename": f"{i}.pdf", "html": big} for i in range(20)]
         with pytest.raises(ValueError, match="too large"):
             svc.render_batch(docs)
+
+    def test_the_batch_limit_is_reachable_behind_the_body_cap(self):
+        """At 20 MB it sat above MAX_CONTENT_LENGTH (16 MiB) and nginx's 16m,
+        so a batch that size died at the proxy with a bare 413 and never got
+        this check's explanation."""
+        from config import Config
+
+        assert svc.MAX_BATCH_BYTES < Config.MAX_CONTENT_LENGTH * 0.9
 
 
 # ── The URL fetcher is the whole security story ──────────────────────
@@ -225,6 +253,186 @@ class TestRendering:
         assert landscape.mediabox.width > portrait.mediabox.width
         assert landscape.mediabox.width > landscape.mediabox.height
 
+    def test_a_density_tier_beats_the_templates_inline_cell_styles(self):
+        """Every print template styles its cells inline, and an inline style
+        beats a selector -- so without !important a tier did nothing here
+        while Print shrank the same table."""
+        pypdf = pytest.importorskip("pypdf")
+        cell = '<td style="font-size:12px;padding:7px 6px">C{}</td>'
+        html = (
+            "<table><tr>" + "".join(cell.format(i) for i in range(13)) + "</tr></table>"
+        )
+
+        def sizes(density):
+            found = set()
+
+            def visit(text, cm, tm, font_dict, font_size):
+                if text.strip().startswith("C"):
+                    found.add(round(font_size * tm[0], 1))
+
+            pdf = svc.render_pdf(html, density=density)
+            pypdf.PdfReader(io.BytesIO(pdf)).pages[0].extract_text(visitor_text=visit)
+            return found
+
+        assert sizes("") == {12.0}
+        assert sizes("print-fit-compact") == {10.0}
+        assert sizes("print-fit-xdense") == {8.0}
+
+    def test_says_nothing_about_css_only_a_browser_uses(self, caplog):
+        """print-color-adjust and friends are there for Chrome's print engine.
+        WeasyPrint said so ~47 times a document -- 13,645 journal lines in four
+        weeks -- and buried the errors worth reading."""
+        with caplog.at_level("DEBUG", logger="weasyprint"):
+            svc.render_pdf(
+                '<p style="print-color-adjust:exact;-webkit-print-color-adjust:exact;'
+                'word-break:break-word;overflow-x:auto">x</p>'
+                "<style>::-webkit-scrollbar { display: none; }</style>"
+            )
+        assert "Ignored" not in caplog.text
+        assert "unsupported selector" not in caplog.text
+
+
+class TestScriptFonts:
+    """A stock Ubuntu server has only DejaVu, which covers neither Gurmukhi
+    nor Devanagari, so text in either rendered as empty boxes in every
+    downloaded PDF while Print looked fine. Nothing said so."""
+
+    def _fc_list(self, monkeypatch, answers):
+        import subprocess
+
+        monkeypatch.setattr(svc.shutil, "which", lambda name: "/usr/bin/fc-list")
+
+        def run(args, **_kw):
+            lang = args[1].split("=", 1)[1]
+            return subprocess.CompletedProcess(args, 0, stdout=answers[lang], stderr="")
+
+        monkeypatch.setattr(svc.subprocess, "run", run)
+
+    def test_names_the_scripts_with_no_font(self, monkeypatch):
+        self._fc_list(monkeypatch, {"pa": "", "hi": "Noto Sans Devanagari\n"})
+        assert svc.missing_scripts() == ["Gurmukhi"]
+
+    def test_nothing_missing_once_noto_is_installed(self, monkeypatch):
+        self._fc_list(
+            monkeypatch, {"pa": "Noto Sans Gurmukhi\n", "hi": "Noto Sans Devanagari\n"}
+        )
+        assert svc.missing_scripts() == []
+
+    def test_does_not_guess_without_fontconfig(self, monkeypatch):
+        monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+        assert svc.missing_scripts() == []
+
+    def test_does_not_raise_when_fc_list_fails(self, monkeypatch):
+        monkeypatch.setattr(svc.shutil, "which", lambda name: "/usr/bin/fc-list")
+
+        def boom(*_a, **_kw):
+            raise OSError("no such file")
+
+        monkeypatch.setattr(svc.subprocess, "run", boom)
+        assert svc.missing_scripts() == []
+
+    def test_boot_says_what_to_install(self, monkeypatch, caplog):
+        monkeypatch.setattr(svc, "probe", lambda: (True, "weasyprint 70.0 available"))
+        monkeypatch.setattr(svc, "missing_scripts", lambda: ["Gurmukhi", "Devanagari"])
+        logger = logging.getLogger("test.pdf.boot")
+        with caplog.at_level("INFO", logger="test.pdf.boot"):
+            assert svc.log_availability(logger) is True
+        assert "Gurmukhi or Devanagari" in caplog.text
+        assert "fonts-noto-core" in caplog.text
+
+
+class TestLogNoise:
+    """The filter drops CSS notices only; failures stay audible."""
+
+    def test_notices_are_dropped(self, caplog):
+        log = logging.getLogger("weasyprint")
+        with caplog.at_level("DEBUG", logger="weasyprint"):
+            log.warning(
+                "Ignored `%s:%s` at %d:%d, %s.",
+                "print-color-adjust",
+                "exact",
+                1,
+                2,
+                "unknown property",
+            )
+            log.warning("Invalid or unsupported selector, %s", "'::-webkit-scrollbar'")
+        assert caplog.text == ""
+
+    def test_errors_and_other_warnings_are_kept(self, caplog):
+        log = logging.getLogger("weasyprint")
+        with caplog.at_level("DEBUG", logger="weasyprint"):
+            log.error("Failed to load image at %r", "file:///etc/passwd")
+            log.warning("Anchor defined twice: %r", "x")
+        assert "Failed to load image" in caplog.text
+        assert "Anchor defined twice" in caplog.text
+
+
+class TestOnePageShell:
+    def test_full_size_is_plain_a4(self):
+        html = svc._document("<p>x</p>", landscape=False)
+        assert "size: A4 portrait; margin: 6mm;" in html
+
+    def test_a_smaller_step_lays_out_on_a_proportionally_larger_page(self):
+        """write_pdf(zoom=0.96) then shrinks it back to exactly A4."""
+        html = svc._document("<p>x</p>", landscape=False, scale=0.96)
+        assert "size: 218.750mm 309.375mm; margin: 6.250mm;" in html
+
+    def test_landscape_swaps_the_larger_page_too(self):
+        html = svc._document("<p>x</p>", landscape=True, scale=0.96)
+        assert "size: 309.375mm 218.750mm;" in html
+
+
+@needs_renderer
+class TestOnePage:
+    """The Production Sheet is fitted to one page in the browser, in the fonts
+    that machine has. This server falls back to DejaVu Sans, which is wider,
+    so a sheet the browser fitted could push its closing rule onto a second,
+    otherwise empty page -- 34 desktop and 146 phone sheets of 908 did."""
+
+    # The printable box is 285 mm = 1077 CSS px tall; this overflows it by a
+    # line, the way a wider font overflowed a fitted sheet.
+    JUST_OVER = '<div style="height:1070px">sheet</div><p>closing rule</p>'
+    pypdf = pytest.importorskip("pypdf")
+
+    def _pages(self, pdf):
+        return self.pypdf.PdfReader(io.BytesIO(pdf)).pages
+
+    def test_a_sheet_that_spills_by_a_little_comes_back_on_one_page(self):
+        assert len(self._pages(svc.render_pdf(self.JUST_OVER))) == 2
+        assert len(self._pages(svc.render_pdf(self.JUST_OVER, one_page=True))) == 1
+
+    def test_the_paper_is_still_a4(self):
+        page = self._pages(svc.render_pdf(self.JUST_OVER, one_page=True))[0]
+        assert float(page.mediabox.width) == pytest.approx(595.28, abs=1)
+        assert float(page.mediabox.height) == pytest.approx(841.89, abs=1)
+
+    def test_nothing_is_lost_in_the_shrinking(self):
+        page = self._pages(svc.render_pdf(self.JUST_OVER, one_page=True))[0]
+        text = page.extract_text()
+        assert "sheet" in text and "closing rule" in text
+
+    def test_a_genuinely_long_document_is_left_at_full_size(self):
+        """Shrinking three pages onto one would be unreadable; it paginates."""
+        long_doc = "".join(f"<p>line {i}</p>" for i in range(150))
+        full = len(self._pages(svc.render_pdf(long_doc)))
+        assert full >= 3
+        assert len(self._pages(svc.render_pdf(long_doc, one_page=True))) == full
+
+    def test_a_document_that_fits_is_not_touched(self):
+        short = "<p>PO-1</p>"
+        assert svc.render_pdf(short, one_page=True)[:200] == svc.render_pdf(short)[:200]
+
+    def test_the_batch_honours_it_per_document(self):
+        blob, _ = svc.render_batch(
+            [
+                {"filename": "a.pdf", "html": self.JUST_OVER, "onePage": True},
+                {"filename": "b.pdf", "html": self.JUST_OVER},
+            ]
+        )
+        archive = zipfile.ZipFile(io.BytesIO(blob))
+        assert len(self._pages(archive.read("a.pdf"))) == 1
+        assert len(self._pages(archive.read("b.pdf"))) == 2
+
 
 @needs_renderer
 class TestBatch:
@@ -265,12 +473,56 @@ class TestEndpointsRequireAuth:
     """
 
     @pytest.mark.parametrize("url", ["/erp/render-pdf", "/erp/render-pdf-batch"])
-    def test_anonymous_is_redirected_or_refused(self, erp_app, url):
+    def test_anonymous_is_refused_with_401_not_redirected(self, erp_app, url):
+        """A redirect is the bug, not an acceptable answer. fetch() follows
+        it, and the login page then arrives as a 200 that Download saved as
+        a .pdf and Share sent on. Sent the way the client sends it -- a JSON
+        body and fetch's default Accept of */* -- the answer must be the
+        401 envelope the RPC layer uses."""
         client = erp_app.test_client()  # no session -- not logged in
-        res = client.post(url, json={"html": "<p>x</p>"})
-        # Flask-Login either redirects to the login view or aborts 401,
-        # depending on the request's Accept header.
-        assert res.status_code in (302, 401)
+        res = client.post(url, json={"html": "<p>x</p>"}, headers={"Accept": "*/*"})
+
+        assert res.status_code == 401
+        assert res.mimetype == "application/json"
+        body = res.get_json()
+        assert body["success"] is False
+        assert "session" in body["message"].lower()
+
+
+class TestAwaitingApproval:
+    """A signup nobody has approved yet is refused, as the RPC layer refuses
+    them, instead of being able to keep a worker busy rendering."""
+
+    @pytest.fixture
+    def pending_client(self, erp_app):
+        import database
+
+        with erp_app.app_context():
+            with database.get_conn() as (_conn, cur):
+                cur.execute(
+                    """
+                    INSERT INTO users (name, email, password_hash, role)
+                    VALUES (%s, %s, %s, 'pending_approval')
+                    ON CONFLICT (email) DO UPDATE SET role = 'pending_approval'
+                    RETURNING user_id
+                    """,
+                    ("Pending User", "pending-pdf@example.invalid", "not-a-real-hash"),
+                )
+                user_id = cur.fetchone()[0]
+        client = erp_app.test_client()
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(user_id)
+            sess["_fresh"] = True
+        return client
+
+    @pytest.mark.parametrize("url", ["/erp/render-pdf", "/erp/render-pdf-batch"])
+    def test_is_refused_with_a_reason(self, pending_client, url):
+        res = pending_client.post(
+            url,
+            json={"html": "<p>x</p>", "documents": [{"html": "<p>x</p>"}]},
+        )
+        assert res.status_code == 403
+        assert "approval" in res.get_json()["message"]
 
 
 class TestEndpointErrors:
@@ -324,6 +576,73 @@ class TestEndpointSuccess:
     def test_response_is_not_cached(self, erp_client):
         res = erp_client.post("/erp/render-pdf", json={"html": "<p>x</p>"})
         assert res.headers["Cache-Control"] == "no-store"
+
+    # Production Sheets are named in the operator's own words. One Gurmukhi,
+    # Devanagari or curly-quote character in the Output Item name put a header
+    # gunicorn refuses on the wire -- a 400 in place of the file, reported to
+    # the user as "session expired".
+    NAME = "ਪੰਜਾਬੀ “Rim” – 20 inch_021026.pdf"
+
+    def test_a_name_wholly_in_another_script_still_has_a_plain_fallback(
+        self, erp_client
+    ):
+        res = erp_client.post(
+            "/erp/render-pdf", json={"html": "<p>x</p>", "filename": "ਪੰਜਾਬੀ.pdf"}
+        )
+        header = res.headers["Content-Disposition"]
+        assert header.startswith("attachment; filename=Document.pdf; filename*=")
+        assert "%E0%A8%AA" in header  # the real name rides in filename*
+
+    def test_a_name_in_any_script_comes_back_in_a_header_the_wire_accepts(
+        self, erp_client
+    ):
+        res = erp_client.post(
+            "/erp/render-pdf", json={"html": "<p>x</p>", "filename": self.NAME}
+        )
+        assert res.status_code == 200
+        header = res.headers["Content-Disposition"]
+        header.encode("ascii")  # nothing past U+007F, so nothing past U+00FF
+        assert header.startswith("attachment; ")
+        assert "filename*=UTF-8''" in header
+        from urllib.parse import unquote
+
+        assert unquote(header.split("filename*=UTF-8''", 1)[1]) == self.NAME
+
+    def test_and_gunicorn_lets_it_through(self, erp_client):
+        """The check that actually failed: gunicorn's own header validation.
+        gunicorn imports fcntl, so this runs on Linux (CI and the server)."""
+        wsgi = pytest.importorskip("gunicorn.http.wsgi")
+        res = erp_client.post(
+            "/erp/render-pdf", json={"html": "<p>x</p>", "filename": self.NAME}
+        )
+        assert wsgi.HEADER_VALUE_RE.fullmatch(res.headers["Content-Disposition"])
+
+    def test_an_ascii_name_is_sent_plainly(self, erp_client):
+        """Quoted only where it has to be (RFC 6266 accepts a bare token)."""
+        res = erp_client.post(
+            "/erp/render-pdf", json={"html": "<p>x</p>", "filename": "PO_1204.pdf"}
+        )
+        assert res.headers["Content-Disposition"] == "attachment; filename=PO_1204.pdf"
+        res = erp_client.post(
+            "/erp/render-pdf",
+            json={"html": "<p>x</p>", "filename": "Fitted Rim 20 inch_140926.pdf"},
+        )
+        assert res.headers["Content-Disposition"] == (
+            'attachment; filename="Fitted Rim 20 inch_140926.pdf"'
+        )
+
+    def test_one_page_is_passed_through(self, erp_client):
+        pypdf = pytest.importorskip("pypdf")
+        res = erp_client.post(
+            "/erp/render-pdf",
+            json={
+                "html": TestOnePage.JUST_OVER,
+                "onePage": True,
+                "filename": "PRD.pdf",
+            },
+        )
+        assert res.status_code == 200
+        assert len(pypdf.PdfReader(io.BytesIO(res.data)).pages) == 1
 
 
 # ── The page shell mirrors the print stylesheet ──────────────────────
