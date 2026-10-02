@@ -57,11 +57,16 @@ apt-get install -y --no-install-recommends \
     git curl ca-certificates gnupg openssl \
     nginx redis-server \
     certbot python3-certbot-nginx \
-    libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
-# ^ the last line is WeasyPrint's runtime, the same three packages the
-#   Dockerfile installs. Without them the Download PDF endpoints return 503
-#   and quietly fall back to the browser print dialog. The app keeps working,
-#   so this is a fault you hear about from a user weeks later.
+    libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 \
+    fonts-noto-core
+# ^ the last two lines are WeasyPrint's runtime, the same packages the
+#   Dockerfile installs. Without the libraries the Download PDF endpoints
+#   return 503 and quietly fall back to the browser print dialog. The app keeps
+#   working, so this is a fault you hear about from a user weeks later.
+#   fonts-noto-core is the Gurmukhi and Devanagari: a stock server has only
+#   DejaVu, which covers neither, so a name or remark written in Punjabi or
+#   Hindi rendered as empty boxes in every downloaded and shared PDF while
+#   Print, using the PC's own fonts, looked fine.
 
 # PGDG, because Ubuntu 24.04 ships PostgreSQL 16 and $PG_VERSION above is 17
 # -- see the note there for why the version has to match the database being

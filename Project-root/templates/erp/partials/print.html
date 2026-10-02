@@ -113,7 +113,6 @@
             box-sizing:border-box;
             width:100%;
             border-top:5px solid #C0392B;
-            border-bottom:3px solid #C0392B;
             -webkit-print-color-adjust:exact;
             print-color-adjust:exact;">
 
@@ -720,7 +719,12 @@
 <!-- ─────────────────────────────────────────────────────────────────── -->
 <!-- PRINT TEMPLATE: PRODUCTION SHEET (BOM REQUIREMENT)                 -->
 <!-- ─────────────────────────────────────────────────────────────────── -->
-<div id="print-production-sheet-container" class="print-container"
+<!-- print-cells-own: the sheet draws its own cells, at the sizes
+     PrintTemplates.productionSheet measured to fit one page. Without it the
+     print rules repainted every cell at 11px with 6px 8px padding, so Print
+     no longer matched that measurement: 51 of 908 lots printed on two pages
+     (2026-10-02), none with it. -->
+<div id="print-production-sheet-container" class="print-container print-cells-own"
      style="display:none;
             background:#fff;
             color:#1a1a1a;
@@ -854,22 +858,8 @@
     <div id="print-prod-remarks-text" style="font-size:12px;color:#1a1a1a;margin-top:2px;white-space:pre-wrap;"></div>
   </div>
 
-  <!-- Closing accent — a real block (not the container's own border-bottom)
-       so the print engine can keep it whole the same way it keeps table rows
-       whole: styles.css gives .print-sheet-closing-accent
-       break-inside:avoid, and a plain border-bottom on the container has no
-       box of its own for that rule to act on, so it could land squeezed
-       right against the last table row whenever that row fell near a
-       slice boundary. This div's own height + margin gives it real weight
-       to protect via .print-sheet-closing-accent in that call's
-       pagebreak.avoid list — it either renders with its intended clearance,
-       or (rarely) the whole block moves to a fresh page, but it can never
-       be sliced flush against the row above it. Native window.print() was
-       never affected (real CSS fragmentation already keeps border-bottom on
-       the box's last page fragment), so this only changes anything for the
-       PDF path. -->
-  <div class="print-sheet-closing-accent" style="height:8px;background:#198754;margin-top:8px;
-              -webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+  <!-- No closing rule: the sheet keeps its green top rule only, as the
+       Purchase Order keeps only its red one (asked for 2026-10-02). -->
 
 </div>
 

@@ -1404,15 +1404,19 @@ App.Production = {
     // printing a selection does not change what the user is looking at.
     const openSheet = App.State.currentProductionSheet;
     try {
+      // Each page is the sheet as Print Sheet prints it: the container with
+      // its frame (liftPage), drawing its own cells (cellsOwn) -- not
+      // repainted at 11px by the print rules, which threw away the sizes
+      // the sheet was fitted to one page with.
       App.Print.triggerBulk(
         lots,
         p => {
           this._populateProductionSheetData(p);
           this._buildProductionSheetForExport();
-          return container.innerHTML;
+          return App.Print.liftPage('print-production-sheet-container');
         },
         App.Print.docName({ type: 'PRD', date: true }),
-        { landscape: this._printOptions().landscape }
+        { landscape: this._printOptions().landscape, cellsOwn: true }
       );
     } finally {
       App.State.currentProductionSheet = openSheet;
@@ -1471,10 +1475,14 @@ App.Production = {
       for (const p of lots) {
         this._populateProductionSheetData(p);
         this._buildProductionSheetForExport();
+        // The container itself, frame included, as the single Download PDF
+        // sends it -- and onePage, so a server whose fonts run wider than
+        // the browser's shrinks the sheet slightly rather than spill it.
         documents.push({
           filename: `${this._productionSheetDocName()}.pdf`,
-          html: container.innerHTML,
-          landscape
+          html: App.Print.documentHtml(container),
+          landscape,
+          onePage: true
         });
       }
     } finally {
@@ -8187,9 +8195,15 @@ App.Production = {
   // the same rich lot/size/model/process name the old Download PDF button
   // built rather than the bare product id.
   // The filename for whichever sheet is currently built into the print
-  // container: the Output Item Name the operator typed, plus the lot's date.
+  // container: the Output Item Name the operator typed, the lot's date and
+  // the lot's own number.
   //
-  //     20 inch Rider D-Gaddi Steel Rim S-Kid Type_210826
+  //     20 inch Rider D-Gaddi Steel Rim S-Kid Type_210826_LOT-PKG014-0003
+  //
+  // The number is what keeps two lots of one item on one day apart -- 41 of
+  // 908 lots shared a name with another, so a Download PDFs of them gave
+  // "..._210826.pdf" and "..._210826_2.pdf" and no way to tell which was
+  // which without opening them.
   //
   // Shared by Print Sheet, Download PDF and Download PDFs, so all three
   // produce the identical name for the identical lot. Reading it from
@@ -8206,7 +8220,7 @@ App.Production = {
       || document.getElementById('prodSheetProductName')?.innerText
       || document.getElementById('prodSheetProductId')?.innerText;
 
-    return App.Print.docNameFromLabel(label, state?.date, 'Production Sheet');
+    return App.Print.docNameFromLabel(label, state?.date, 'Production Sheet', state?.lotNumber);
   },
 
   printProductionSheet() {
@@ -8326,9 +8340,16 @@ App.Production = {
     ].join('_');
   },
   // Backs the Production Sheet dialog's "Download PDF" button, beside "Print
-  // Sheet". Both reach the print dialog, where "Save as PDF" produces the
-  // file -- including the Landscape option, which printProductionSheet now
-  // forwards and which previously only this path honoured.
+  // Sheet": the same sheet, rendered to a file by the server, under the same
+  // name and with the same Landscape option.
+  //
+  // The button says "Preparing…" and stays disabled while it renders, as
+  // Share beside it always has. Without that the press showed nothing for
+  // the length of the render, and a second press saved a second file.
+  //
+  // onePage: the sheet is fitted to one page in this browser's fonts; the
+  // server has none of them, so it may shrink the sheet slightly to keep it
+  // there (pdf_render_service.ONE_PAGE_ZOOMS).
   async downloadProductionSheetPDF() {
     const state = App.State.currentProductionSheet;
     if (!state) return;
@@ -8338,7 +8359,7 @@ App.Production = {
     await App.Print.downloadContainer(
       'print-production-sheet-container',
       this._productionSheetDocName(),
-      { landscape: this._printOptions().landscape }
+      { landscape: this._printOptions().landscape, buttonId: 'prodSheetDownloadBtn', onePage: true }
     );
   },
 
@@ -8353,7 +8374,7 @@ App.Production = {
     await App.Print.shareContainer(
       'print-production-sheet-container',
       this._productionSheetDocName(),
-      { landscape: this._printOptions().landscape, buttonId: 'prodSheetShareBtn' }
+      { landscape: this._printOptions().landscape, buttonId: 'prodSheetShareBtn', onePage: true }
     );
   }
 };

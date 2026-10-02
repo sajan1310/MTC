@@ -258,7 +258,7 @@ describe('App.Production.printProductionSheet', () => {
   // what they typed and what they see in the Output Item column, not an
   // abbreviation of it. Shared by Print Sheet, Download PDF and Download PDFs
   // so one lot cannot come out under two different names.
-  test('names the job after the Output Item Name and the lot date', () => {
+  test('names the job after the Output Item Name, the lot date and the lot', () => {
     App.State.currentProductionSheet = {
       colors: [], lotColor: '', lotNumber: 'LOT-12',
       outputItemName: '20 inch Rider D/Gaddi Steel Rim S/Kid Type',
@@ -268,7 +268,7 @@ describe('App.Production.printProductionSheet', () => {
 
     expect(triggerSpy).toHaveBeenCalledWith(
       'print-production-sheet-container',
-      '20 inch Rider D-Gaddi Steel Rim S-Kid Type_210826',
+      '20 inch Rider D-Gaddi Steel Rim S-Kid Type_210826_LOT-12',
       { landscape: false }
     );
   });

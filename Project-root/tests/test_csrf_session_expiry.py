@@ -82,6 +82,22 @@ class TestSessionMissing:
         assert response.status_code == 302
         assert "/auth/login" in response.headers["Location"]
 
+    def test_a_json_request_outside_api_gets_401_not_the_login_page(self, csrf_client):
+        """The PDF endpoints sit outside /api/ and fetch() sends Accept: */*.
+        Redirected, the login page came back as a 200 that Download saved as
+        a .pdf. A JSON body is never a browser navigation."""
+        response = csrf_client.post(
+            "/page/_raises_no_session",
+            json={"html": "<p>x</p>"},
+            headers={"Accept": "*/*"},
+        )
+
+        assert response.status_code == 401
+        assert (
+            response.get_json()["message"]
+            == "Your session has expired. Please sign in again."
+        )
+
 
 class TestGenuineCsrfFailure:
     """Everything else is a real rejection and keeps its 400.

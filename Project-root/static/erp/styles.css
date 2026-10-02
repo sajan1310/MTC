@@ -4273,7 +4273,13 @@
        their 1px #e5e5e5 borders as #999 and their 12px text as 11px. Those
        two carry `print-cells-own` in the markup and keep their own look.
        This exclusion existed before as two ids quietly absent from the
-       selector list; it is stated here instead. */
+       selector list; it is stated here instead.
+
+       The Production Sheet carries it too. Its cells are sized by the fit
+       loop that keeps it to one page, and repainted here they no longer
+       matched that measurement: 51 of 908 lots printed on two pages. A bulk
+       job whose pages draw their own cells asks for it per job
+       (App.Print.trigger's `cellsOwn`). */
     .print-container:not(.print-cells-own) td {
       border: 1px solid #999 !important;
       padding: 6px 8px !important;
@@ -4298,7 +4304,6 @@
     }
 
     /* Keep each document's closing blocks whole across a page break. */
-    .print-container .print-sheet-closing-accent,
     .print-container #print-grand-total-container,
     .print-container #print-footer-meta,
     .print-container #print-signature {

@@ -11,11 +11,9 @@
 //   no-ops instead of throwing, same "guard now, activate later" shape
 //   used throughout this port.
 // - print/printCurrent/downloadPDF/bulkPrint are guarded against
-//   App.Print not existing yet (print pages are their own later round);
-//   their underlying builder functions (populatePrintData,
-//   buildPOPrintPageHtml) are still ported in full as currently-
-//   unreachable dead code, ready the moment Print lands. No hidden
-//   #print-po-container markup is included in this round's partial.
+//   App.Print not existing yet (print pages are their own later round).
+//   Every one of them, single or bulk, draws the PO the same way:
+//   PrintTemplates.poDocument into #print-po-container (_fillPrintContainer).
 // - openVendorCatalog() is genuinely portable as-is: read-only, built
 //   purely from App.State.globalPOs/globalItems, no RPC and no App.Print
 //   dependency.
@@ -205,16 +203,21 @@ App.PO = {
       return;
     }
 
-    const includeRates = document.getElementById('printWithRates')?.checked ?? true;
-    const includeTotal = document.getElementById('printWithTotal')?.checked ?? true;
-
     const pos = App.State.globalPOs.filter(po => App.Selection.isSelected(selected, String(po.poNumber)));
     if (!pos.length) return;
 
+    // Each page is the PO as its own Print draws it, lifted out of the
+    // container (as the phone's stack of POs is). cellsOwn: a PO draws its
+    // own cells (its container carries print-cells-own), and Print Selected
+    // repainted them at 11px with grey borders.
     App.Print.triggerBulk(
       pos,
-      po => this.buildPOPrintPageHtml(po, includeRates, includeTotal),
-      'Purchase_Orders_Selected'
+      po => {
+        this._fillPrintContainer(po);
+        return App.Print.liftPage('print-po-container');
+      },
+      'Purchase_Orders_Selected',
+      { cellsOwn: true }
     );
   },
 
@@ -236,6 +239,10 @@ App.PO = {
   },
 
   // The selected POs as separately-named documents, [] when none are selected.
+  //
+  // Each is the document the PO's own Download PDF sends: filled into the
+  // one container and captured from it, frame and all. Sequential on purpose
+  // -- every PO reuses that container.
   _selectedDocuments() {
     const selected = App.State.selectedPOs;
     if (!selected.length) {
@@ -243,15 +250,21 @@ App.PO = {
       return [];
     }
 
-    const includeRates = document.getElementById('printWithRates')?.checked ?? true;
-    const includeTotal = document.getElementById('printWithTotal')?.checked ?? true;
+    const container = document.getElementById('print-po-container');
+    if (!container) {
+      console.warn('[PDF] PO print container not found');
+      return [];
+    }
 
     return App.State.globalPOs
       .filter(po => App.Selection.isSelected(selected, String(po.poNumber)))
-      .map(po => ({
-        filename: App.Print.docFilename({ type: 'PO', key: po.poNumber, party: po.vendor }),
-        html: this.buildPOPrintPageHtml(po, includeRates, includeTotal)
-      }));
+      .map(po => {
+        this._fillPrintContainer(po);
+        return {
+          filename: App.Print.docFilename({ type: 'PO', key: po.poNumber, party: po.vendor }),
+          html: App.Print.documentHtml(container)
+        };
+      });
   },
   filterData(searchTerm) {
     App.State.poSearchTerm = String(searchTerm || '');
@@ -876,6 +889,18 @@ App.PO = {
   populatePrintData(index) {
     const po = App.State.globalPOs[index];
     if (!po) return null;
+    return this._fillPrintContainer(po);
+  },
+
+  // The one way a PO is drawn on this shell: into #print-po-container, by
+  // the builder the phone uses too. Print, Download PDF and Share for a row,
+  // and every page of Print Selected, Download PDFs and Share Selected.
+  //
+  // The bulk paths used to draw their own copy (buildPOPrintPageHtml), the
+  // same layout written out a second time. It matched today, which is
+  // exactly how the two Production Sheet layouts started: every change to
+  // the PO had to be made twice, or a stack of POs and a single PO drifted.
+  _fillPrintContainer(po) {
     return PrintTemplates.poDocument(po, App.Print.templateDeps(), {
       includeRates: document.getElementById('printWithRates')?.checked ?? true,
       includeTotal: document.getElementById('printWithTotal')?.checked ?? true
@@ -897,168 +922,15 @@ App.PO = {
       App.Print.docName({ type: 'PO', key: po.poNumber, party: po.vendor }));
   },
 
-  // Builds a fully self-contained "Purchase Order" page (mirrors
-  // #print-po-container's markup/styling) for use in bulk printing.
-  buildPOPrintPageHtml(po, includeRates, includeTotal) {
-    const BRAND = App.BRAND_COLOR;
-    const thBase = `padding:8px 6px;background-color:${BRAND};color:#fff;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border:1px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;`;
-    const tdBase = 'padding:7px 6px;border:1px solid #e5e5e5;word-break:break-word;overflow-wrap:break-word;font-size:12px;';
-
-    let headHtml;
-    if (includeRates) {
-      headHtml = includeTotal
-        ? `<tr>
-            <th style="${thBase}width:5%;text-align:center">#</th>
-            <th style="${thBase}width:20%;text-align:left">Item Name</th>
-            <th style="${thBase}width:17%;text-align:left">Narration</th>
-            <th style="${thBase}width:12%;text-align:left">Size</th>
-            <th style="${thBase}width:14%;text-align:center">Qty</th>
-            <th style="${thBase}width:14%;text-align:right">Rate</th>
-            <th style="${thBase}width:18%;text-align:right">Total</th>
-           </tr>`
-        : `<tr>
-            <th style="${thBase}width:5%;text-align:center">#</th>
-            <th style="${thBase}width:25%;text-align:left">Item Name</th>
-            <th style="${thBase}width:22%;text-align:left">Narration</th>
-            <th style="${thBase}width:15%;text-align:left">Size</th>
-            <th style="${thBase}width:15%;text-align:center">Qty</th>
-            <th style="${thBase}width:18%;text-align:right">Rate</th>
-           </tr>`;
-    } else {
-      headHtml = `<tr>
-        <th style="${thBase}width:5%;text-align:center">#</th>
-        <th style="${thBase}width:30%;text-align:left">Item Name</th>
-        <th style="${thBase}width:28%;text-align:left">Narration</th>
-        <th style="${thBase}width:15%;text-align:left">Size</th>
-        <th style="${thBase}width:22%;text-align:center">Quantity</th>
-       </tr>`;
-    }
-
-    let grandTotal = 0;
-    const bodyHtml = (po.items || [])
-      .map((item, idx) => {
-        const qty = toNumber(item.qty);
-        const price = toNumber(item.price);
-        const rowBg = idx % 2 === 0 ? '#ffffff' : '#FFF5F5';
-        const rowStyle = `background-color:${rowBg};-webkit-print-color-adjust:exact;print-color-adjust:exact;page-break-inside:avoid;break-inside:avoid;`;
-
-        let row = `
-      <tr style="${rowStyle}">
-        <td style="${tdBase}text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
-        <td style="${tdBase}text-align:left;font-weight:600;">${escapeHtml(item.name || '')}</td>
-        <td style="${tdBase}text-align:left;color:#555;">${escapeHtml(item.narration || '')}</td>
-        <td style="${tdBase}text-align:left;">${escapeHtml(item.size || '')}</td>
-        <td style="${tdBase}text-align:center;font-weight:600;">${escapeHtml(String(qty))} ${escapeHtml(item.unit || 'Pcs')}</td>`;
-
-        if (includeRates) {
-          row += `<td style="${tdBase}text-align:right;">${formatCurrency(price)}</td>`;
-          if (includeTotal) {
-            const lineTotal = qty * price;
-            grandTotal += lineTotal;
-            row += `<td style="${tdBase}text-align:right;font-weight:700;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${formatCurrency(lineTotal)}</td>`;
-          }
-        }
-
-        return row + '</tr>';
-      })
-      .join('');
-
-    const grandTotalHtml = (includeRates && includeTotal)
-      ? `<div style="text-align:right;margin-bottom:16px;padding:8px 0 0 0;border-top:2px solid ${BRAND};page-break-inside:avoid;break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-          <span style="font-size:13px;font-weight:600;color:#1a1a1a;">Grand Total:&nbsp;&nbsp;</span>
-          <span style="font-size:15px;font-weight:800;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-            &#8377;${toNumber(grandTotal).toFixed(2)}
-          </span>
-        </div>`
-      : '';
-
-    return `
-    <div style="background:#fff;color:#1a1a1a;font-family:'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.5;padding:14px 20px 12px 20px;margin:0;box-sizing:border-box;width:100%;border-top:5px solid ${BRAND};border-bottom:3px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-      <div style="text-align:center;padding:4px 0 8px 0;">
-        ${App.Print.brandHeaderHtml(BRAND)}
-        <div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:0.3px;">
-          6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
-        </div>
-        <div style="font-size:10px;color:#555;margin-top:2px;letter-spacing:0.3px;">
-          Ph : 86996-42398, 91546-94000, 94170-42398 &nbsp;|&nbsp; E-mail : maharaja.bikes@gmail.com
-          &nbsp;&nbsp; GSTIN : 03AFIPS4089J1Z1
-        </div>
-      </div>
-
-      <div style="height:2px;background:${BRAND};margin:0 0 12px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
-
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-        <div style="flex:1;text-align:left;">
-          <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">PO Number</span>
-          <div style="font-size:15px;font-weight:700;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${escapeHtml(po.poNumber || '')}</div>
-        </div>
-        <div style="flex:2;text-align:center;">
-          <span style="font-size:18px;font-weight:800;color:${BRAND};letter-spacing:3px;text-transform:uppercase;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-            PURCHASE ORDER
-          </span>
-        </div>
-        <div style="flex:1;text-align:right;">
-          <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Date</span>
-          <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${escapeHtml(po.poDate || '')}</div>
-        </div>
-      </div>
-
-      <div style="height:1px;background:#bbb;margin-bottom:14px;"></div>
-
-      <div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #ccc;">
-        <div style="display:flex;gap:16px;">
-          <div style="flex:1;">
-            <div style="margin-bottom:6px;">
-              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Vendor</span>
-              <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${escapeHtml(App.Utils.formatNameCase(po.vendor))}</div>
-            </div>
-            <div>
-              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Supplier Rem.</span>
-              <div style="font-size:11px;color:#333;margin-top:1px;">${escapeHtml(po.supplierRemarks || '')}</div>
-            </div>
-          </div>
-          <div style="flex:1;">
-            <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Contact</span>
-            <div style="font-size:11px;color:#333;margin-top:1px;">${escapeHtml(po.contact || '')}</div>
-          </div>
-        </div>
-      </div>
-
-      <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12px;">
-        <thead style="background-color:${BRAND};color:#fff;text-align:center;font-weight:700;display:table-header-group;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-          ${headHtml}
-        </thead>
-        <tbody style="color:#1a1a1a;text-align:center;">
-          ${bodyHtml}
-        </tbody>
-      </table>
-
-      ${grandTotalHtml}
-
-      <div style="display:flex;gap:20px;margin-bottom:24px;min-height:60px;page-break-inside:avoid;break-inside:avoid;">
-        <div style="flex:1;padding-top:6px;border-top:1px solid #ccc;">
-          <div style="font-size:9px;color:${BRAND};text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:4px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Description</div>
-          <span style="white-space:pre-wrap;font-size:11px;color:#444;line-height:1.5;">${escapeHtml(po.poDescription || '')}</span>
-        </div>
-        <div style="flex:1;padding-top:6px;border-top:1px solid #ccc;">
-          <div style="font-size:9px;color:${BRAND};text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:4px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Remarks</div>
-          <span style="white-space:pre-wrap;font-size:11px;color:#444;line-height:1.5;">${escapeHtml(po.poRemarks || '')}</span>
-        </div>
-      </div>
-
-      <div style="display:flex;justify-content:flex-end;page-break-inside:avoid;break-inside:avoid;">
-        <div style="width:180px;text-align:center;padding-top:5px;border-top:2px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-          <span style="font-size:10px;color:#666;letter-spacing:0.5px;font-style:italic;">Authorized Signature</span>
-        </div>
-      </div>
-    </div>`;
-  },
-
   // Backs the row's "Download PDF" button. With one renderer, downloading a
   // PDF is what the print dialog's "Save as PDF" does, so this reaches the
   // same place as "Print Document" -- same container, same filename. Kept as
   // its own method so the button and its data-action are unchanged.
-  async downloadPDF(index) {
+  //
+  // `button` is the row's button, as Share's is: it says "Preparing…" and
+  // stays disabled while the PDF renders. Without it the press showed nothing
+  // for the length of the render, and a second press saved a second file.
+  async downloadPDF(index, button) {
     if (typeof App.Print === 'undefined') {
       App.Utils.notPortedYet('PDF export');
       return;
@@ -1074,7 +946,7 @@ App.PO = {
 
     // populatePrintData has just filled the static template, so this sends
     // exactly the markup App.PO.print would have printed.
-    await App.Print.downloadContainer('print-po-container', filename);
+    await App.Print.downloadContainer('print-po-container', filename, { buttonId: button });
   },
 
   // The row's "Share": the PDF Download PDF saves, under the same name,

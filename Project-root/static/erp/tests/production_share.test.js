@@ -68,6 +68,7 @@ function buildDom() {
     <div id="productionSheetPrintColumns"></div>
     <div id="productionSheetCommonBody"></div>
     <div id="productionSheetMatrixTables"><div class="prod-sheet-matrix-tbody"></div></div>
+    <button id="prodSheetDownloadBtn">Download PDF</button>
     <button id="prodSheetShareBtn">Share</button>
     <button id="workOrderShareBtn">Share</button>
     <button id="btnBulkShareProduction" class="d-none"></button>
@@ -185,6 +186,29 @@ describe('the Production Sheet dialog', () => {
     expect(requests[0].body.landscape).toBe(true);
   });
 
+  // Fitted to one page in this browser's fonts, which the server lacks: it
+  // is told to keep the sheet on one page rather than spill the last rule.
+  test('Download and Share both ask for the sheet on one page', async () => {
+    await App.Production.downloadProductionSheetPDF();
+    await App.Production.shareProductionSheetPDF();
+    expect(requests.map(r => r.body.onePage)).toEqual([true, true]);
+  });
+
+  // It used to show nothing for the length of the render, and a second
+  // press saved the sheet twice. Share beside it always did this.
+  test('Download PDF says it is working while the sheet renders', async () => {
+    const button = document.getElementById('prodSheetDownloadBtn');
+
+    const pending = App.Production.downloadProductionSheetPDF();
+    expect(button.disabled).toBe(true);
+    expect(button.textContent).toContain('Preparing');
+    await pending;
+
+    expect(button.disabled).toBe(false);
+    expect(button.textContent).toBe('Download PDF');
+    expect(App.Print.saveBlob).toHaveBeenCalledTimes(1);
+  });
+
   test('with no sheet open, does nothing', async () => {
     App.State.currentProductionSheet = null;
     await App.Production.shareProductionSheetPDF();
@@ -267,6 +291,17 @@ describe('Share Selected', () => {
     const open = App.State.currentProductionSheet;
     await App.Production.bulkShare();
     expect(App.State.currentProductionSheet).toBe(open);
+  });
+
+  // Each file is the sheet as the single Download sends it: the container
+  // itself, frame included, and kept to one page by the server.
+  test('sends each sheet whole, and asks for it on one page', async () => {
+    await App.Production.bulkDownloadPDF();
+
+    const docs = requests[0].body.documents;
+    expect(docs.every(d => d.onePage === true)).toBe(true);
+    expect(docs[0].html).toMatch(/^<div id="print-production-sheet-container"/);
+    expect(docs[0].html).toContain('Painted Frame');
   });
 
   test('with nothing selected, renders nothing', async () => {

@@ -57,9 +57,12 @@ function mount() {
   navigator.share = undefined;
   navigator.canShare = undefined;
 
-  // jsdom has no object URLs and no anchor downloads.
+  // jsdom has no object URLs and no anchor downloads. Left real, the
+  // download anchor's click queues a navigation jsdom reports as "Not
+  // implemented" whenever that timer fires -- inside a later test.
   global.URL.createObjectURL = jest.fn(() => 'blob:fake');
   global.URL.revokeObjectURL = jest.fn();
+  jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
 }
 
 const pdfOk = () => ({ ok: true, status: 200, blob: async () => new Blob(['%PDF'], { type: 'application/pdf' }) });
@@ -179,6 +182,116 @@ describe('when the server cannot render', () => {
 
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
+
+  // Every one of these used to be reported as "the session expired".
+  test("a refusal from the server is reported in the server's own words", async () => {
+    global.fetch = jest.fn(async () => ({
+      ok: false, status: 400,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ success: false, message: 'Too many documents in one export (limit 200).' })
+    }));
+    const spy = jest.spyOn(MApp.Toast, 'error');
+
+    await MApp.Print.download('print-doc-container', 'Doc');
+
+    expect(spy.mock.calls[0][0]).toBe('Too many documents in one export (limit 200). Nothing was downloaded.');
+    spy.mockRestore();
+  });
+
+  test('a stale CSRF token still gets the reload advice', async () => {
+    global.fetch = jest.fn(async () => ({
+      ok: false, status: 400,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ success: false, message: 'CSRF error: x', error: 'x' })
+    }));
+    const spy = jest.spyOn(MApp.Toast, 'error');
+
+    await MApp.Print.download('print-doc-container', 'Doc');
+
+    expect(spy.mock.calls[0][0]).toContain('session expired');
+    spy.mockRestore();
+  });
+
+  test.each([
+    [413, 'too much to send'],
+    [429, 'Wait a minute'],
+    [504, 'took too long'],
+  ])('HTTP %i is explained in its own words', async (code, phrase) => {
+    global.fetch = jest.fn(async () => status(code));
+    const spy = jest.spyOn(MApp.Toast, 'error');
+
+    await MApp.Print.download('print-doc-container', 'Doc');
+
+    expect(spy.mock.calls[0][0]).toContain(phrase);
+    spy.mockRestore();
+  });
+
+  test('a failed fetch does NOT stop the session asking either', async () => {
+    // The phone pauses its VPN and resumes it. Latched, every later tap
+    // said "No connection" without trying, until the app was reloaded.
+    global.fetch = jest.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(pdfOk());
+    MApp.Print.saveBlob = jest.fn();
+
+    expect(await MApp.Print.download('print-doc-container', 'Doc')).toBe(false);
+    expect(await MApp.Print.download('print-doc-container', 'Doc')).toBe(true);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(MApp.Print.saveBlob).toHaveBeenCalledTimes(1);
+  });
+
+  test('a web page that arrives where the PDF should be is not saved', async () => {
+    // An expired session used to come back as the login redirect, which
+    // fetch follows: the login page arrived as a 200 and was saved as
+    // "Challan_1041.pdf".
+    global.fetch = jest.fn(async () => ({
+      ok: true, status: 200, redirected: true,
+      headers: { get: () => 'text/html; charset=utf-8' },
+      blob: async () => new Blob(['<!doctype html>'], { type: 'text/html' })
+    }));
+    const spy = jest.spyOn(MApp.Toast, 'error');
+
+    expect(await MApp.Print.download('print-doc-container', 'Challan_1041')).toBe(false);
+    expect(global.URL.createObjectURL).not.toHaveBeenCalled();
+    expect(spy.mock.calls[0][0]).toContain('session expired');
+    spy.mockRestore();
+  });
+});
+
+describe('a render whose reply never arrives', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    mount();
+  });
+  afterEach(() => jest.useRealTimers());
+
+  test('gives up, and says so from the phone\'s side', async () => {
+    global.fetch = jest.fn(() => new Promise(() => {}));
+    const spy = jest.spyOn(MApp.Toast, 'error');
+
+    const result = MApp.Print.download('print-doc-container', 'Doc');
+    await jest.advanceTimersByTimeAsync(MApp.Print._renderWaitMs({}) - 1);
+    expect(spy).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(1);
+
+    expect(await result).toBe(false);
+    expect(spy.mock.calls[0][0]).toContain('No PDF reached this phone');
+    // and cancels what it stopped waiting for
+    expect(global.fetch.mock.calls[0][1].signal.aborted).toBe(true);
+    spy.mockRestore();
+  });
+
+  test('a file that starts to arrive and then stops is reported as such', async () => {
+    global.fetch = jest.fn(async () => ({ ok: true, status: 200, blob: () => new Promise(() => {}) }));
+    const spy = jest.spyOn(MApp.Toast, 'error');
+
+    const result = MApp.Print.download('print-doc-container', 'Doc');
+    await jest.advanceTimersByTimeAsync(MApp.Print.RENDER_BODY_WAIT_MS);
+
+    expect(await result).toBe(false);
+    expect(spy.mock.calls[0][0]).toContain('began to arrive and then stopped');
+    spy.mockRestore();
+  });
 });
 
 describe('sharing', () => {
@@ -259,6 +372,38 @@ describe('sharing', () => {
 
     expect(navigator.share).not.toHaveBeenCalled();
   });
+
+  test('a web page is never shared as the PDF', async () => {
+    enableShare();
+    global.fetch = jest.fn(async () => ({
+      ok: true, status: 200, redirected: true,
+      headers: { get: () => 'text/html; charset=utf-8' },
+      blob: async () => new Blob(['<!doctype html>'], { type: 'text/html' })
+    }));
+
+    expect(await MApp.Print.share('print-doc-container', 'Doc')).toBe(false);
+    expect(navigator.share).not.toHaveBeenCalled();
+  });
+
+  test('a share that outlived its tap offers a Share button, then opens', async () => {
+    // The tap that chose Share lapses after about five seconds. A render
+    // that took longer used to end in "Could not share".
+    enableShare();
+    const lapsed = Object.assign(new Error('no activation'), { name: 'NotAllowedError' });
+    navigator.share = jest.fn()
+      .mockRejectedValueOnce(lapsed)
+      .mockResolvedValueOnce(undefined);
+    MApp.Picker.open = jest.fn(async ({ items }) => items[0]);
+    global.fetch = jest.fn(async () => pdfOk());
+
+    const ok = await MApp.Print.share('print-doc-container', 'Challan_1041');
+
+    expect(ok).toBe(true);
+    expect(MApp.Picker.open).toHaveBeenCalledTimes(1);
+    expect(MApp.Picker.open.mock.calls[0][0].items[0].label).toBe('Share PDF');
+    expect(navigator.share).toHaveBeenCalledTimes(2);
+    expect(navigator.share.mock.calls[1][0].files[0].name).toBe('Challan_1041.pdf');
+  });
 });
 
 describe('the chooser', () => {
@@ -299,6 +444,23 @@ describe('the chooser', () => {
 
     expect(populate).toHaveBeenCalled();
     expect(global.fetch).toHaveBeenCalled();
+  });
+
+  // The Production Sheet is fitted to one page in this phone's fonts, which
+  // the server lacks; asking for onePage lets it shrink the sheet slightly
+  // rather than spill the closing rule onto a second page.
+  test('a document that asks to stay on one page says so to the server', async () => {
+    global.fetch = jest.fn(async () => pdfOk());
+
+    const done = MApp.Print.chooseAction({
+      containerId: 'print-doc-container', filename: 'Sheet', onePage: true,
+    });
+    await Promise.resolve();
+    pick('Download PDF');
+    await done;
+    await MApp.Print.download('print-doc-container', 'Doc');
+
+    expect(global.fetch.mock.calls.map(c => JSON.parse(c[1].body).onePage)).toEqual([true, false]);
   });
 
   test('choosing Print prints', async () => {

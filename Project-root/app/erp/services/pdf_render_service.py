@@ -46,9 +46,12 @@ and a local file reader (`file:///etc/passwd`). So:
 from __future__ import annotations
 
 import io
+import logging
 import os
 import pathlib
 import re
+import shutil
+import subprocess
 import sys
 import zipfile
 
@@ -59,7 +62,16 @@ MAX_HTML_BYTES = 2_000_000
 # One bulk export. 200 purchase orders is already an unusual day; past this the
 # request is more likely a mistake than a workload.
 MAX_BATCH_DOCUMENTS = 200
-MAX_BATCH_BYTES = 20_000_000
+
+# Under the request-body cap in front of this check -- MAX_CONTENT_LENGTH
+# (16 MiB, config.py) and nginx's client_max_body_size 16m -- with room for
+# the JSON escaping around the HTML. It used to be 20 MB, which no request
+# could reach: a batch that size died at the proxy with a bare 413 and never
+# got this check's explanation.
+MAX_BATCH_BYTES = 14_000_000
+
+# Longest archive entry name, extension included.
+MAX_FILENAME_CHARS = 120
 
 # A4 minus the margin used everywhere else in the print stack. Must stay in
 # step with App.Print.PAGE_MARGIN_MM (static/erp/print.js) and the @page rule
@@ -67,6 +79,17 @@ MAX_BATCH_BYTES = 20_000_000
 # geometry -- which would be visible as the same document paginating
 # differently depending on which button produced it.
 PAGE_MARGIN_MM = 6
+A4_MM = (210, 297)
+
+# How far a one-page document may be shrunk to stay on one page, tried in
+# order. The Production Sheet is fitted to one page in the BROWSER, which
+# measures it in the fonts that machine has (Segoe UI on the office PCs).
+# This server has none of those -- every family falls back to DejaVu Sans,
+# which is wider -- so a sheet the browser fitted could wrap a few more lines
+# here and push its closing rule onto a second, otherwise empty page.
+# Measured over all 908 lots on 2026-10-02: 34 desktop and 146 phone sheets
+# did; every one of them fits at one of these steps, almost all at 96%.
+ONE_PAGE_ZOOMS = (0.96, 0.92, 0.88)
 
 
 # Where MSYS2 puts the GTK stack on Windows. Checked in order; the first that
@@ -174,24 +197,76 @@ def _url_fetcher():
 # sends its class name, because it is the side that has a DOM to count. Keep
 # the numbers here in step with the stylesheet, or the same document paginates
 # differently depending on which button produced it.
+#
+# !important, as in the stylesheet, and for its reason: the print templates
+# set cell typography INLINE, and an inline style beats any selector. Without
+# it a tier did nothing to a templated cell -- a 16-column ledger stayed at
+# 12px here while Print shrank it to 9px.
 _FIT_TIERS = {
-    "print-fit-compact": "font-size: 10px; padding: 4px 5px;",
-    "print-fit-dense": "font-size: 9px; padding: 3px 4px; line-height: 1.25;",
+    "print-fit-compact": "font-size: 10px !important; padding: 4px 5px !important;",
+    "print-fit-dense": (
+        "font-size: 9px !important; padding: 3px 4px !important;"
+        " line-height: 1.25 !important;"
+    ),
     "print-fit-xdense": (
-        "font-size: 8px; padding: 2px 3px; line-height: 1.2; letter-spacing: -0.1px;"
+        "font-size: 8px !important; padding: 2px 3px !important;"
+        " line-height: 1.2 !important; letter-spacing: -0.1px !important;"
     ),
 }
 
 
-def _document(body_html: str, landscape: bool, density: str = "") -> str:
+class _BrowserOnlyCssNotices(logging.Filter):
+    """Drop WeasyPrint's notices about CSS it does not implement.
+
+    The print templates are written for the browser's print engine first, so
+    they carry properties WeasyPrint does not know or need: print-color-adjust
+    (it always prints backgrounds), word-break:break-word, overflow-x,
+    ::-webkit-scrollbar. It said so for every declaration of every render --
+    13,645 of the journal's 246,251 lines from 2026-09-04 to 10-02, about 47 a
+    document -- and real errors had to be found between them.
+
+    Only those notices go. Failures (an image that would not load, a URL the
+    fetcher refused) are logged as errors and are untouched.
+    """
+
+    _NOTICES = ("Ignored `", "Deprecated `", "Invalid or unsupported selector")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno > logging.WARNING:
+            return True
+        return not str(record.msg).startswith(self._NOTICES)
+
+
+def _quiet_browser_only_css_notices() -> None:
+    log = logging.getLogger("weasyprint")
+    if not any(isinstance(f, _BrowserOnlyCssNotices) for f in log.filters):
+        log.addFilter(_BrowserOnlyCssNotices())
+
+
+_quiet_browser_only_css_notices()
+
+
+def _document(
+    body_html: str, landscape: bool, density: str = "", scale: float = 1.0
+) -> str:
     """Wrap a print-page fragment in the page shell.
 
     Built here rather than accepted from the request so page size, margins and
     the page-break rules cannot be driven by the request body. `density` is the
     one piece of layout the client chooses, and it is validated against a fixed
     set rather than interpolated.
+
+    `scale` below 1 lays the document out on a page that much LARGER, for
+    write_pdf(zoom=scale) to shrink back to A4: the same content, slightly
+    smaller, on the same paper. See ONE_PAGE_ZOOMS.
     """
-    size = "A4 landscape" if landscape else "A4 portrait"
+    if scale == 1.0:
+        size = "A4 landscape" if landscape else "A4 portrait"
+        margin = f"{PAGE_MARGIN_MM}mm"
+    else:
+        width, height = A4_MM[::-1] if landscape else A4_MM
+        size = f"{width / scale:.3f}mm {height / scale:.3f}mm"
+        margin = f"{PAGE_MARGIN_MM / scale:.3f}mm"
     density = density if density in _FIT_TIERS else ""
     tier_css = (
         f"body.{density} th, body.{density} td {{ {_FIT_TIERS[density]} }}"
@@ -201,7 +276,7 @@ def _document(body_html: str, landscape: bool, density: str = "") -> str:
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<style>"
-        f"@page {{ size: {size}; margin: {PAGE_MARGIN_MM}mm; }}"
+        f"@page {{ size: {size}; margin: {margin}; }}"
         "html, body { margin: 0; padding: 0; background: #fff; }"
         # The builders emit their own inline typography; this is only a floor
         # so an unstyled element does not inherit something surprising.
@@ -219,7 +294,7 @@ def _document(body_html: str, landscape: bool, density: str = "") -> str:
         # keep rows whole, repeat table headers, and keep each document's
         # closing blocks together. Mirrors the @media print block in
         # static/erp/styles.css so both paths paginate the same way.
-        "tr, .print-sheet-closing-accent, #print-grand-total-container,"
+        "tr, #print-grand-total-container,"
         "#print-footer-meta, #print-signature { break-inside: avoid; }"
         "thead { display: table-header-group; }"
         "tfoot { display: table-footer-group; }"
@@ -269,16 +344,61 @@ def _weasyprint():
     return weasyprint
 
 
+# The scripts names and remarks here are written in, besides Latin, by their
+# fontconfig language code.
+SCRIPTS = {"pa": "Gurmukhi", "hi": "Devanagari"}
+
+
+def missing_scripts() -> list[str]:
+    """The scripts this machine has no font for. Never raises.
+
+    Their text renders as empty boxes: pango finds glyphs through fontconfig,
+    and a stock Ubuntu server has only DejaVu, which covers neither script --
+    while Print, using the PC's own fonts, shows the same text perfectly. So
+    nothing looks wrong until a downloaded or shared PDF does.
+
+    [] where fontconfig cannot be asked (no fc-list), rather than a guess.
+    """
+    fc_list = shutil.which("fc-list")
+    if not fc_list:
+        return []
+    missing = []
+    for lang, script in SCRIPTS.items():
+        try:
+            found = subprocess.run(
+                [fc_list, f":lang={lang}", "family"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            return []
+        if not found.strip():
+            missing.append(script)
+    return missing
+
+
 def log_availability(logger) -> bool:
     """Say once, at boot, whether Download PDF will produce a file here.
 
     Without this the only signal is a 503 the first time somebody exports, and
     the client falls back to the print dialog without complaining -- so the
-    feature is quietly absent and nobody finds out.
+    feature is quietly absent and nobody finds out. The same goes for a
+    missing script font, which spoils only the text in that script.
     """
     ok, detail = probe()
     if ok:
         logger.info("[PDF] server-side rendering enabled -- %s", detail)
+        missing = missing_scripts()
+        if missing:
+            logger.warning(
+                "[PDF] no %s font installed -- text in %s prints as empty "
+                "boxes in downloaded and shared PDFs. Install: "
+                "sudo apt install fonts-noto-core",
+                " or ".join(missing),
+                "that script" if len(missing) == 1 else "those scripts",
+            )
     else:
         logger.warning(
             "[PDF] server-side rendering DISABLED -- %s. Download PDF will fall "
@@ -289,8 +409,19 @@ def log_availability(logger) -> bool:
     return ok
 
 
-def render_pdf(body_html: str, *, landscape: bool = False, density: str = "") -> bytes:
+def render_pdf(
+    body_html: str,
+    *,
+    landscape: bool = False,
+    density: str = "",
+    one_page: bool = False,
+) -> bytes:
     """Render one print-page fragment to a vector PDF.
+
+    `one_page` is for a document laid out to fit a single page (the
+    Production Sheet): if it comes out longer here, it is shrunk by the
+    smallest step of ONE_PAGE_ZOOMS that fits. One that fits at none of them
+    is a genuinely long document, and paginates normally at full size.
 
     Raises ValueError for a bad request and PdfRenderUnavailable when this
     server cannot render at all.
@@ -301,13 +432,22 @@ def render_pdf(body_html: str, *, landscape: bool = False, density: str = "") ->
         raise ValueError("Document is too large to render.")
 
     weasyprint = _weasyprint()
-    document = weasyprint.HTML(
-        string=_document(body_html, landscape, density),
-        # No base_url: a relative URL then has nothing to resolve against and
-        # cannot reach the filesystem.
-        base_url=None,
-        url_fetcher=_url_fetcher(),
-    )
+
+    def lay_out(scale: float):
+        return weasyprint.HTML(
+            string=_document(body_html, landscape, density, scale),
+            # No base_url: a relative URL then has nothing to resolve against
+            # and cannot reach the filesystem.
+            base_url=None,
+            url_fetcher=_url_fetcher(),
+        ).render()
+
+    document = lay_out(1.0)
+    if one_page and len(document.pages) > 1:
+        for zoom in ONE_PAGE_ZOOMS:
+            smaller = lay_out(zoom)
+            if len(smaller.pages) == 1:
+                return smaller.write_pdf(zoom=zoom)
     return document.write_pdf()
 
 
@@ -316,14 +456,18 @@ def safe_filename(name: str, fallback: str = "Document") -> str:
 
     Rejects anything that could escape the archive root when extracted --
     separators and parent traversal -- rather than sanitising around them.
+
+    A long name is shortened in its stem, so it keeps its ".pdf": cut at the
+    end, a 130-character name lost its extension and arrived as a file nothing
+    would open.
     """
     name = str(name or "").strip().replace("\\", "/")
     name = name.rsplit("/", 1)[-1]  # drop any path component
     name = re.sub(r'[<>:"|?*\x00-\x1f]', "-", name)
     name = name.strip(". ") or fallback
-    if not name.lower().endswith(".pdf"):
-        name += ".pdf"
-    return name[:120]
+    stem = name[:-4] if name.lower().endswith(".pdf") else name
+    stem = stem[: MAX_FILENAME_CHARS - 4].rstrip(". ") or fallback
+    return f"{stem}.pdf"
 
 
 def dedupe_filenames(names: list[str]) -> list[str]:
@@ -334,25 +478,38 @@ def dedupe_filenames(names: list[str]) -> list[str]:
     collapse two long names that differ only past the cap. Inside a ZIP a
     repeat is worse than a collision on disk -- some extractors silently keep
     only the last one, so a 40-record export quietly yields 38 files.
+
+    A numbered name is checked against every name in the batch, not only the
+    ones before it: "A", "A", "A_2" used to come out as "A", "A_2", "A_2".
     """
-    seen: dict[str, int] = {}
+    taken = {name.lower() for name in names}
+    seen: set[str] = set()
     out: list[str] = []
     for name in names:
         key = name.lower()
         if key not in seen:
-            seen[key] = 1
+            seen.add(key)
             out.append(name)
             continue
-        seen[key] += 1
         stem, dot, ext = name.rpartition(".")
-        out.append(f"{stem}_{seen[key]}{dot}{ext}" if dot else f"{name}_{seen[key]}")
+        if not dot:
+            stem, ext = name, ""
+        n = 2
+        while True:
+            candidate = f"{stem}_{n}{dot}{ext}"
+            if candidate.lower() not in taken and candidate.lower() not in seen:
+                break
+            n += 1
+        seen.add(candidate.lower())
+        out.append(candidate)
     return out
 
 
 def render_batch(documents: list[dict]) -> tuple[bytes, list[str]]:
     """Render many documents into one ZIP of separately-named PDFs.
 
-    `documents` is [{"filename": str, "html": str, "landscape": bool}, ...].
+    `documents` is [{"filename": str, "html": str, "landscape": bool,
+    "density": str, "onePage": bool}, ...] -- see render_pdf for the last two.
     Returns (zip_bytes, names_used).
 
     One request for the whole batch, deliberately. The predecessor of this
@@ -387,6 +544,7 @@ def render_batch(documents: list[dict]) -> tuple[bytes, list[str]]:
                 doc.get("html"),
                 landscape=bool(doc.get("landscape")),
                 density=str(doc.get("density") or ""),
+                one_page=bool(doc.get("onePage")),
             )
             archive.writestr(name, pdf)
     return buffer.getvalue(), names

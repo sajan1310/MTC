@@ -306,6 +306,16 @@ describe('the wastage report', () => {
     expect(entries(phone)).toEqual(entries(desktop));
   });
 
+  // Chrome prints its own date, title, link and page number in the page
+  // margins whenever they are wide enough for them -- about 9 mm. The popup
+  // never loaded the app's page rule, so it got Chrome's ~10 mm, and all four.
+  test("desktop's popup carries the app's 6 mm page margins", () => {
+    desktopApp({});
+    eval(read('return.js'));
+    const html = App.Wastage.buildWastagePrintPageHtml(RECORDS);
+    expect(html).toMatch(/@page\s*\{\s*size:\s*a4 portrait;\s*margin:\s*6mm;\s*\}/);
+  });
+
   test('prints as ONE page, drawing its own cells', () => {
     const bulk = jest.spyOn(MApp.Print, 'bulk').mockReturnValue(undefined);
     MApp.Wastage.filtered = RECORDS;

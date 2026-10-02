@@ -2686,7 +2686,7 @@ function bindGlobalEvents() {
         App.PO.openEditModal(toNumber(btn.dataset.index));
         break;
       case 'po-pdf':
-        App.PO.downloadPDF(toNumber(btn.dataset.index));
+        App.PO.downloadPDF(toNumber(btn.dataset.index), btn);
         break;
       case 'po-share':
         App.PO.share(toNumber(btn.dataset.index), btn);

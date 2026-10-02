@@ -1180,6 +1180,11 @@ App.Wastage = {
   <meta charset="utf-8">
   <title>Wastage Report</title>
   <style>
+    /* The app's own page rule (styles.css), which this window does not load.
+       Without it Chrome used its default margins, about 10 mm, and printed
+       its own date, title, link and page number in them; under 9 mm its
+       header and footer do not fit, so it leaves them off. */
+    @page { size: a4 portrait; margin: 6mm; }
     body { font-family: Arial, sans-serif; font-size: 14px; margin: 24px; color: #212529; }
     h2 { margin-bottom: 4px; }
     .header-meta { color: #666; font-size: 12px; margin-bottom: 20px; }

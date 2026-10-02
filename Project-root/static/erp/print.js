@@ -390,10 +390,22 @@ App.Print = {
   // The label is kept whole and readable -- spaces intact, only the
   // characters Windows refuses replaced -- so it matches the Output Item
   // column on screen character for character.
-  docNameFromLabel(label, date, fallback = 'Document') {
-    const name = this.titleToFilename(label);
+  //
+  // `key` is the record's own number -- a Production Sheet's lot -- and goes
+  // last: "Rim_210826_LOT-PKG014-0003". Without it two lots of one item on
+  // one day shared a name, and a stack of them came back as "Rim_210826.pdf"
+  // and "Rim_210826_2.pdf" with nothing to say which lot was which (41 of
+  // 908 lots, 2026-10-02). The label gives way to fit DOC_LABEL_NAME_MAX, so
+  // the server's 120-character cap on a file name never cuts the number off.
+  DOC_LABEL_NAME_MAX: 116,
+
+  docNameFromLabel(label, date, fallback = 'Document', key = '') {
     const stamp = this._docDate(date, 'ddmmyy');
-    return `${name === 'Document' ? fallback : name}_${stamp}`;
+    const id = String(key || '').trim() ? this.titleToFilename(key).slice(0, 24) : '';
+    const tail = `_${stamp}${id ? `_${id}` : ''}`;
+    const name = this.titleToFilename(label);
+    const head = name === 'Document' ? fallback : name;
+    return `${head.slice(0, this.DOC_LABEL_NAME_MAX - tail.length).trim()}${tail}`;
   },
 
   // Builds a name from { type, key, party, date }. `date` is opt-in: pass
@@ -437,6 +449,15 @@ App.Print = {
   // else in the app funnels through here.
   //
   // options.landscape - print this one job in landscape (Production Sheet).
+  // options.cellsOwn  - the job's pages draw their own table cells, so the
+  //   print rules' baseline cell styling (styles.css,
+  //   `.print-container:not(.print-cells-own) td`) must leave them alone. The
+  //   PO and Production Sheet templates carry print-cells-own in their own
+  //   markup; their pages lifted into the shared bulk container do not, so a
+  //   bulk print repainted every cell at 11px with grey borders -- for the
+  //   Production Sheet, discarding the sizes it was fitted to one page with.
+  //   Added for this job only and taken off in cleanup, because the Dispatch
+  //   Plan prints through the same container and relies on that styling.
   trigger(containerId, documentTitle, options = {}) {
     // Ensure no other print template is left active from a
     // previous job before showing this one.
@@ -444,9 +465,14 @@ App.Print = {
     this.injectLogo();
 
     const container = document.getElementById(containerId);
+    let ownsCellsForThisJob = false;
     if (container) {
       container.classList.add('active-print');
       container.style.display = 'block';
+      if (options.cellsOwn && !container.classList.contains('print-cells-own')) {
+        container.classList.add('print-cells-own');
+        ownsCellsForThisJob = true;
+      }
     } else {
       console.warn('[Print] Print container not found:', containerId);
     }
@@ -478,6 +504,7 @@ App.Print = {
       if (container) {
         container.classList.remove('active-print');
         container.classList.remove(...this.fitClassNames());
+        if (ownsCellsForThisJob) container.classList.remove('print-cells-own');
         container.style.display = 'none';
       }
       this.hideAll();
@@ -506,8 +533,11 @@ App.Print = {
   SERVER_PDF_BATCH_URL: '/erp/render-pdf-batch',
 
   // null = not tried yet; false = settled for this session. Only a 503 (this
-  // deployment cannot render) or a failed fetch (offline) latches it false. A
-  // per-document 4xx/5xx does not -- the next document may be fine.
+  // deployment cannot render) or a 404 (this build has no endpoint) latches it
+  // false. A per-document 4xx/5xx does not -- the next document may be fine --
+  // and neither does a failed fetch: a VPN pauses and resumes, a Wi-Fi bridge
+  // drops one request, and the next press can succeed. Latched, every later
+  // press said "No connection" without trying, until the tab was reloaded.
   serverPdfAvailable: null,
 
   _csrfToken() {
@@ -522,6 +552,8 @@ App.Print = {
   // virtualenv the server was running from -- which is not a thing anyone
   // should have to do from a toast.
   lastDownloadError: null,
+  // ...and, when the server named its own reason, its words for it.
+  lastDownloadMessage: null,
 
   // How long a render may go unanswered before the button stops waiting.
   //
@@ -577,6 +609,7 @@ App.Print = {
 
   // POSTs `body` and returns a Blob, or null when this server cannot render.
   async _postForBlob(url, body) {
+    this.lastDownloadMessage = null;
     if (this.serverPdfAvailable === false) return null;
 
     const controller = typeof AbortController === 'function' ? new AbortController() : null;
@@ -591,9 +624,9 @@ App.Print = {
         signal: controller ? controller.signal : undefined
       }));
     } catch (err) {
-      // Never completed: offline, or the server is unreachable.
+      // Never completed: offline, or the server is unreachable. Not latched
+      // (see serverPdfAvailable) -- the next press tries again.
       this.lastDownloadError = 'offline';
-      this.serverPdfAvailable = false;
       return null;
     }
 
@@ -617,14 +650,49 @@ App.Print = {
       this.serverPdfAvailable = false;
       return null;
     }
-    if (res.status === 401 || res.status === 403 || res.status === 400) {
-      // Session expired, or the CSRF token on the page is stale.
+    if (res.status === 401) {
+      // Signed out: the session lapsed while the page stayed open.
       this.lastDownloadError = 'rejected';
+      return null;
+    }
+    if (res.status === 400 || res.status === 403) {
+      // The PDF endpoints' own refusals name their reason -- "Too many
+      // documents in one export (limit 200).", an account still awaiting
+      // approval -- and every one used to be reported as "the session
+      // expired". A CSRF failure carries an `error` field of its own: that is
+      // a stale page, which the generic advice (reload) does answer.
+      const said = await this._replyBody(res);
+      if (said && said.message && !said.error) this.lastDownloadMessage = String(said.message);
+      this.lastDownloadError = 'rejected';
+      return null;
+    }
+    if (res.status === 413) {
+      // The proxy's cap on a request body, before the app is asked.
+      this.lastDownloadError = 'too-large';
+      return null;
+    }
+    if (res.status === 429) {
+      this.lastDownloadError = 'busy';
+      return null;
+    }
+    if (res.status === 504) {
+      // nginx stops waiting on a render after 120 s.
+      this.lastDownloadError = 'slow';
       return null;
     }
     if (!res.ok) {
       this.lastDownloadError = 'failed';
       console.warn('[PDF] server render failed:', res.status);
+      return null;
+    }
+    if (!this._isFileReply(res, url)) {
+      // A page where the file should be: the login screen, or the ERP shell a
+      // remembered user is sent on to, reached through a redirect. The server
+      // now answers an expired session with a 401 instead (app/__init__.py's
+      // _client_wants_json), but this is what one looked like before: saved
+      // under the document's name it was a ".pdf" that would not open, and
+      // Share sent it to the vendor.
+      this.lastDownloadError = 'rejected';
       return null;
     }
     this.serverPdfAvailable = true;
@@ -643,6 +711,34 @@ App.Print = {
     }
     this.lastDownloadError = null;
     return blob;
+  },
+
+  // The JSON envelope a refusal carried, or null. The PDF endpoints, the
+  // session layer and the CSRF guard all answer in one; a proxy's own error
+  // page (nginx's 413) does not, and is not read.
+  async _replyBody(res) {
+    const type = res.headers && typeof res.headers.get === 'function'
+      ? String(res.headers.get('Content-Type') || '').toLowerCase()
+      : '';
+    if (!type.includes('application/json') || typeof res.json !== 'function') return null;
+    try {
+      return await res.json();
+    } catch {
+      return null;
+    }
+  },
+
+  // Whether a 2xx reply is the file that was asked for -- a PDF from the
+  // single endpoint, an archive from the batch one. Judged by what the reply
+  // says about itself, a redirect or a different type; silent when it says
+  // nothing, as a stubbed reply does.
+  _isFileReply(res, url) {
+    if (res.redirected) return false;
+    const type = res.headers && typeof res.headers.get === 'function'
+      ? String(res.headers.get('Content-Type') || '').toLowerCase()
+      : '';
+    if (!type) return true;
+    return type.startsWith(url === this.SERVER_PDF_BATCH_URL ? 'application/zip' : 'application/pdf');
   },
 
   // Hands a Blob to the browser as a download under `filename`.
@@ -696,12 +792,23 @@ App.Print = {
     'cut-off': 'The PDF began to arrive and then stopped, so nothing was ' +
       'downloaded. That is the connection to the server, not the document. ' +
       'Try once more; Print still works meanwhile.',
-    failed: 'The server could not render this document. Nothing was downloaded.'
+    // These three used to read "could not render this document" -- singular
+    // for a batch, and wrong about the cause.
+    'too-large': 'This export is too large to send in one go, so nothing was ' +
+      'downloaded. Select fewer records and try again.',
+    busy: 'The server is turning requests away for a moment, so nothing was ' +
+      'downloaded. Wait a minute and try again.',
+    slow: 'The server took too long to make the PDFs, so nothing was ' +
+      'downloaded. Select fewer records and try again.',
+    failed: 'The server could not render the PDF. Nothing was downloaded.'
   },
 
   reportDownloadUnavailable() {
+    const said = this.lastDownloadMessage;
     App.Utils.showToast(
-      this.DOWNLOAD_ERRORS[this.lastDownloadError] || this.DOWNLOAD_ERRORS.failed,
+      said
+        ? `${said} Nothing was downloaded.`
+        : (this.DOWNLOAD_ERRORS[this.lastDownloadError] || this.DOWNLOAD_ERRORS.failed),
       true
     );
   },
@@ -732,16 +839,19 @@ App.Print = {
     }
   },
 
-  // One document, downloaded as a file. `onFallback` runs when the server
-  // cannot render -- pass the module's own print call.
+  // One document, downloaded as a file.
+  //
+  // options.onePage -- the document is laid out to fit one page (the
+  // Production Sheet), so the server shrinks it slightly rather than let it
+  // spill onto a second page. See pdf_render_service.ONE_PAGE_ZOOMS.
   async downloadOne(bodyHtml, filename, options = {}) {
-    const { landscape = false, buttonId = null } = options;
+    const { landscape = false, buttonId = null, onePage = false } = options;
     const name = filename.toLowerCase().endsWith('.pdf') ? filename : `${filename}.pdf`;
 
     const density = this.fitDensityFor(bodyHtml);
     const blob = await this._whileBusy(buttonId, 'Preparing…', () =>
       this._postForBlob(this.SERVER_PDF_URL, {
-        html: bodyHtml, landscape, density, filename: name
+        html: bodyHtml, landscape, density, filename: name, onePage
       })
     );
 
@@ -753,11 +863,26 @@ App.Print = {
     return false;
   },
 
+  // A populated print container as the document the renderer is sent: the
+  // container itself, revealed, rather than the markup inside it.
+  //
+  // Its own inline style is part of the document -- the frame. On the
+  // Purchase Order that is the red rule top and bottom and the padding inside
+  // them; on the Production Sheet the green top rule. Sent as innerHTML, a
+  // downloaded or shared PO had none of it, while Print, Download PDFs and
+  // the phone (MApp.Print.pdfDocumentHtml) all did.
+  documentHtml(el) {
+    const clone = el.cloneNode(true);
+    clone.classList.add('active-print');
+    clone.style.display = 'block';
+    return clone.outerHTML;
+  },
+
   // Downloads whatever is currently inside a print container.
   //
   // The single-record documents (Purchase Order, Low Stock, Production Sheet)
   // are populated into print.html's static templates rather than built as an
-  // HTML string, so this reads back the markup the print engine would have
+  // HTML string, so this reads back the document the print engine would have
   // printed. Same document, same source -- populate the container, then call
   // this instead of trigger().
   async downloadContainer(containerId, filename, options = {}) {
@@ -766,7 +891,7 @@ App.Print = {
       console.warn('[PDF] Print container not found:', containerId);
       return false;
     }
-    return this.downloadOne(el.innerHTML, filename, options);
+    return this.downloadOne(this.documentHtml(el), filename, options);
   },
 
   // N documents, saved as N separately-named PDFs -- one file per record,
@@ -866,12 +991,12 @@ App.Print = {
       this.reportShareUnavailable();
       return false;
     }
-    const { landscape = false, buttonId = null } = options;
+    const { landscape = false, buttonId = null, onePage = false } = options;
     const name = filename.toLowerCase().endsWith('.pdf') ? filename : `${filename}.pdf`;
 
     const blob = await this._whileBusy(buttonId, 'Preparing…', () =>
       this._postForBlob(this.SERVER_PDF_URL, {
-        html: bodyHtml, landscape, density: this.fitDensityFor(bodyHtml), filename: name
+        html: bodyHtml, landscape, density: this.fitDensityFor(bodyHtml), filename: name, onePage
       })
     );
     if (!blob) {
@@ -891,7 +1016,7 @@ App.Print = {
       console.warn('[PDF] Print container not found:', containerId);
       return false;
     }
-    return this.shareOne(el.innerHTML, filename, options);
+    return this.shareOne(this.documentHtml(el), filename, options);
   },
 
   // N documents, shared as N separately-named PDFs -- the files Download
@@ -1023,6 +1148,25 @@ App.Print = {
     return files;
   },
 
+  // A populated print container lifted out as one page of a bulk print job,
+  // as the phone's MApp.Print.liftPage does it. The container itself rather
+  // than its inner markup, so the page keeps its frame -- the Production
+  // Sheet's green top rule and padding, which Print Selected used to drop.
+  // Minus its ids (every page would repeat them, and shadow the real
+  // container on the next render), its .print-container class (@media print
+  // hides every print container but the one printing, and this one sits
+  // INSIDE the bulk container) and its display:none.
+  liftPage(containerId) {
+    const host = document.getElementById(containerId);
+    if (!host) return '';
+    const page = host.cloneNode(true);
+    page.removeAttribute('id');
+    page.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+    page.classList.remove('print-container');
+    page.style.display = 'block';
+    return page.outerHTML;
+  },
+
   // Renders one self-contained "page" per record (via buildPageHtml) into
   // the shared bulk container, separated by page breaks. Split out from
   // triggerBulk so a preview can reuse the same markup without also
@@ -1047,6 +1191,8 @@ App.Print = {
   // used to produce one separately-named PDF per record, which window.print()
   // cannot do -- one dialog produces one document. The records still each get
   // their own page; they arrive in one file.
+  //
+  // options go to trigger(): `cellsOwn` for pages that draw their own cells.
   triggerBulk(records, buildPageHtml, documentTitle, options = {}) {
     this.renderBulkPages(records, buildPageHtml);
     this.trigger('print-bulk-container', documentTitle, options);

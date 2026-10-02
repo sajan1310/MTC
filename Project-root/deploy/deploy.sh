@@ -134,6 +134,15 @@ print(f"  weasyprint   {detail}")
 if not ok:
     print("  -> install: apt install libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0")
     sys.exit(1)
+
+# Said, not failed: a missing script font spoils only text in that script, and
+# the rest of the deploy is worth having meanwhile.
+missing = pdf_render_service.missing_scripts()
+if missing:
+    print(f"  fonts        WARNING: no {' or '.join(missing)} font -- that text prints as boxes")
+    print("  -> install: sudo apt install fonts-noto-core")
+else:
+    print("  fonts        Gurmukhi and Devanagari covered")
 print("  runtime      ok")
 PYCHECK
 
