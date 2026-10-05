@@ -643,7 +643,14 @@ def _build_warehouse_pool_buckets(
         erp.warehouse_pool_opening row behind a Pass 0 line, which is how
         the ledger tells the anchor row itself apart from the history
         sitting at the same moment."""
-        if events is None or not qty:
+        # A movement of zero moves nothing and is left out. A Recount is not
+        # a movement: it states what was on the shelf, and zero is as much a
+        # statement as any other figure. get_warehouse_pool_ledger shows the
+        # history a count absorbed only behind this line, so dropping it at
+        # zero blanked the whole ledger -- a bucket counted from -10 to 0 on
+        # 2026-10-05 read "No transaction history found", and showed all of
+        # it again when counted at 1.
+        if events is None or (not qty and entry_type != "Recount"):
             return
         events.append(
             {
