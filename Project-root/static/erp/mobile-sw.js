@@ -139,7 +139,12 @@
 // refusal shows the server's own reason, and a sheet's file name ends in its
 // lot number. The PO and Production Sheet keep their top rule and lose the
 // bottom one.
-const CACHE_NAME = 'erp-mobile-shell-v76';
+// v77: a manual line in the pool ledger -- opening stock, a correction, a
+// recount -- can be deleted from the ledger, and every delete (there or in
+// Opening balances) first says what the bucket will read afterwards. Both
+// redraw in place instead of re-opening their sheet, which left a stale
+// history entry for Back to step over.
+const CACHE_NAME = 'erp-mobile-shell-v77';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

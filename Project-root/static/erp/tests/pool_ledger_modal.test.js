@@ -110,3 +110,116 @@ describe('openPoolLedgerModal', () => {
     expect(body.textContent).toContain('No transaction history');
   });
 });
+
+describe('deleting a manual line', () => {
+  // A recount (manual, deletable) over a lot it absorbed (not deletable
+  // from here -- a lot is deleted where it was entered).
+  const LEDGER = [
+    { date: '05/10/2026', type: 'Recount', ref: '', remarks: 'Inline edit', inQty: 0, outQty: 51,
+      balance: 0, superseded: false, countedQty: 0, computedBalance: 51, variance: -51, entryId: 42 },
+    { date: '02/10/2026', type: 'Production Consumption', ref: 'LOT-FTD003-0036', remarks: '',
+      inQty: 0, outQty: 10, balance: 40, superseded: true, entryId: null },
+  ];
+  // What previewDeleteWarehousePoolOpening answers for entry 42.
+  const PREVIEW = {
+    rowIdx: 42, outputItemName: NAME, qty: -1, type: 'Recount', date: '05/10/2026',
+    remarks: 'Inline edit', countedQty: 0, bucketName: NAME, bucketProductTag: '',
+    bucketColor: COLOR, currentQty: 0, qtyAfter: 1,
+  };
+  let confirm;
+
+  function answer(preview = { success: true, data: PREVIEW }) {
+    Api.call.mockImplementation(async method => (method === 'previewDeleteWarehousePoolOpening'
+      ? preview
+      : { success: true, data: LEDGER }));
+  }
+  const ledgerCalls = () => Api.call.mock.calls.filter(([m]) => m === 'getWarehousePoolLedger');
+
+  beforeEach(() => {
+    answer();
+    Api.mutate = jest.fn(async () => ({ success: true, message: 'Entry deleted.' }));
+    confirm = null;
+    App.Utils.confirmAction = jest.fn((message, onYes) => { confirm = { message, onYes }; });
+    App.Utils.showToast = jest.fn();
+    App.Stock.loadWarehousePoolData = jest.fn(async () => {});
+  });
+
+  test('only a manual line has a delete button', async () => {
+    await open();
+
+    const [recount, lot] = [...body.querySelectorAll('tr')];
+    expect(recount.querySelector('button[onclick="App.Stock.deletePoolLedgerEntry(42)"]')).not.toBeNull();
+    expect(lot.querySelector('button')).toBeNull();
+  });
+
+  test('asks the server what the bucket will read, and says that', async () => {
+    await open();
+    await App.Stock.deletePoolLedgerEntry(42);
+
+    expect(Api.call).toHaveBeenCalledWith('previewDeleteWarehousePoolOpening', 42);
+    expect(confirm.message).toContain('the Recount that counted 0');
+    expect(confirm.message).toContain(`${NAME} [${COLOR}] will go from 0 to 1.`);
+    expect(confirm.message).toContain('cannot be put back with its original date');
+    // Nothing is deleted before the answer is yes.
+    expect(Api.mutate).not.toHaveBeenCalled();
+  });
+
+  test('a deletion that moves nothing says the bucket stays', async () => {
+    answer({ success: true, data: { ...PREVIEW, qty: 10, currentQty: 0, qtyAfter: 0 } });
+    await open();
+    await App.Stock.deletePoolLedgerEntry(42);
+
+    expect(confirm.message).toContain('stays at 0.');
+    expect(confirm.message).not.toContain('will go from');
+  });
+
+  test('a yes deletes with both expected values and redraws the ledger in place', async () => {
+    await open();
+    await App.Stock.deletePoolLedgerEntry(42);
+    await confirm.onYes();
+
+    expect(Api.mutate).toHaveBeenCalledWith('deleteWarehousePoolOpening', 42, NAME, -1);
+    expect(App.Utils.showToast).toHaveBeenCalledWith('Entry deleted.', false);
+    expect(App.Stock.loadWarehousePoolData).toHaveBeenCalled();
+    expect(ledgerCalls()).toHaveLength(2);
+    expect(ledgerCalls()[1]).toEqual(['getWarehousePoolLedger', NAME, '', COLOR]);
+    // Redrawn, not reopened: showing it again under the closing confirm
+    // dialog would read as a nested modal.
+    expect(safeModalShow).toHaveBeenCalledTimes(1);
+  });
+
+  test('a refused preview deletes nothing and says why', async () => {
+    answer({ success: false, message: 'That entry no longer exists. Refresh and try again.' });
+    await open();
+    await App.Stock.deletePoolLedgerEntry(42);
+
+    expect(App.Utils.confirmAction).not.toHaveBeenCalled();
+    expect(Api.mutate).not.toHaveBeenCalled();
+    expect(App.Utils.showToast).toHaveBeenCalledWith('That entry no longer exists. Refresh and try again.', true);
+  });
+
+  test('a refused delete leaves everything as it was', async () => {
+    Api.mutate = jest.fn(async () => ({
+      success: false, message: 'Data mismatch: The entry has been modified or shifted. Please refresh.',
+    }));
+    await open();
+    await App.Stock.deletePoolLedgerEntry(42);
+    await confirm.onYes();
+
+    expect(App.Utils.showToast).toHaveBeenCalledWith(expect.stringContaining('Data mismatch'), true);
+    expect(App.Stock.loadWarehousePoolData).not.toHaveBeenCalled();
+    expect(ledgerCalls()).toHaveLength(1);
+  });
+
+  test('the Add Opening Stock window deletes through the same flow', async () => {
+    App.Stock.loadWarehouseOpeningData = jest.fn(async () => {});
+    await App.Stock.deleteWarehouseOpeningEntry(42);
+
+    expect(Api.call).toHaveBeenCalledWith('previewDeleteWarehousePoolOpening', 42);
+    // The old wording, which a recount does not honour.
+    expect(confirm.message).not.toContain('reduce the Warehouse Pool bucket by that quantity');
+    await confirm.onYes();
+    expect(Api.mutate).toHaveBeenCalledWith('deleteWarehousePoolOpening', 42, NAME, -1);
+    expect(App.Stock.loadWarehouseOpeningData).toHaveBeenCalled();
+  });
+});

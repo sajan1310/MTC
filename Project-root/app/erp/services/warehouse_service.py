@@ -410,7 +410,7 @@ def _effective_at(day, created_at):
     return datetime.combine(day, time.min)
 
 
-def _get_warehouse_pool_opening_rows(cur) -> list:
+def _get_warehouse_pool_opening_rows(cur, exclude_ids=frozenset()) -> list:
     cur.execute(
         "SELECT id, output_item_name, process_id, product_tag, color, qty, "
         "opening_date, opening_at, counted_qty, created_at, remarks "
@@ -423,7 +423,7 @@ def _get_warehouse_pool_opening_rows(cur) -> list:
     rows = []
     for row in cur.fetchall():
         name = str(row["output_item_name"] or "").strip()
-        if not name:
+        if not name or row["id"] in exclude_ids:
             continue
         # Zero is skipped (no-op); negative IS kept -- a downward manual
         # correction appends a negative delta row and it must survive this
@@ -455,7 +455,33 @@ def _get_warehouse_pool_opening_rows(cur) -> list:
     return rows
 
 
-def _get_bucket_anchors(cur) -> dict:
+_CORRECTION_PREFIX = "Correction: "
+
+
+def _opening_entry_type(counted_qty, remarks) -> str:
+    """What an erp.warehouse_pool_opening row is, as the ledger names it.
+
+    A row carrying counted_qty is a recount whichever path reads it.
+    adjustWarehousePoolManually marks the rest of what it writes with a
+    "Correction: " remark; anything else is opening stock.
+    """
+    if counted_qty is not None:
+        return "Recount"
+    if str(remarks or "").startswith(_CORRECTION_PREFIX):
+        return "Manual Correction"
+    return "Opening Stock"
+
+
+def _opening_entry_reason(remarks) -> str:
+    """The reason somebody typed, without the "Correction: " marker that
+    adjustWarehousePoolManually adds to tell its rows apart."""
+    remarks = str(remarks or "")
+    if remarks.startswith(_CORRECTION_PREFIX):
+        return remarks[len(_CORRECTION_PREFIX) :]
+    return remarks
+
+
+def _get_bucket_anchors(cur, exclude_ids=frozenset()) -> dict:
     """The newest recount per bucket: {bucket key: (moment, counted, row id)}.
 
     A recount is a statement about a shelf at a moment -- everything dated
@@ -463,6 +489,9 @@ def _get_bucket_anchors(cur) -> dict:
     bucket again however late it is entered or edited. This is what makes
     that enforceable, and it is keyed exactly the way get_bucket() keys a
     bucket: name, tag, colour, case-insensitively, and NOT process id.
+
+    `exclude_ids` answers "which count would govern without these rows":
+    the next newest one, or none.
     """
     cur.execute(
         """
@@ -475,11 +504,13 @@ def _get_bucket_anchors(cur) -> dict:
                opening_date, opening_at, created_at
           FROM erp.warehouse_pool_opening
          WHERE counted_qty IS NOT NULL
+           AND NOT (id = ANY(%s))
          ORDER BY lower(trim(output_item_name)),
                   lower(trim(coalesce(product_tag, ''))),
                   lower(trim(coalesce(color, ''))),
                   opening_at DESC NULLS LAST, opening_date DESC, id DESC
-        """
+        """,
+        (sorted(exclude_ids),),
     )
     anchors = {}
     for row in cur.fetchall():
@@ -572,6 +603,8 @@ def _build_warehouse_pool_buckets(
     include_opening: bool = True,
     events: list | None = None,
     apply_anchors: bool = True,
+    exclude_opening_ids=frozenset(),
+    opening_keys: dict | None = None,
 ) -> dict:
     """Core of _recalculate_warehouse_pool, factored out so
     _get_real_history_colors_by_process can replay the same Pass 1-3
@@ -592,6 +625,13 @@ def _build_warehouse_pool_buckets(
     bucket colours on both legs, double-counted manual corrections, and a
     lot credited to its composite AND its bare bucket). With no `events`
     argument nothing is recorded and this function behaves exactly as before.
+
+    `exclude_opening_ids` replays the pool as if those erp.warehouse_pool_
+    opening rows had never been entered -- what deleting one would leave,
+    worked out without deleting it. Pass `opening_keys` (a dict) to learn
+    which bucket each opening row landed in, {row id: bucket key}: Pass 0
+    files a WIP process's row under the process's own output name, which is
+    not always the name stored on the row.
     """
     buckets: dict = {}
     count_overrides = _get_bucket_count_overrides(cur)
@@ -604,7 +644,11 @@ def _build_warehouse_pool_buckets(
     # is exactly the history a recount absorbed. get_warehouse_pool_ledger
     # replays it that way to show those movements behind the count instead
     # of dropping them, and takes the live balance from the normal replay.
-    anchors = _get_bucket_anchors(cur) if (include_opening and apply_anchors) else {}
+    anchors = (
+        _get_bucket_anchors(cur, exclude_opening_ids)
+        if (include_opening and apply_anchors)
+        else {}
+    )
 
     def frozen(bucket: dict, when, created_at=None) -> bool:
         """Is this event already inside the bucket's latest recount?
@@ -758,7 +802,7 @@ def _build_warehouse_pool_buckets(
         # id order instead would let a post-recount row be applied first and
         # then wiped by the seed.
         opening_rows = sorted(
-            _get_warehouse_pool_opening_rows(cur),
+            _get_warehouse_pool_opening_rows(cur, exclude_opening_ids),
             key=lambda r: (r["at"] or datetime.min, r["id"]),
         )
         for r in opening_rows:
@@ -773,14 +817,17 @@ def _build_warehouse_pool_buckets(
             else:
                 name = process_output_item_map.get(proc_id) or r["outputItemName"]
             bucket = get_bucket(name, r["processId"], r["productTag"], r["color"])
+            if opening_keys is not None:
+                opening_keys[r["id"]] = (
+                    bucket["outputItemName"].strip().lower(),
+                    bucket["productTag"].strip().lower(),
+                    bucket["color"].strip().lower(),
+                )
             # adjustWarehousePoolManually records a correction as a delta row
             # here AND as an audit row in erp.warehouse_pool_adjustments. Only
             # this one is arithmetic, so only this one becomes a ledger line;
             # reading both is what used to count every correction twice.
-            is_correction = r["remarks"].startswith("Correction: ")
-            reason = (
-                r["remarks"][len("Correction: ") :] if is_correction else r["remarks"]
-            )
+            reason = _opening_entry_reason(r["remarks"])
 
             # Match the anchor by ROW ID, not by moment. _get_bucket_anchors
             # picks the newest recount with `... opening_at DESC, id DESC`,
@@ -847,9 +894,7 @@ def _build_warehouse_pool_buckets(
                 # anchor-free replay, lands here and moves the balance by its
                 # delta -- but it is still a count, and naming it a plain
                 # correction would misreport what the operator did.
-                "Recount"
-                if r["countedQty"] is not None
-                else ("Manual Correction" if is_correction else "Opening Stock"),
+                _opening_entry_type(r["countedQty"], r["remarks"]),
                 "",
                 reason,
                 r["qty"],
@@ -2203,15 +2248,102 @@ def save_warehouse_pool_opening(conn, cur, form_data):
     )
 
 
+def _opening_entry_id(row_idx) -> int:
+    try:
+        return int(row_idx)
+    except (TypeError, ValueError):
+        raise ValueError("Invalid opening stock entry selected for deletion.")
+
+
+def _opening_entry_effect(cur, entry_id: int, predict_after: bool = True) -> dict:
+    """One manual Warehouse Pool entry, and what deleting it does to its
+    bucket.
+
+    Deleting a manual entry does not simply take its quantity back off. A
+    recount REPLACES the history behind it, so removing the newest one
+    hands the bucket back to the count before it -- or, with none left, to
+    whatever its lots and entries add up to -- and removing an older count,
+    already inside a newer one, moves nothing at all. Which of those applies
+    is the pool's own arithmetic, so the answer comes from running it with
+    and without the entry. predict_after=False skips the second run, for a
+    caller about to delete the row and recalculate for real.
+    """
+    cur.execute(
+        "SELECT id, output_item_name, product_tag, color, qty, counted_qty, "
+        "opening_date, remarks FROM erp.warehouse_pool_opening WHERE id = %s",
+        (entry_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        raise ValueError("That entry no longer exists. Refresh and try again.")
+
+    keys: dict = {}
+    before = _build_warehouse_pool_buckets(cur, opening_keys=keys)
+    key = keys.get(entry_id) or (
+        str(row["output_item_name"] or "").strip().lower(),
+        str(row["product_tag"] or "").strip().lower(),
+        str(row["color"] or "").strip().lower(),
+    )
+    bucket = before.get(key) or {}
+
+    def available(buckets: dict) -> float:
+        b = buckets.get(key)
+        return b["producedQty"] - b["consumedQty"] if b else 0.0
+
+    counted = None if row["counted_qty"] is None else float(row["counted_qty"])
+    effect = {
+        "rowIdx": row["id"],
+        # The two values deleteWarehousePoolOpening's drift check compares,
+        # as stored on the row -- not the bucket's names, which Pass 0 can
+        # resolve differently for a WIP process.
+        "outputItemName": row["output_item_name"] or "",
+        "qty": float(row["qty"]),
+        "type": _opening_entry_type(counted, row["remarks"]),
+        "date": date_utils.to_display_string(row["opening_date"]) or "",
+        "remarks": _opening_entry_reason(row["remarks"]),
+        "countedQty": counted,
+        "bucketName": bucket.get("outputItemName", row["output_item_name"] or ""),
+        "bucketProductTag": bucket.get("productTag", row["product_tag"] or ""),
+        "bucketColor": bucket.get("color", row["color"] or ""),
+        "currentQty": available(before),
+    }
+    if predict_after:
+        effect["qtyAfter"] = available(
+            _build_warehouse_pool_buckets(
+                cur, exclude_opening_ids=frozenset({entry_id})
+            )
+        )
+    return effect
+
+
+@rpc_method("previewDeleteWarehousePoolOpening")
+def preview_delete_warehouse_pool_opening(row_idx):
+    """What deleting one manual Warehouse Pool entry would leave the bucket
+    at, without deleting it.
+
+    The confirmation used to say "This will reduce the Warehouse Pool bucket
+    by that quantity", which is true of opening stock and not of a recount.
+    Metallic Purple-Purple's +10 correction of 2026-10-05, once a later count
+    stood on top of it, would have been announced as taking 10 off -- and
+    deleting it moves nothing. Asking the server is the only way to say what
+    will actually happen, and it also lets somebody see what a bucket reads
+    without an entry, without deleting anything.
+    """
+    target_id = _opening_entry_id(row_idx)
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
+        effect = _opening_entry_effect(cur, target_id)
+    return build_response(True, effect)
+
+
 @rpc_method("deleteWarehousePoolOpening", mutation=True)
 @database.transactional
 def delete_warehouse_pool_opening(
     conn, cur, row_idx, expected_output_item_name=None, expected_qty=None
 ):
-    try:
-        target_id = int(row_idx)
-    except (TypeError, ValueError):
-        raise ValueError("Invalid opening stock entry selected for deletion.")
+    target_id = _opening_entry_id(row_idx)
 
     cur.execute(
         "SELECT output_item_name, qty FROM erp.warehouse_pool_opening WHERE id = %s",
@@ -2233,10 +2365,60 @@ def delete_warehouse_pool_opening(
                 "Data mismatch: The entry has been modified or shifted. Please refresh."
             )
 
+    # Read the bucket under the pool lock, so the "before" recorded below is
+    # the figure this delete changes and not one a concurrent rebuild is
+    # about to replace. _recalculate_warehouse_pool takes the same lock
+    # again, which a transaction-scoped advisory lock allows.
+    locks.lock_namespace(cur, locks.POOL)
+    entry = _opening_entry_effect(cur, target_id, predict_after=False)
+
     cur.execute("DELETE FROM erp.warehouse_pool_opening WHERE id = %s", (target_id,))
     _recalculate_warehouse_pool(cur)
 
-    return build_response(True, None, "Opening stock entry deleted successfully.")
+    before = entry["currentQty"]
+    after = _get_warehouse_pool_bucket_available_qty(
+        cur, entry["bucketName"], entry["bucketProductTag"], entry["bucketColor"]
+    )
+
+    # A deleted entry moves a pool figure with no lot behind it, exactly as
+    # a correction does, so it goes in the same history: who, when, and
+    # what the bucket read either side. Without this the history kept
+    # listing a correction that no longer existed, and nothing said who had
+    # taken it out.
+    what = (
+        f"counted {entry['countedQty']:g}"
+        if entry["countedQty"] is not None
+        else f"{entry['qty']:+g}"
+    )
+    reason = f"Deleted {entry['type']} dated {entry['date']} ({what})"
+    if entry["remarks"]:
+        reason += f": {entry['remarks']}"
+    cur.execute(
+        """
+        INSERT INTO erp.warehouse_pool_adjustments (output_item_name, product_tag, color, old_value, new_value, reason, created_by)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            entry["bucketName"],
+            entry["bucketProductTag"],
+            entry["bucketColor"],
+            before,
+            after,
+            reason,
+            get_current_user_id(),
+        ),
+    )
+
+    label = entry["bucketName"] + (
+        f" · {entry['bucketColor']}" if entry["bucketColor"] else ""
+    )
+    if abs(after - before) < 0.0001:
+        message = f"Entry deleted. {label} is unchanged at {after:g}."
+    else:
+        message = f"Entry deleted. {label} went from {before:g} to {after:g}."
+    return build_response(
+        True, {"oldAvailableQty": before, "newAvailableQty": after}, message
+    )
 
 
 @rpc_method("adjustWarehousePoolManually", mutation=True)
@@ -2677,6 +2859,11 @@ def get_warehouse_pool_ledger(output_item_name, product_tag=None, color=None):
             # True = this movement is already inside a later count, so it is
             # shown for audit but does not carry into the live balance.
             "superseded": superseded,
+            # The erp.warehouse_pool_opening row behind a manual line --
+            # opening stock, a correction or a recount -- which is what
+            # deleteWarehousePoolOpening takes. None for a lot, a dispatch
+            # or a write-off: those are deleted where they were entered.
+            "entryId": e["sourceId"],
         }
         if extra:
             row.update(extra)

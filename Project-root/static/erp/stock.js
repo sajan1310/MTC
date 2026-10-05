@@ -1963,27 +1963,11 @@ App.Stock = {
   </tr>`).join('');
   },
 
+  // Same flow as the ledger's delete. This used to promise "This will
+  // reduce the Warehouse Pool bucket by that quantity", which a recount
+  // does not do.
   deleteWarehouseOpeningEntry(rowIdx) {
-    const entry = (App.State.globalWarehousePoolOpening || []).find(r => r.rowIdx === rowIdx);
-    const label = entry
-      ? `${entry.outputItemName}${entry.color ? ` (${entry.color})` : ''} — Qty ${App.Production.formatQty(entry.qty)} dated ${entry.date}`
-      : 'this opening stock entry';
-
-    App.Utils.confirmAction(
-      `Delete ${label}? This will reduce the Warehouse Pool bucket by that quantity.`,
-      async () => {
-        try {
-          const res = await Api.mutate('deleteWarehousePoolOpening', rowIdx, entry?.outputItemName, entry?.qty);
-          App.Utils.showToast(res?.message, !res?.success);
-          if (res?.success) {
-            await this.loadWarehouseOpeningData();
-            await this.loadWarehousePoolData();
-          }
-        } catch (err) {
-          App.Utils.showToast(err.message || 'Failed to delete opening stock entry.', true);
-        }
-      }
-    );
+    return this.confirmDeletePoolEntry(rowIdx, () => this.loadWarehouseOpeningData());
   },
 
   // ── Warehouse Pool Ledger ───────────────────────────────────
@@ -2027,14 +2011,27 @@ App.Stock = {
       titleEl.innerHTML = `<i class="bi bi-journal-text me-2"></i>Warehouse Pool Ledger: ${escapeHtml(label)}`;
     }
 
+    App.Utils.tableLoading(document.getElementById('poolLedgerBody'), 8, 'Loading ledger…');
+    safeModalShow('poolLedgerModal');
+    await this.loadPoolLedger(encName, encTag, encColor);
+  },
+
+  // Fetches and draws the ledger that is open. Apart from
+  // openPoolLedgerModal so a delete can redraw it in place: showing the
+  // modal again while the confirm dialog is still closing reads as a
+  // nested modal, and re-stacks it.
+  async loadPoolLedger(encName, encTag, encColor) {
+    this._poolLedgerArgs = [encName, encTag, encColor];
+    const outputItemName = decodeURIComponent(encName || '');
+    const productTag = decodeURIComponent(encTag || '');
+    const color = decodeURIComponent(encColor || '');
+
     // getWarehousePoolLedger replays the pool's OWN passes and reports what
     // they did, so this closes on the bucket's real Available Qty by
     // construction. Assembling it here from getProductionData and friends
     // meant maintaining a second implementation of the pool arithmetic,
     // which had drifted from the real one in five separate ways.
     const body = document.getElementById('poolLedgerBody');
-    App.Utils.tableLoading(body, 7, 'Loading ledger…');
-    safeModalShow('poolLedgerModal');
 
     let entries;
     try {
@@ -2090,9 +2087,10 @@ App.Stock = {
           <td class="text-center fw-bold ${sup ? 'text-muted' : 'text-success'}">${e.inQty ? App.Production.formatQty(e.inQty) : '-'}</td>
           <td class="text-center fw-bold ${sup ? 'text-muted' : 'text-danger'}">${e.outQty ? App.Production.formatQty(e.outQty) : '-'}</td>
           <td class="text-center fw-bold ${mute}">${App.Production.formatQty(e.balance)}</td>
+          <td class="text-center">${this.poolLedgerDeleteButton(e)}</td>
         </tr>`;
         }).join('')
-        : '<tr><td colspan="7" class="text-center text-muted p-4">No transaction history found for this bucket.</td></tr>';
+        : '<tr><td colspan="8" class="text-center text-muted p-4">No transaction history found for this bucket.</td></tr>';
     }
 
     // Say plainly why some rows are greyed, rather than leaving the operator
@@ -2109,6 +2107,77 @@ App.Stock = {
         : '';
       note.classList.toggle('d-none', !absorbed);
     }
+  },
+
+  // Only a manual line carries an entryId -- opening stock, a correction or
+  // a recount. A lot, a dispatch or a write-off is deleted where it was
+  // entered, so its row has nothing here.
+  poolLedgerDeleteButton(e) {
+    if (e.entryId === null || e.entryId === undefined) return '';
+    return `<button type="button" class="btn btn-sm btn-outline-danger" title="Delete this manual entry"
+      aria-label="Delete this manual entry" onclick="App.Stock.deletePoolLedgerEntry(${Number(e.entryId)})"><i class="bi bi-trash"></i></button>`;
+  },
+
+  deletePoolLedgerEntry(entryId) {
+    const args = this._poolLedgerArgs || [];
+    return this.confirmDeletePoolEntry(entryId, () => this.loadPoolLedger(...args));
+  },
+
+  // The one delete flow for a manual pool entry, wherever it is listed: ask
+  // the server what deleting it leaves the bucket at, say so, and delete
+  // only on a yes. The entry's own quantity is the wrong number to quote --
+  // removing a recount hands the bucket back to the count before it, and
+  // removing an older count, already inside a newer one, moves nothing.
+  async confirmDeletePoolEntry(entryId, afterDelete) {
+    let entry;
+    try {
+      const res = await Api.call('previewDeleteWarehousePoolOpening', entryId);
+      if (!res?.success) throw new Error(res?.message || 'Could not look up this entry.');
+      entry = res.data;
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Could not look up this entry.', true);
+      return;
+    }
+
+    App.Utils.confirmAction(this.poolEntryDeleteMessage(entry), async () => {
+      try {
+        // Both expected values, so the server refuses an entry that changed
+        // after the preview was read.
+        const res = await Api.mutate('deleteWarehousePoolOpening', entry.rowIdx, entry.outputItemName, entry.qty);
+        App.Utils.showToast(res?.message, !res?.success);
+        if (!res?.success) return;
+        await this.loadWarehousePoolData();
+        // The breakdown dialog the ledger was opened from draws once, on
+        // open; repaint it as the combination delete does, or it keeps the
+        // old figure.
+        const processId = App.State.warehousePoolModalProcessId;
+        const process = (App.State.globalProcesses || []).find(p => p.processId === processId);
+        if (process) this.renderWarehousePoolProcessModalBody(process);
+        if (afterDelete) await afterDelete();
+      } catch (err) {
+        App.Utils.showToast(err.message || 'Failed to delete this entry.', true);
+      }
+    });
+  },
+
+  poolEntryDeleteMessage(entry) {
+    const qty = q => App.Production.formatQty(q);
+    let bucket = entry.bucketName || entry.outputItemName;
+    if (entry.bucketColor) bucket += ` [${entry.bucketColor}]`;
+    if (entry.bucketProductTag) bucket += ` (Tag: ${entry.bucketProductTag})`;
+
+    const what = entry.type === 'Recount'
+      ? `the Recount that counted ${qty(entry.countedQty)}`
+      : `this ${entry.type} entry of ${entry.qty > 0 ? '+' : ''}${qty(entry.qty)}`;
+    const lines = [`Delete ${what}, dated ${entry.date}?`];
+    lines.push(Math.abs(entry.qtyAfter - entry.currentQty) < 0.0001
+      ? `${bucket} stays at ${qty(entry.currentQty)}.`
+      : `${bucket} will go from ${qty(entry.currentQty)} to ${qty(entry.qtyAfter)}.`);
+    if (entry.type === 'Recount') {
+      lines.push('A count cannot be put back with its original date: entered again, it is dated now.');
+    }
+    lines.push('The deletion is recorded in the adjustment history.');
+    return lines.join('\n\n');
   },
 
   setDeadSortMode(mode) {

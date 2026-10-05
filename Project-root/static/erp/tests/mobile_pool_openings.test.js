@@ -373,48 +373,104 @@ describe('saving an opening balance', () => {
 describe('deleting an opening balance', () => {
   beforeEach(mount);
 
+  // What previewDeleteWarehousePoolOpening answers for OPENINGS[0].
+  const PREVIEW = {
+    rowIdx: 5, outputItemName: 'Frame 26', qty: 40, type: 'Opening Stock', date: '01/09/2026',
+    remarks: 'counted on the rack', countedQty: null, bucketName: 'Frame 26',
+    bucketProductTag: '', bucketColor: 'Black', currentQty: 40, qtyAfter: 0,
+  };
+
+  async function openListAnswering(preview = { success: true, data: PREVIEW }) {
+    MApp.Api.call = jest.fn(async m => (m === 'previewDeleteWarehousePoolOpening'
+      ? preview
+      : { success: true, data: OPENINGS }));
+    await MApp.PoolOpenings.open();
+  }
+
   test('sends both expected values, so the server can check for drift', async () => {
     // deleteWarehousePoolOpening applies its concurrency check only when
-    // BOTH arrive. Sending neither would let a stale list delete an entry
-    // that is no longer the one on screen.
+    // BOTH arrive. Sending neither would let an entry that changed after
+    // the preview was read be deleted anyway.
     let call = null;
     MApp.Util.mutateSimple = jest.fn(async (m, args) => { call = { m, args }; return { success: false }; });
-    await openList();
+    await openListAnswering();
 
     await MApp.PoolOpenings.remove(OPENINGS[0]);
 
+    expect(MApp.Api.call).toHaveBeenCalledWith('previewDeleteWarehousePoolOpening', 5);
     expect(call.m).toBe('deleteWarehousePoolOpening');
     expect(call.args).toEqual([5, 'Frame 26', 40]);
   });
 
-  test('the confirmation says the bucket is recalculated', async () => {
+  test('the confirmation says what the bucket will read', async () => {
+    // It used to say only that the bucket is "recalculated without it",
+    // because the entry's own quantity is the wrong number for a recount.
     MApp.Util.mutateSimple = jest.fn(async () => ({ success: false }));
-    await openList();
+    await openListAnswering();
 
     await MApp.PoolOpenings.remove(OPENINGS[0]);
 
-    expect(window.confirm.mock.calls[0][0]).toContain('recalculated without it');
+    const text = window.confirm.mock.calls[0][0];
+    expect(text).toContain('this opening stock entry of +40');
+    expect(text).toContain('Frame 26 · Black will go from 40 to 0.');
+  });
+
+  test('a recount warns that it cannot be put back with its date', async () => {
+    MApp.Util.mutateSimple = jest.fn(async () => ({ success: false }));
+    await openListAnswering({ success: true, data: { ...PREVIEW, type: 'Recount', countedQty: 12 } });
+
+    await MApp.PoolOpenings.remove(OPENINGS[0]);
+
+    const text = window.confirm.mock.calls[0][0];
+    expect(text).toContain('the recount that counted 12');
+    expect(text).toContain('cannot be put back with its original date');
   });
 
   test('declining sends nothing', async () => {
     window.confirm = jest.fn(() => false);
     MApp.Util.mutateSimple = jest.fn();
-    await openList();
+    await openListAnswering();
 
     await MApp.PoolOpenings.remove(OPENINGS[0]);
 
     expect(MApp.Util.mutateSimple).not.toHaveBeenCalled();
   });
 
+  test('a preview the server refuses sends nothing, and says why', async () => {
+    MApp.Util.mutateSimple = jest.fn();
+    await openListAnswering({ success: false, message: 'That entry no longer exists. Refresh and try again.' });
+
+    await MApp.PoolOpenings.remove(OPENINGS[0]);
+
+    expect(window.confirm).not.toHaveBeenCalled();
+    expect(MApp.Util.mutateSimple).not.toHaveBeenCalled();
+    expect(document.getElementById('mapp-toast-stack').textContent).toContain('no longer exists');
+  });
+
   test('a drift refusal is reported and the list is not reloaded', async () => {
     MApp.Util.mutateSimple = jest.fn(async () => ({
       success: false, message: 'Data mismatch: The entry has been modified or shifted. Please refresh.',
     }));
-    await openList();
-    MApp.PoolOpenings.open = jest.fn();
+    await openListAnswering();
+    MApp.PoolOpenings.reload = jest.fn();
 
     await MApp.PoolOpenings.remove(OPENINGS[0]);
 
-    expect(MApp.PoolOpenings.open).not.toHaveBeenCalled();
+    expect(MApp.PoolOpenings.reload).not.toHaveBeenCalled();
+  });
+
+  test('a delete redraws the list in place, without opening the sheet again', async () => {
+    // Sheet.open pushes a history entry each time; re-opening a sheet that
+    // is already up leaves a stale one for Back to step over.
+    MApp.Util.mutateSimple = jest.fn(async () => ({ success: true, message: 'Entry deleted.' }));
+    MApp.Pool.load = jest.fn();
+    await openListAnswering();
+    const depth = MApp.Sheet._stack.length;
+
+    await MApp.PoolOpenings.remove(OPENINGS[0]);
+
+    expect(MApp.Sheet._stack.length).toBe(depth);
+    expect(MApp.Api.call.mock.calls.filter(([m]) => m === 'getWarehousePoolOpeningData')).toHaveLength(2);
+    expect(MApp.Pool.load).toHaveBeenCalled();
   });
 });
