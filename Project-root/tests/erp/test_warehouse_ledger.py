@@ -221,6 +221,81 @@ def test_absorbed_history_is_shown_but_does_not_move_the_bucket(erp_client):
     assert _closing(rows) == 40
 
 
+def test_a_count_of_zero_still_shows_the_history_it_absorbed(erp_client):
+    """A count of zero is still a count. Painted Frame Crysta 20 inch in
+    Metallic Purple read -10 and was counted at 0 on 2026-10-05, and its
+    ledger came back empty: the Recount line was dropped as a zero
+    movement, and the absorbed history is only ever shown behind that line.
+    Counted at 1 instead, the same history appeared.
+    """
+    upstream, upstream_id = _save_process(erp_client)
+    name = upstream["outputItemName"]
+    _rpc(
+        erp_client,
+        "saveWarehousePoolOpening",
+        [{"processId": upstream_id, "qty": 20}],
+        mutation=True,
+    )
+    _, downstream_id = _save_process(erp_client, sequence=2)
+    # Draws 30 from a bucket holding 20.
+    _make_lot(erp_client, downstream_id, name, 30)
+    assert _bucket(erp_client, name)["availableQty"] == -10
+
+    body = _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [name, upstream_id, "", "", 0, "Physical recount"],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+    rows = _ledger(erp_client, name)
+    # Newest first: the count, then the draw and the opening it absorbed.
+    # The draw's type depends on how the recipe scopes it, which is not
+    # what this test is about, so it is read by its quantities.
+    assert rows[0]["type"] == "Recount"
+    assert [(r["inQty"], r["outQty"], r["balance"]) for r in rows[1:]] == [
+        (0, 30, -10),
+        (20, 0, 20),
+    ]
+    assert all(r["superseded"] is True for r in rows[1:])
+
+    # The count booked +10 against a book that had reached -10.
+    recount = rows[0]
+    assert recount["superseded"] is False
+    assert recount["countedQty"] == 0
+    assert recount["computedBalance"] == -10
+    assert recount["variance"] == 10
+    assert (recount["inQty"], recount["outQty"]) == (10, 0)
+
+    assert _closing(rows) == _bucket(erp_client, name)["availableQty"] == 0
+
+
+def test_movement_after_a_count_of_zero_carries_on_from_it(erp_client):
+    """The other half of the same report: a lot booked after a count of zero
+    was the only line left, with neither the count nor anything before it."""
+    up_name, name, down_id = _stage_fed_by_pool(erp_client)
+    _make_lot(erp_client, down_id, up_name, 30)
+    body = _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [name, down_id, "", "", 0, "Physical recount"],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+    _make_lot(erp_client, down_id, up_name, 7)
+
+    rows = _ledger(erp_client, name)
+    assert [r["type"] for r in rows] == [
+        "Production Credit",
+        "Recount",
+        "Production Credit",
+    ]
+    assert [r["superseded"] for r in rows] == [False, False, True]
+    assert [r["balance"] for r in rows] == [7, 0, 30]
+    assert _closing(rows) == _bucket(erp_client, name)["availableQty"] == 7
+
+
 def test_a_bucket_never_recounted_reads_exactly_as_before(erp_client):
     """No count, no second replay, no superseded rows -- the ordinary ledger
     is untouched by any of this."""
