@@ -16698,16 +16698,22 @@ MApp.Pool = {
   // passing them as one array yields HTTP 200, success true, and a
   // silently empty ledger.
   async openLedger(row) {
-    const body = document.getElementById('pool-ledger-body');
     const titleEl = document.getElementById('pool-ledger-title');
     if (titleEl) titleEl.textContent = row.outputItemName + (row.color ? ' · ' + row.color : '');
-    MApp.Util.renderSkeleton(body, 4);
     MApp.Sheet.open('sheet-pool-ledger');
+    await this.renderLedger(row);
+  },
+
+  // Fetches and draws the ledger without opening the sheet again, so a
+  // delete can redraw it: Sheet.open pushes a history entry every time.
+  async renderLedger(row) {
+    const body = document.getElementById('pool-ledger-body');
+    MApp.Util.renderSkeleton(body, 4);
 
     try {
       const res = await MApp.Api.call('getWarehousePoolLedger', row.outputItemName, row.productTag || '', row.color || '');
       if (!res || !res.success) {
-        MApp.Util.renderError(body, res && res.message, () => this.openLedger(row));
+        MApp.Util.renderError(body, res && res.message, () => this.renderLedger(row));
         return;
       }
       const entries = res.data || [];
@@ -16719,11 +16725,17 @@ MApp.Pool = {
       // traced, dimmed because it no longer moves it (migration 045). Same
       // distinction the desktop modal draws -- both read one server field
       // rather than each deciding for themselves what is superseded.
-      body.innerHTML = entries.map(e => {
+      body.innerHTML = entries.map((e, i) => {
         const sup = e.superseded === true;
         const variance = typeof e.variance === 'number'
           ? `<div class="mb-card-sub">counted ${MApp.Util.formatQty(e.countedQty)} · book ${MApp.Util.formatQty(e.computedBalance)} · var ${e.variance > 0 ? '+' : ''}${MApp.Util.formatQty(e.variance)}</div>`
           : '';
+        // Only a manual line carries an entryId -- opening stock, a
+        // correction or a recount. A lot or a dispatch is deleted where it
+        // was entered.
+        const del = e.entryId === null || e.entryId === undefined
+          ? ''
+          : `<div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-ledger-delete="${i}">Delete</button></div>`;
         return `
         <div class="mb-card"${sup ? ' style="opacity:.6;"' : ''}>
           <div class="mb-card-row">
@@ -16738,11 +16750,25 @@ MApp.Pool = {
               </div>
               <div class="mb-card-sub">bal ${MApp.Util.formatQty(e.balance)}</div>
             </div>
-          </div>
+          </div>${del}
         </div>`;
       }).join('');
+      body.querySelectorAll('[data-ledger-delete]').forEach(btn => {
+        btn.addEventListener('click', () => this.deleteLedgerEntry(entries[Number(btn.dataset.ledgerDelete)], row));
+      });
     } catch (err) {
-      MApp.Util.renderError(body, err && err.message, () => this.openLedger(row));
+      MApp.Util.renderError(body, err && err.message, () => this.renderLedger(row));
+    }
+  },
+
+  // MApp.PoolOpenings.deleteEntry asks the server what the bucket will read
+  // first and says so; this redraws the ledger and the pool behind it.
+  async deleteLedgerEntry(entry, row) {
+    if (!entry) return;
+    const res = await MApp.PoolOpenings.deleteEntry(entry.entryId);
+    if (res && res.success) {
+      this.renderLedger(row);
+      this.load();
     }
   },
 
@@ -17017,20 +17043,31 @@ MApp.PoolOpenings = {
 
     MApp.Util.renderSkeleton(listEl, 4);
     MApp.Sheet.open('sheet-pool-openings');
+    await this.reload();
+  },
 
+  // Fetches and draws the list without opening the sheet again. Sheet.open
+  // pushes a history entry every time, so calling open() on a sheet that is
+  // already up leaves a stale one behind and the next Back appears to do
+  // nothing.
+  async reload() {
+    const listEl = document.getElementById('pool-openings-list');
     try {
       const res = await MApp.Api.call('getWarehousePoolOpeningData');
       if (!res || !res.success) {
-        MApp.Util.renderError(listEl, res && res.message, () => this.open());
+        MApp.Util.renderError(listEl, res && res.message, () => this.reload());
         return;
       }
       this.rows = res.data || [];
       this.entries = MApp.Search.index(this.rows, this.SEARCH);
       MApp.Paging.reset('poolOpening');
-      this.filtered = this.rows;
+      // Whatever the search box still says.
+      this.filtered = this.searchTerm.trim()
+        ? MApp.Search.run(this.entries, this.searchTerm)
+        : this.rows;
       this.render();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this.open());
+      MApp.Util.renderError(listEl, err && err.message, () => this.reload());
     }
   },
 
@@ -17292,24 +17329,63 @@ this.processes = procRes && procRes.success ? (procRes.data || []).filter(p => p
   },
 
   async remove(row) {
-    // Deleting an opening entry removes a credit from the bucket and
-    // recalculates, so it can drive an available balance negative. Say
-    // what it is worth rather than asking a bare "are you sure".
-    if (!window.confirm(
-      `Delete this ${MApp.Util.formatQty(row.qty)} entry for ${row.outputItemName}${row.color ? ' · ' + row.color : ''}?`
-      + ' The bucket is recalculated without it.')) return;
-
-    // Both expected values or neither: the server only applies its
-    // concurrency check when both arrive, and skipping it would let a
-    // stale list delete an entry that is no longer the one on screen.
-    const res = await MApp.Util.mutateSimple(
-      'deleteWarehousePoolOpening', [row.rowIdx, row.outputItemName, row.qty], null
-    );
-    if (res.success) {
-      MApp.Toast.success(res.message || 'Opening stock entry deleted.');
-      this.open();
+    const res = await this.deleteEntry(row.rowIdx);
+    if (res && res.success) {
+      this.reload();
       MApp.Pool.load();
     }
+  },
+
+  // The one delete flow for a manual pool entry -- opening stock, a
+  // correction or a recount -- shared with the pool ledger. Deleting one
+  // can drive a bucket negative, and the entry's own quantity is the wrong
+  // number to quote: removing a recount hands the bucket back to the count
+  // before it, and removing an older count, already inside a newer one,
+  // moves nothing. So the server is asked what the bucket will read, and
+  // the confirmation says that. Resolves to the delete's result, or null
+  // when nothing was sent.
+  async deleteEntry(rowIdx) {
+    let entry;
+    try {
+      const res = await MApp.Api.call('previewDeleteWarehousePoolOpening', rowIdx);
+      if (!res || !res.success) {
+        MApp.Toast.error((res && res.message) || 'Could not look up this entry.');
+        return null;
+      }
+      entry = res.data;
+    } catch (err) {
+      MApp.Toast.error(err.message || 'Could not reach the server. Please try again.');
+      return null;
+    }
+    if (!window.confirm(this.deleteMessage(entry))) return null;
+
+    // Both expected values or neither: the server only applies its
+    // concurrency check when both arrive, and skipping it would let an
+    // entry that changed after the preview was read be deleted anyway.
+    const res = await MApp.Util.mutateSimple(
+      'deleteWarehousePoolOpening', [entry.rowIdx, entry.outputItemName, entry.qty], null
+    );
+    if (res.success) MApp.Toast.success(res.message || 'Entry deleted.');
+    return res;
+  },
+
+  deleteMessage(entry) {
+    const fmt = q => MApp.Util.formatQty(q);
+    const bucket = entry.bucketName
+      + (entry.bucketColor ? ' · ' + entry.bucketColor : '')
+      + (entry.bucketProductTag ? ' · ' + entry.bucketProductTag : '');
+    const what = entry.type === 'Recount'
+      ? `the recount that counted ${fmt(entry.countedQty)}`
+      : `this ${entry.type.toLowerCase()} entry of ${entry.qty > 0 ? '+' : ''}${fmt(entry.qty)}`;
+    const lines = [`Delete ${what}, dated ${entry.date}?`];
+    lines.push(Math.abs(entry.qtyAfter - entry.currentQty) < 0.0001
+      ? `${bucket} stays at ${fmt(entry.currentQty)}.`
+      : `${bucket} will go from ${fmt(entry.currentQty)} to ${fmt(entry.qtyAfter)}.`);
+    if (entry.type === 'Recount') {
+      lines.push('A count cannot be put back with its original date: entered again, it is dated now.');
+    }
+    lines.push('The deletion is recorded in the adjustment history.');
+    return lines.join('\n\n');
   }
 };
 

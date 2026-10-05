@@ -440,7 +440,13 @@
 // its own date, link and page number on it.
 // print.js, po.js, production.js, return.js, core.js and styles.css are
 // precached, so without the bump an installed client keeps the old behaviour.
-const CACHE_NAME = 'erp-shell-v87';
+// v88: a Warehouse Pool ledger's manual lines -- opening stock, corrections,
+// recounts -- carry a delete button, and every delete (here or in the Add
+// Opening Stock window) first says what the bucket will read afterwards,
+// instead of claiming it falls by the entry's quantity, which a recount
+// does not do. stock.js is precached, so without the bump an installed
+// client keeps a ledger with no delete column.
+const CACHE_NAME = 'erp-shell-v88';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
