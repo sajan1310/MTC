@@ -1634,41 +1634,38 @@ def _build_warehouse_pool_buckets(
                             at=draw_at,
                         )
 
-                if remaining > 0:
-                    # Where no bucket was eligible, the draw predates every
-                    # recount that could have paid it -- those parts were
-                    # already gone when somebody counted the shelf, so the
-                    # count has absorbed them and there is nothing left to
-                    # charge. Booking a shortfall here would re-apply the
-                    # very consumption the freeze just excluded, which is
-                    # the double-charge this whole change exists to stop.
-                    # `colored`, not a fresh pass over buckets.values(): the
-                    # same sorted candidates the drain just spent, so which
-                    # bucket wears a shortfall is decided by the data rather
-                    # than by which lot was read first. Re-scanning the dict
-                    # here put the negative on an arbitrary colour -- and a
-                    # negative is a signal somebody acts on, so where it
-                    # lands is exactly the part that has to be reproducible.
-                    shortfall_bucket = (
-                        blank_bucket
-                        if blank_eligible
-                        else next((b for b in colored if not frozen(b, draw_at)), None)
+                # What nothing could pay belongs to the ITEM -- which colour
+                # ran short is exactly what is not known -- so it is the
+                # colourless bucket's to show, and only that bucket's. It
+                # stays a negative rather than being absorbed, because that
+                # negative is the signal.
+                #
+                # Once the colourless bucket has been counted after the draw,
+                # that count has settled it: somebody looked at the row
+                # carrying the shortfall and said what is there. Booking it
+                # anywhere else would re-apply the very consumption the
+                # freeze just excluded.
+                #
+                # It used to be booked anyway, on the first colour in
+                # `colored` order with no count after the draw -- and a
+                # colour first made AFTER the draw never has one. Reported
+                # 2026-10-06: LOT-PKG011-0002, dated 21/07, read -30 on
+                # "Blue-Sky Blue / BCP" and then -35 on "Orange-White / BCP",
+                # rows whose first frames were made on 06/10 and whose own
+                # stock was never short. Each count entered to clear it
+                # handed it to the next uncounted colour, and every colour
+                # made later was next in line.
+                if remaining > 0 and blank_eligible:
+                    blank_bucket["consumedQty"] += remaining
+                    record(
+                        blank_bucket,
+                        draw_date,
+                        "Colour-agnostic Consumption",
+                        draw_ref,
+                        _COMMON_DRAIN_SHORTFALL_NOTE,
+                        -remaining,
+                        at=draw_at,
                     )
-                    if shortfall_bucket is not None:
-                        # A genuine shortfall: consumed beyond anything this
-                        # item was ever credited. It stays as a negative
-                        # rather than being absorbed, because that negative
-                        # is the signal.
-                        shortfall_bucket["consumedQty"] += remaining
-                        record(
-                            shortfall_bucket,
-                            draw_date,
-                            "Colour-agnostic Consumption",
-                            draw_ref,
-                            _COMMON_DRAIN_SHORTFALL_NOTE,
-                            -remaining,
-                            at=draw_at,
-                        )
 
     if (headers_table := config_maps.TABLE_NAMES.get("DISPATCH_HEADERS")) and (
         lines_table := config_maps.TABLE_NAMES.get("DISPATCH_LINES")

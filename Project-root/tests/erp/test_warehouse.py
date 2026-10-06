@@ -2039,3 +2039,155 @@ def test_colour_agnostic_consumption_cannot_reach_a_later_recount(erp_client):
     # The draw did not vanish -- it moved to where it belongs. All 15 came
     # from stock the pool never recorded, and that stays visible.
     assert after[""]["availableQty"] == -15
+
+
+# --- What nothing could pay belongs to the item, not to a colour -------------
+#
+# Reported 2026-10-06 on "Fitted Frame 16 inch Crysta S/Rim": LOT-PKG011-0002,
+# a colour-agnostic draw dated 21/07, read -30 on "Blue-Sky Blue / BCP" and,
+# once that row was counted, -35 on "Orange-White / BCP" -- both first made
+# on 06/10. Every count passed it to the next colour with no count after the
+# draw, and a colour made later never has one.
+
+
+def _colour_agnostic_consumer(client, frame_name):
+    _, pack_id = _save_process(
+        client,
+        components=[
+            {
+                "itemName": frame_name,
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            }
+        ],
+    )
+    return pack_id
+
+
+def _colour_agnostic_lot(client, pack_id, frame_name, qty, when=None):
+    payload = {
+        "processId": pack_id,
+        "assignedTo": "Worker A",
+        "status": "Completed",
+        "qty": qty,
+        # The lot's own output colour, which it needs once the frame has
+        # colour buckets; the draw on the frame stays colour-agnostic.
+        "colorBreakdown": [{"color": "Blue-White / BCP", "qty": qty}],
+        "componentsConsumed": [
+            {"itemName": frame_name, "qty": qty, "sourceType": "POOL"}
+        ],
+    }
+    if when is not None:
+        payload["date"] = when.isoformat()
+    body = _rpc(client, "saveProduction", [payload], mutation=True).get_json()
+    assert body["success"] is True, body["message"]
+
+
+def _open_colour(client, proc_id, color, qty, when=None):
+    row = {"processId": proc_id, "qty": qty, "color": color}
+    if when is not None:
+        row["date"] = when.isoformat()
+    body = _rpc(client, "saveWarehousePoolOpening", [row], mutation=True).get_json()
+    assert body["success"] is True, body["message"]
+
+
+def _count_colour(client, name, proc_id, color, qty):
+    body = _rpc(
+        client,
+        "adjustWarehousePoolManually",
+        [name, proc_id, "", color, qty, "physical recount"],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+
+def _available_by_color(client, name) -> dict:
+    return {c: b["availableQty"] for c, b in _pool_by_color(client, name).items()}
+
+
+def test_a_settled_shortfall_never_lands_on_a_colour_made_later(erp_client):
+    """The shape of the 2026-10-06 report. A July draw of 60 against 20 on
+    the shelf leaves 40 that nothing could pay, on the colourless bucket.
+    That bucket is counted, so the count has settled the 40.
+
+    It used to go to the first colour with no count after the draw instead.
+    Once the July row was counted too, only colours made later qualified --
+    each took the WHOLE July draw (10 - 60 = -50), and counting it handed
+    the draw to the next.
+    """
+    frame_payload, frame_id = _save_process(erp_client)
+    frame = frame_payload["outputItemName"]
+    july = date.today() - timedelta(days=77)
+    _open_colour(erp_client, frame_id, "Blue-White / BCP", 20, july)
+    pack_id = _colour_agnostic_consumer(erp_client, frame)
+    _colour_agnostic_lot(erp_client, pack_id, frame, 60, july)
+    assert _available_by_color(erp_client, frame)[""] == -40
+
+    _count_colour(erp_client, frame, frame_id, "", 0)
+    _count_colour(erp_client, frame, frame_id, "Blue-White / BCP", 2)
+
+    _open_colour(erp_client, frame_id, "Blue-Sky Blue / BCP", 10)
+    _open_colour(erp_client, frame_id, "Orange-White / BCP", 5)
+    pool = _available_by_color(erp_client, frame)
+    assert pool["Blue-Sky Blue / BCP"] == 10
+    assert pool["Orange-White / BCP"] == 5
+
+    # Counting one of them moves nothing anywhere else, and neither does the
+    # next colour made.
+    _count_colour(erp_client, frame, frame_id, "Blue-Sky Blue / BCP", 9)
+    _open_colour(erp_client, frame_id, "Pink-White / BCP", 10)
+
+    assert _available_by_color(erp_client, frame) == {
+        "": 0,
+        "Blue-White / BCP": 2,
+        "Blue-Sky Blue / BCP": 9,
+        "Orange-White / BCP": 5,
+        "Pink-White / BCP": 10,
+    }
+
+
+def test_a_count_of_the_colourless_bucket_settles_the_shortfall_for_every_colour(
+    erp_client,
+):
+    """Which colour ran short is not known -- that is why the remainder sits
+    on the colourless bucket -- so a count of that bucket is what settles
+    it. It must not then fall to a colour nobody counted: that colour paid
+    what it had and its own book stands.
+
+    Settled is not lost: the colourless bucket's ledger still shows the
+    shortfall, behind the count that absorbed it.
+    """
+    frame_payload, frame_id = _save_process(erp_client)
+    frame = frame_payload["outputItemName"]
+    july = date.today() - timedelta(days=77)
+    _open_colour(erp_client, frame_id, "Blue-White / BCP", 10, july)
+    pack_id = _colour_agnostic_consumer(erp_client, frame)
+    _colour_agnostic_lot(erp_client, pack_id, frame, 40, july)
+    assert _available_by_color(erp_client, frame) == {"": -30, "Blue-White / BCP": 0}
+
+    _count_colour(erp_client, frame, frame_id, "", 0)
+
+    assert _available_by_color(erp_client, frame) == {"": 0, "Blue-White / BCP": 0}
+
+    body = _rpc(erp_client, "getWarehousePoolLedger", [frame, "", ""]).get_json()
+    assert body["success"] is True, body["message"]
+    absorbed = [(r["type"], r["outQty"]) for r in body["data"] if r["superseded"]]
+    assert absorbed == [("Colour-agnostic Consumption", 30)]
+
+
+def test_a_shortfall_after_the_colourless_count_still_shows_there(erp_client):
+    """A count settles what came before it, and only that. A colour-agnostic
+    draw made after it that nothing can pay is a new shortfall, and still
+    the colourless bucket's negative to show."""
+    frame_payload, frame_id = _save_process(erp_client)
+    frame = frame_payload["outputItemName"]
+    july = date.today() - timedelta(days=77)
+    _open_colour(erp_client, frame_id, "Blue-White / BCP", 10, july)
+    pack_id = _colour_agnostic_consumer(erp_client, frame)
+    _colour_agnostic_lot(erp_client, pack_id, frame, 40, july)
+    _count_colour(erp_client, frame, frame_id, "", 0)
+
+    _colour_agnostic_lot(erp_client, pack_id, frame, 15)
+
+    assert _available_by_color(erp_client, frame) == {"": -15, "Blue-White / BCP": 0}
