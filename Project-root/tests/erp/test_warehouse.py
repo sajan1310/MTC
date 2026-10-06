@@ -2191,3 +2191,177 @@ def test_a_shortfall_after_the_colourless_count_still_shows_there(erp_client):
     _colour_agnostic_lot(erp_client, pack_id, frame, 15)
 
     assert _available_by_color(erp_client, frame) == {"": -15, "Blue-White / BCP": 0}
+
+
+# --- A dispatch nothing could pay stays with the colours it could have left --
+#
+# The same report, on the Dispatch side: a dispatch carries no colour, so what
+# no colour could pay went to the first colour with no count after it -- and
+# a colour first made after the dispatch never has one.
+
+
+def _finished_product(erp_app, lots, dispatches):
+    """A final-stage product written straight to the tables, as
+    _dispatch_split_for_arrival_order does. `lots` is [(colour, qty, day)]
+    and `dispatches` [(qty, day)]. Returns (output name, process id, tag)."""
+    import psycopg2.extras
+
+    proc = f"P{uuid.uuid4().hex[:8]}"
+    out = _unique_name("Out")
+    tag = _unique_name("Tag")
+    with (
+        erp_app.app_context(),
+        database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+            _conn,
+            cur,
+        ),
+    ):
+        cur.execute(
+            "INSERT INTO erp.process_master (process_id, process_name, lot_prefix, "
+            "output_item_name, sequence, is_final_stage, active) "
+            "VALUES (%s, %s, %s, %s, 1, TRUE, TRUE) RETURNING id",
+            (proc, proc, proc[:6].upper(), out),
+        )
+        pm_id = cur.fetchone()["id"]
+        for i, (color, qty, day) in enumerate(lots):
+            cur.execute(
+                "INSERT INTO erp.production (production_date, product_id, qty, "
+                "assigned_to, status, process_id, process_master_id, lot_number, "
+                "output_item_name, color_breakdown, created_at) "
+                "VALUES (%s, %s, %s, 'W', 'Completed', %s, %s, %s, %s, %s, %s)",
+                (
+                    day,
+                    tag,
+                    qty,
+                    proc,
+                    pm_id,
+                    f"{proc}-L{i}",
+                    out,
+                    psycopg2.extras.Json([{"color": color, "qty": qty}]),
+                    day,
+                ),
+            )
+        for i, (qty, day) in enumerate(dispatches):
+            cur.execute(
+                "INSERT INTO erp.dispatch_headers (dispatch_number, dispatch_date, "
+                "created_at) VALUES (%s, %s, %s) RETURNING id",
+                (f"D-{proc}-{i}", day, day),
+            )
+            cur.execute(
+                "INSERT INTO erp.dispatch_lines (header_id, product_id, product_name, "
+                "qty) VALUES (%s, %s, %s, %s)",
+                (cur.fetchone()["id"], tag, out, qty),
+            )
+        warehouse_service._recalculate_warehouse_pool(cur)
+    return out, proc, tag
+
+
+def _add_finished_lot_now(erp_app, out, proc, tag, color, qty):
+    """A lot of this product booked now -- after any count already taken."""
+    import psycopg2.extras
+
+    with (
+        erp_app.app_context(),
+        database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+            _conn,
+            cur,
+        ),
+    ):
+        cur.execute(
+            "INSERT INTO erp.production (production_date, product_id, qty, "
+            "assigned_to, status, process_id, lot_number, output_item_name, "
+            "color_breakdown, created_at) "
+            "VALUES (%s, %s, %s, 'W', 'Completed', %s, %s, %s, %s, NOW())",
+            (
+                date.today(),
+                tag,
+                qty,
+                proc,
+                f"{proc}-{color}",
+                out,
+                psycopg2.extras.Json([{"color": color, "qty": qty}]),
+            ),
+        )
+        warehouse_service._recalculate_warehouse_pool(cur)
+
+
+def _finished_available(client, out, tag) -> dict:
+    data = _rpc(client, "getWarehousePoolData").get_json()["data"]
+    return {
+        b["color"]: b["availableQty"]
+        for b in data
+        if b["outputItemName"] == out and b["productTag"] == tag
+    }
+
+
+def _count_finished(client, out, proc, tag, color, qty):
+    body = _rpc(
+        client,
+        "adjustWarehousePoolManually",
+        [out, proc, tag, color, qty, "physical recount"],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+
+def test_an_old_dispatch_never_lands_on_a_colour_made_after_it(erp_app, erp_client):
+    """Blue and Red were made in July, and a July dispatch took more than both
+    held. Both have been counted since, so those counts already show the
+    dispatch and there is nothing left to charge. A colour first made in
+    October could not have been in it -- and used to take the whole dispatch
+    (10 - 30 = -20) the moment it existed.
+    """
+    july = date.today() - timedelta(days=77)
+    out, proc, tag = _finished_product(
+        erp_app,
+        lots=[("Blue", 10, july), ("Red", 10, july)],
+        dispatches=[(30, july + timedelta(days=1))],
+    )
+    assert _finished_available(erp_client, out, tag) == {"Blue": -10, "Red": 0}
+
+    _count_finished(erp_client, out, proc, tag, "Blue", 0)
+    _count_finished(erp_client, out, proc, tag, "Red", 0)
+    _add_finished_lot_now(erp_app, out, proc, tag, "Green", 10)
+
+    assert _finished_available(erp_client, out, tag) == {
+        "Blue": 0,
+        "Green": 10,
+        "Red": 0,
+    }
+
+
+def test_a_dispatch_shortfall_stays_on_a_colour_it_could_have_come_from(
+    erp_app, erp_client
+):
+    """Uncounted, the shortfall still shows -- on a colour that existed when
+    the goods left. A colour made later that happens to sort first must not
+    take it from there. The product's total is the same either way, so Ready
+    to Dispatch does not move."""
+    july = date.today() - timedelta(days=77)
+    out, proc, tag = _finished_product(
+        erp_app,
+        lots=[("Blue", 10, july), ("Red", 10, july)],
+        dispatches=[(30, july + timedelta(days=1))],
+    )
+    _add_finished_lot_now(erp_app, out, proc, tag, "Aqua", 10)
+
+    pool = _finished_available(erp_client, out, tag)
+    assert pool == {"Aqua": 10, "Blue": -10, "Red": 0}
+    assert sum(pool.values()) == 0
+
+
+def test_a_dispatch_dated_before_any_stock_still_counts_against_the_product(
+    erp_app, erp_client
+):
+    """Nothing of the product was on record on the dispatch's date: a date is
+    wrong somewhere, and somebody has to see it. Until then the dispatch
+    still comes off the product -- dropping it would let Ready to Dispatch
+    offer the same goods twice."""
+    july = date.today() - timedelta(days=77)
+    out, _proc, tag = _finished_product(
+        erp_app,
+        lots=[("Blue", 30, july + timedelta(days=5))],
+        dispatches=[(20, july)],
+    )
+
+    assert _finished_available(erp_client, out, tag) == {"Blue": 10}
