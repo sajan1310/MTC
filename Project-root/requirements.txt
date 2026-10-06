@@ -17,14 +17,17 @@
 #     venv2\Scripts\python -m pip install -r requirements.txt
 
 # ── Core framework ───────────────────────────────────────────────────
-Flask==3.0.0
-# 3.0.6, not 3.0.1: PYSEC-2026-3417, a multipart/form-data parse that can
-# bypass Request.max_form_memory_size and exhaust memory. Patch-level bump
-# inside 3.0.x, so Flask 3.0.0's `Werkzeug>=3.0.0` is satisfied unchanged.
-# The four other werkzeug advisories are safe_join on WINDOWS only; this
-# deploys on Linux. The debugger-PIN one needs debug mode, which production
-# refuses to start with.
-Werkzeug==3.0.6                 # also provides the password hashing (auth/routes.py)
+# Upgraded together: Flask 3.1 requires Werkzeug 3.1. Werkzeug 3.1.9 closes
+# CVE-2026-102598 and the three safe_join advisories that were triaged as
+# Windows-only until now (PYSEC-2026-2044/2046/2320); Flask 3.1.3 closes
+# PYSEC-2026-2151 (Vary: Cookie).
+#
+# Flask 3.1 caps the non-file fields of a FORM body at 500 kB
+# (MAX_FORM_MEMORY_SIZE). Nothing here posts one that large: the RPC and the
+# PDF endpoints take JSON, which only MAX_CONTENT_LENGTH (16 MB) limits, and
+# the pages turn their forms into JSON before sending them.
+Flask==3.1.3
+Werkzeug==3.1.9                 # also provides the password hashing (auth/routes.py)
 
 # ── Database ─────────────────────────────────────────────────────────
 # psycopg2 only. `psycopg[binary]` (v3) was pinned here for a migration that
