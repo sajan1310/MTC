@@ -204,17 +204,6 @@ jobs:
           # Delete an entry the moment a bump makes it moot -- a stale ignore
           # is how a real finding gets waved through later.
           TRIAGED=(
-            # werkzeug safe_join: Windows device names and UNC paths. This
-            # deploys on Ubuntu, where that code path cannot be reached.
-            # The fixes live in werkzeug 3.1.x, which requires Flask 3.1.
-            --ignore-vuln PYSEC-2026-2044
-            --ignore-vuln PYSEC-2026-2046
-            --ignore-vuln PYSEC-2026-2320
-
-            # flask Vary: Cookie. Needs a caching proxy that caches responses
-            # carrying cookies. The nginx in front of this does not cache.
-            --ignore-vuln PYSEC-2026-2151
-
             # requests extract_zipped_paths(). Never called: requests is used
             # only for the OAuth token/userinfo exchange.
             --ignore-vuln PYSEC-2026-2275
