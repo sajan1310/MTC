@@ -666,6 +666,16 @@ def _build_warehouse_pool_buckets(
         moment = _naive_local(moment)
         return moment is not None and moment <= anchor_at
 
+    def note_credit(bucket: dict, when) -> None:
+        """Remember when this bucket first received anything. Called BEFORE
+        the freeze test, so a credit a count absorbed still says the bucket
+        existed then; an undated credit counts as having always been there,
+        the way `credits` already files it at datetime.min."""
+        moment = _naive_local(when) if when is not None else datetime.min
+        first = bucket["firstCreditAt"]
+        if first is None or moment < first:
+            bucket["firstCreditAt"] = moment
+
     def record(
         bucket: dict,
         date,
@@ -761,6 +771,12 @@ def _build_warehouse_pool_buckets(
                 "anchorAt": anchors.get(key, (None, None, None))[0],
                 "anchorId": anchors.get(key, (None, None, None))[2],
                 "anchorApplied": False,
+                # The earliest moment any credit reached this bucket,
+                # INCLUDING credits a count has since absorbed -- `credits`
+                # loses those, and it is exactly the old ones that answer
+                # "did this bucket exist when that dispatch left?". See
+                # note_credit and the Pass 3 shortfall.
+                "firstCreditAt": None,
             }
             buckets[key] = bucket
         return bucket
@@ -823,6 +839,7 @@ def _build_warehouse_pool_buckets(
                     bucket["productTag"].strip().lower(),
                     bucket["color"].strip().lower(),
                 )
+            note_credit(bucket, r["at"])
             # adjustWarehousePoolManually records a correction as a delta row
             # here AND as an audit row in erp.warehouse_pool_adjustments. Only
             # this one is arithmetic, so only this one becomes a ledger line;
@@ -999,6 +1016,7 @@ def _build_warehouse_pool_buckets(
                         bucket["sawCountingCredit"] = True
                     else:
                         bucket["sawSubGroupCredit"] = True
+                    note_credit(bucket, lot_at)
                     if frozen(bucket, lot_at):
                         # Already on the shelf when this bucket was counted.
                         return
@@ -1222,6 +1240,7 @@ def _build_warehouse_pool_buckets(
             else:
                 qty = float(row["qty"] or 0)
                 bucket = get_bucket(output_item_name, process_id, product_tag, "")
+                note_credit(bucket, lot_at)
                 if not frozen(bucket, lot_at):
                     bucket["producedQty"] += qty
                     bucket["credits"].append((lot_at or datetime.min, qty))
@@ -1809,13 +1828,42 @@ def _build_warehouse_pool_buckets(
                     )
 
                 if remaining > 0:
-                    # Only a bucket this dispatch could still legitimately
-                    # be charged to. If every one of them was recounted
-                    # after the goods left, the count already reflects the
-                    # departure and charging it again takes the same units
-                    # off twice.
+                    # Only a colour that existed when the goods left can have
+                    # been in them, so only one of those -- with no count
+                    # since -- may carry what nothing could pay. If every
+                    # colour that existed then has been counted since, those
+                    # counts already reflect the departure, and charging it
+                    # again takes the same units off twice.
+                    #
+                    # It used to go to the first colour with no count after
+                    # the dispatch, and a colour first made AFTER it never
+                    # has one: Blue and Red made in July and since counted,
+                    # and a July dispatch landed on the first Green lot of
+                    # October. The colour-agnostic settlement above did the
+                    # same with frames (reported 2026-10-06).
+                    #
+                    # Where none of the product was on record yet that day, a
+                    # date is wrong somewhere and no count can have absorbed
+                    # the dispatch. It stays on the first uncounted colour,
+                    # as before: dropping it would let Ready to Dispatch
+                    # offer the same goods twice.
+                    cutoff = (
+                        datetime.combine(draw_date, time.max)
+                        if draw_date is not None
+                        else None
+                    )
+                    existed = [
+                        b
+                        for b in matching
+                        if cutoff is None
+                        or (
+                            b["firstCreditAt"] is not None
+                            and b["firstCreditAt"] <= cutoff
+                        )
+                    ]
                     shortfall_bucket = next(
-                        (b for b in matching if not frozen(b, draw_at)), None
+                        (b for b in (existed or matching) if not frozen(b, draw_at)),
+                        None,
                     )
                     if shortfall_bucket is not None:
                         # Dispatched beyond anything this product had. It
