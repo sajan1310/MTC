@@ -446,7 +446,12 @@
 // instead of claiming it falls by the entry's quantity, which a recount
 // does not do. stock.js is precached, so without the bump an installed
 // client keeps a ledger with no delete column.
-const CACHE_NAME = 'erp-shell-v88';
+// v89: a stock count is where an item's stock starts from. The Item Ledger
+// shows each count as what was counted against the book, mutes every row a
+// later count already holds ("inside the count"), and its stock table shows
+// the last count instead of Initial Stock. print-templates.js is precached,
+// so without the bump an installed client renders the new rows the old way.
+const CACHE_NAME = 'erp-shell-v89';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

@@ -1,7 +1,7 @@
 """Return Ledger, ported from Apps_Script/module_return.js.
 
 Mirrors module_bill.js but in reverse: QTY/BASE_QTY here are debited from
-Stock instead of credited (see stock_service._get_billed_and_consumed_qty_maps's
+Stock instead of credited (see stock_service._get_stock_terms's
 RETURN term). Return's identity is `return_number` alone (globally unique)
 -- unlike Bill's (vendor, billNumber) composite.
 

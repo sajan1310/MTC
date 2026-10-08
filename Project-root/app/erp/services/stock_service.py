@@ -1,13 +1,19 @@
 """Stock, ported from Apps_Script/module_stock.js.
 
-Current Stock is computed live (never stored) via
-_get_billed_and_consumed_qty_maps. All five terms (Bill, Return, Wastage,
-Issue, Production) are real as of Phase 3g -- the last one, Production's
-ITEM-sourced components_consumed qty on Completed lots, was the final gap
-this function's own docstring called out since Phase 1c. See that phase's
-plan for why this isn't a SQL view (this formula needed 5 undesigned
-future schemas, not one predictable column name) -- each term was filled
-in only once its source table's real schema existed.
+Current Stock is computed live (never stored) via _get_stock_terms. All
+five terms (Bill, Return, Wastage, Issue, Production) are real as of Phase
+3g -- the last one, Production's ITEM-sourced components_consumed qty on
+Completed lots, was the final gap this function's own docstring called out
+since Phase 1c. See that phase's plan for why this isn't a SQL view (this
+formula needed 5 undesigned future schemas, not one predictable column
+name) -- each term was filled in only once its source table's real schema
+existed.
+
+A stock count is where an item's Current Stock starts from (migration 049).
+The newest ADJUST or RESET row in erp.stock_adjustments is the item's
+anchor: Current Stock = what was counted + only the movements that take
+effect after the count. An item nobody has counted starts from
+erp.stock.initial_stock, as it always did. See _get_stock_terms.
 
 getStockAdjustmentHistory reads a real erp.stock_adjustments table instead
 of the source's regex-parsed Logs-sheet workaround -- the feature (queryable
@@ -23,6 +29,7 @@ rename path).
 
 from __future__ import annotations
 
+from typing import NamedTuple
 
 import psycopg2.extras
 
@@ -37,12 +44,87 @@ from ..envelope import build_response
 from ..registry import rpc_method
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# When a movement takes effect, judged against an item's latest count
+# ─────────────────────────────────────────────────────────────────────────
+#
+# A count is a statement about a shelf at a moment (erp.stock_adjustments.
+# created_at). Everything that took effect at or before that moment is
+# already inside the counted figure and must never move the item again,
+# however late it is entered, completed or edited. So every movement needs a
+# moment too, and these expressions are the only place one is worked out --
+# the Stock formula and the Item Ledger both read them.
+#
+# Lots, returns, wastage and issues are physical events, dated to the day
+# they happened, and take the Warehouse Pool's rule (warehouse_service.
+# _effective_at): a row entered on its own date knows its time of day;
+# anything else -- backdated, or written before created_at existed, which
+# migrations 045/046 backfilled to midnight -- takes the start of its date.
+# A count taken during a day therefore absorbs what that day had already
+# done. Measured since the activity log began: 113 of the 124 lots dated on
+# a count day were entered before the count.
+#
+# Bills are not physical events. A bill's date is the supplier's invoice
+# date, not when the goods reached the shelf, and the bill form already
+# asks the operator about exactly that case -- checkStockAdjustmentConflicts
+# offers "Ledger only" when a count may already hold those goods. So a bill
+# takes effect when it was ENTERED, the moment the operator vouched for it.
+# A bill written before migration 046 has no entry time (created_at was
+# backfilled to midnight of its date) and takes the END of that day instead:
+# all 14 bills dated on a count day since the activity log began were
+# entered after the count, none before.
+#
+# Evaluated in the session's TimeZone, which database.init_app pins to
+# DB_TIMEZONE on every connection -- the frame migration 046's backfill was
+# written in, so the midnight test below means what it says.
+
+
+def _doc_moment_sql(day: str, created: str) -> str:
+    return (
+        f"(CASE WHEN {created} IS NOT NULL AND {created}::date = {day} "
+        f"THEN {created} ELSE {day}::timestamptz END)"
+    )
+
+
+_BILL_MOMENT_SQL = (
+    "(CASE WHEN h.created_at IS NULL OR h.created_at = h.bill_date::timestamptz "
+    "THEN (h.bill_date + 1)::timestamptz - interval '1 microsecond' "
+    "ELSE h.created_at END)"
+)
+_LOT_MOMENT_SQL = _doc_moment_sql("p.production_date", "p.created_at")
+
+# Each item's newest count: the figure its Current Stock starts from, and the
+# moment that decides which movements it already holds. ADJUST is a count
+# typed on the Stock page, RESET a re-import of the whole figure. A MERGE row
+# is never an anchor -- nobody counted anything -- see items_service.
+# _merge_stock_and_delete. Ties on created_at go to the higher id, the row
+# entered last.
+#
+# MATERIALIZED is load-bearing. Postgres cannot estimate how many lots
+# survive the JSONB filters in _PRODUCTION_CONSUMED_SQL (it guesses one), so
+# left to inline this CTE it re-sorted erp.stock_adjustments once per lot:
+# 7.4 s for the production term on the 2026-10-07 snapshot instead of ~0.1 s.
+# Computed once, it is a few hundred rows hashed for every join.
+_ANCHOR_CTE = """
+    anchor AS MATERIALIZED (
+        SELECT DISTINCT ON (lower(btrim(item_name)), lower(btrim(COALESCE(size, ''))))
+               lower(btrim(item_name))          AS name_k,
+               lower(btrim(COALESCE(size, ''))) AS size_k,
+               id, created_at AS at, new_value
+          FROM erp.stock_adjustments
+         WHERE action IN ('ADJUST', 'RESET')
+         ORDER BY lower(btrim(item_name)), lower(btrim(COALESCE(size, ''))),
+                  created_at DESC, id DESC
+    )
+"""
+
+
 def _iter_completed_production_components(cur):
     """Yields one normalized dict per ITEM-sourced component line on a
     Completed production lot -- the SINGLE definition of "production
     consumption" in this codebase.
 
-    Both the Current Stock formula (_get_billed_and_consumed_qty_maps's
+    Both the Current Stock formula (_get_stock_terms's
     PRODUCTION term) and the Item Ledger (get_item_ledger_data) read this
     generator rather than each re-deriving "what did production eat". The
     Item Ledger previously reconstructed an ESTIMATE client-side from the
@@ -74,9 +156,11 @@ def _iter_completed_production_components(cur):
 
     cur.execute(
         f"""
-        SELECT lot_number, production_date, process_id, product_name, output_item_name, components_consumed
-        FROM {table}
-        WHERE deleted_at IS NULL AND lower(status) = 'completed'
+        SELECT p.lot_number, p.production_date, p.process_id, p.product_name,
+               p.output_item_name, p.components_consumed,
+               {_LOT_MOMENT_SQL} AS stock_at
+        FROM {table} p
+        WHERE p.deleted_at IS NULL AND lower(p.status) = 'completed'
         """
     )
     for row in cur.fetchall():
@@ -115,6 +199,9 @@ def _iter_completed_production_components(cur):
                 "unit": unit,
                 "lotNumber": str(row["lot_number"] or "").strip(),
                 "productionDate": row["production_date"],
+                # When this consumption takes effect against a count -- the
+                # same _LOT_MOMENT_SQL the Stock formula filters on.
+                "stockAt": row["stock_at"],
                 "processId": str(row["process_id"] or "").strip(),
                 "productName": str(row["product_name"] or "").strip(),
                 "outputItemName": str(row["output_item_name"] or "").strip(),
@@ -146,34 +233,68 @@ def _iter_completed_production_components(cur):
 # migration 048) is excluded: it names a pool bucket, not an Items Master
 # item, and debits the pool instead -- the same split production's POOL
 # components already have.
-_MOVEMENT_SQL = """
-    SELECT lower(btrim(item_name))                  AS name_k,
-           lower(btrim(COALESCE(size, '')))         AS size_k,
-           SUM(delta)                               AS net
-    FROM (
-        SELECT l.item_name, l.size,  l.base_qty AS delta
+#
+# A fifth branch carries merges (migration 049): a MERGE row in
+# erp.stock_adjustments moves the kept item by new_value - old_value at the
+# moment of the merge, exactly like a dated movement. And every branch now
+# says when its row takes effect, so the outer query can drop whatever an
+# item's newest count already holds -- see the moment expressions at the top
+# of this module.
+#
+# `{line_keys}` / `{adj_keys}` are empty for the whole-table read and an IN
+# filter for a page of items -- see _MOVEMENT_SQL_FOR_ITEMS below.
+_MOVEMENT_ROWS_SQL = f"""
+        SELECT lower(btrim(l.item_name))          AS name_k,
+               lower(btrim(COALESCE(l.size, ''))) AS size_k,
+               l.base_qty                         AS delta,
+               {_BILL_MOMENT_SQL}                 AS at
           FROM erp.bill_lines l
           JOIN erp.bill_headers h ON h.id = l.header_id
-         WHERE h.deleted_at IS NULL AND l.affects_stock = TRUE
+         WHERE h.deleted_at IS NULL AND l.affects_stock = TRUE{{line_keys}}
         UNION ALL
-        SELECT l.item_name, l.size, -l.base_qty
+        SELECT lower(btrim(l.item_name)), lower(btrim(COALESCE(l.size, ''))),
+               -l.base_qty, {_doc_moment_sql("h.return_date", "h.created_at")}
           FROM erp.return_lines l
           JOIN erp.return_headers h ON h.id = l.header_id
-         WHERE h.deleted_at IS NULL
+         WHERE h.deleted_at IS NULL{{line_keys}}
         UNION ALL
-        SELECT l.item_name, l.size, -l.base_qty
+        SELECT lower(btrim(l.item_name)), lower(btrim(COALESCE(l.size, ''))),
+               -l.base_qty, {_doc_moment_sql("h.wastage_date", "h.created_at")}
           FROM erp.wastage_lines l
           JOIN erp.wastage_headers h ON h.id = l.header_id
-         WHERE h.deleted_at IS NULL AND l.source_type <> 'POOL'
+         WHERE h.deleted_at IS NULL AND l.source_type <> 'POOL'{{line_keys}}
         UNION ALL
-        SELECT l.item_name, l.size, -l.base_qty
+        SELECT lower(btrim(l.item_name)), lower(btrim(COALESCE(l.size, ''))),
+               -l.base_qty, {_doc_moment_sql("h.issue_date", "h.created_at")}
           FROM erp.issue_lines l
           JOIN erp.issue_headers h ON h.id = l.header_id
-         WHERE h.deleted_at IS NULL
-    ) movements
-    WHERE btrim(COALESCE(item_name, '')) <> ''
-    GROUP BY 1, 2
+         WHERE h.deleted_at IS NULL{{line_keys}}
+        UNION ALL
+        SELECT lower(btrim(item_name)), lower(btrim(COALESCE(size, ''))),
+               new_value - old_value, created_at
+          FROM erp.stock_adjustments
+         WHERE action = 'MERGE'{{adj_keys}}
 """
+
+# A movement counts toward Current Stock when its item has never been
+# counted, or when it takes effect AFTER the newest count. At-or-before is
+# already inside the counted figure -- the same `<=` warehouse_service's
+# frozen() applies to a recounted bucket. A row with no moment at all is
+# treated as having always been there.
+_MOVEMENT_SQL_TEMPLATE = """
+    WITH {anchor_cte}
+    SELECT m.name_k, m.size_k, SUM(m.delta) AS net
+      FROM ({rows}) m
+      LEFT JOIN anchor a ON a.name_k = m.name_k AND a.size_k = m.size_k
+     WHERE m.name_k <> ''
+       AND (a.at IS NULL OR m.at > a.at)
+     GROUP BY 1, 2
+"""
+
+_MOVEMENT_SQL = _MOVEMENT_SQL_TEMPLATE.format(
+    anchor_cte=_ANCHOR_CTE,
+    rows=_MOVEMENT_ROWS_SQL.format(line_keys="", adj_keys=""),
+)
 
 # Production's ITEM-sourced consumption, expanded and pre-aggregated in SQL.
 #
@@ -194,24 +315,50 @@ _MOVEMENT_SQL = """
 # (`q * factor / divisor`, no rounding, no clamping), so
 # convert(sum(q)) == sum(convert(q)) for a fixed unit. Verified by test against
 # the row-by-row implementation, which is retained for the Item Ledger.
-_PRODUCTION_CONSUMED_SQL = """
-    SELECT lower(btrim(comp ->> 'itemName'))                    AS name_k,
-           lower(btrim(COALESCE(comp ->> 'size', '')))          AS size_k,
-           btrim(COALESCE(comp ->> 'unit', ''))                 AS unit,
-           SUM(COALESCE(NULLIF(comp ->> 'qty', '')::numeric, 0)) AS qty
-    FROM {table} p
-    CROSS JOIN LATERAL jsonb_array_elements(p.components_consumed) AS comp
-    WHERE p.deleted_at IS NULL
-      AND lower(p.status) = 'completed'
-      -- jsonb_array_elements ERRORS on a non-array. The Python it replaces
-      -- iterated whatever was there and skipped non-dict entries, so a lot
-      -- whose components_consumed is an object must be ignored, not fatal.
-      AND jsonb_typeof(p.components_consumed) = 'array'
-      AND jsonb_typeof(comp) = 'object'
-      AND upper(btrim(COALESCE(comp ->> 'sourceType', ''))) <> 'POOL'
-      AND btrim(COALESCE(comp ->> 'itemName', '')) <> ''
+#
+# A lot dated at or before an item's newest count is inside that count
+# whenever it was completed -- the defect migration 049 closes: completing a
+# lot days after a count used to take its components off a figure that had
+# already been counted without them.
+#
+# The components are expanded once, into their own MATERIALIZED CTE, and
+# only then joined to the anchors. Joined inside the lateral expansion, the
+# planner -- which estimates one surviving lot -- ran a separate hash join
+# per lot against every anchor: 0.41 s on the 2026-10-07 snapshot, twice the
+# unanchored query. One join over the whole expansion keeps it level.
+_PRODUCTION_CONSUMED_SQL = (
+    """
+    WITH """
+    + _ANCHOR_CTE
+    + """,
+    comps AS MATERIALIZED (
+        SELECT lower(btrim(comp ->> 'itemName'))                 AS name_k,
+               lower(btrim(COALESCE(comp ->> 'size', '')))       AS size_k,
+               btrim(COALESCE(comp ->> 'unit', ''))              AS unit,
+               COALESCE(NULLIF(comp ->> 'qty', '')::numeric, 0)  AS qty,
+               """
+    + _LOT_MOMENT_SQL
+    + """                                       AS at
+        FROM {table} p
+        CROSS JOIN LATERAL jsonb_array_elements(p.components_consumed) AS comp
+        WHERE p.deleted_at IS NULL
+          AND lower(p.status) = 'completed'
+          -- jsonb_array_elements ERRORS on a non-array. The Python it
+          -- replaces iterated whatever was there and skipped non-dict
+          -- entries, so a lot whose components_consumed is an object must
+          -- be ignored, not fatal.
+          AND jsonb_typeof(p.components_consumed) = 'array'
+          AND jsonb_typeof(comp) = 'object'
+          AND upper(btrim(COALESCE(comp ->> 'sourceType', ''))) <> 'POOL'
+          AND btrim(COALESCE(comp ->> 'itemName', '')) <> ''
+    )
+    SELECT c.name_k, c.size_k, c.unit, SUM(c.qty) AS qty
+    FROM comps c
+    LEFT JOIN anchor a ON a.name_k = c.name_k AND a.size_k = c.size_k
+    WHERE a.at IS NULL OR c.at > a.at
     GROUP BY 1, 2, 3
 """
+)
 
 
 # The same aggregation, restricted to a named set of items.
@@ -224,43 +371,22 @@ _PRODUCTION_CONSUMED_SQL = """
 # Restricted to a page's items, these four scans become index lookups: the
 # `lower(item_name), lower(size)` expression indexes on all four line tables
 # (migrations 008/009/011) match this predicate exactly. That is the
-# difference between O(all history) and O(rows for 50 items).
-_MOVEMENT_SQL_FOR_ITEMS = """
-    SELECT lower(btrim(item_name))                  AS name_k,
-           lower(btrim(COALESCE(size, '')))         AS size_k,
-           SUM(delta)                               AS net
-    FROM (
-        SELECT l.item_name, l.size,  l.base_qty AS delta
-          FROM erp.bill_lines l
-          JOIN erp.bill_headers h ON h.id = l.header_id
-         WHERE h.deleted_at IS NULL AND l.affects_stock = TRUE
-           AND (lower(l.item_name), lower(COALESCE(l.size, ''))) IN %(keys)s
-        UNION ALL
-        SELECT l.item_name, l.size, -l.base_qty
-          FROM erp.return_lines l
-          JOIN erp.return_headers h ON h.id = l.header_id
-         WHERE h.deleted_at IS NULL
-           AND (lower(l.item_name), lower(COALESCE(l.size, ''))) IN %(keys)s
-        UNION ALL
-        SELECT l.item_name, l.size, -l.base_qty
-          FROM erp.wastage_lines l
-          JOIN erp.wastage_headers h ON h.id = l.header_id
-         WHERE h.deleted_at IS NULL AND l.source_type <> 'POOL'
-           AND (lower(l.item_name), lower(COALESCE(l.size, ''))) IN %(keys)s
-        UNION ALL
-        SELECT l.item_name, l.size, -l.base_qty
-          FROM erp.issue_lines l
-          JOIN erp.issue_headers h ON h.id = l.header_id
-         WHERE h.deleted_at IS NULL
-           AND (lower(l.item_name), lower(COALESCE(l.size, ''))) IN %(keys)s
-    ) movements
-    WHERE btrim(COALESCE(item_name, '')) <> ''
-    GROUP BY 1, 2
-"""
+# difference between O(all history) and O(rows for 50 items). The anchor CTE
+# is not narrowed the same way: it reads erp.stock_adjustments, a table of a
+# few hundred rows that one count at a time adds to.
+_MOVEMENT_SQL_FOR_ITEMS = _MOVEMENT_SQL_TEMPLATE.format(
+    anchor_cte=_ANCHOR_CTE,
+    rows=_MOVEMENT_ROWS_SQL.format(
+        line_keys="\n           AND (lower(l.item_name), lower(COALESCE(l.size, ''))) IN %(keys)s",
+        adj_keys="\n           AND (lower(item_name), lower(COALESCE(size, ''))) IN %(keys)s",
+    ),
+)
 
 
 def _movement_map(cur, keys: list | None = None) -> dict:
-    """Net bill/return/wastage/issue movement, optionally for `keys` only.
+    """Net bill/return/wastage/issue/merge movement that took effect after
+    each item's newest count (all of it, for an item never counted),
+    optionally for `keys` only.
 
     `keys` is a list of (name_lower, size_lower) tuples.
     """
@@ -277,7 +403,9 @@ def _movement_map(cur, keys: list | None = None) -> dict:
 
 
 def _production_consumed_map(cur, keys: list | None = None) -> dict:
-    """{"name|size": base-unit qty} consumed by Completed production lots.
+    """{"name|size": base-unit qty} consumed by Completed production lots
+    that took effect after each item's newest count (all of them, for an
+    item never counted).
 
     The PRODUCTION term of the Current Stock formula. Equivalent to folding
     _iter_completed_production_components (which is retained, because the Item
@@ -337,35 +465,84 @@ def _production_consumed_map(cur, keys: list | None = None) -> dict:
     return consumed
 
 
-def _get_billed_and_consumed_qty_maps(
-    cur, keys: list | None = None
-) -> tuple[dict, dict]:
-    """Returns (bill_qty_map, consumed_qty_map), each keyed by
-    "item_name_lower|size_lower" -> net base-unit qty affecting Current Stock.
+def _anchor_map(cur, keys: list | None = None) -> dict:
+    """{"name|size": (moment, counted qty, adjustment id)} -- each counted
+    item's newest count, read from _ANCHOR_CTE so it is the very row the two
+    aggregates above filtered against. `keys` as in _movement_map."""
+    if keys is not None and not keys:
+        return {}
+    sql = f"WITH {_ANCHOR_CTE} SELECT name_k, size_k, id, at, new_value FROM anchor"
+    if keys is None:
+        cur.execute(sql)
+    else:
+        cur.execute(sql + " WHERE (name_k, size_k) IN %(keys)s", {"keys": tuple(keys)})
+    return {
+        f"{row['name_k']}|{row['size_k']}": (
+            row["at"],
+            float(row["new_value"]),
+            row["id"],
+        )
+        for row in cur.fetchall()
+    }
 
-    BILL, RETURN, WASTAGE, and ISSUE all net into bill_qty_map (Bill adds,
-    the other three subtract, same direction Return does). PRODUCTION is
-    the one term that lands in consumed_qty_map instead, kept semantically
-    separate to mirror the source's own two-map split: ITEM-sourced
-    components_consumed qty on Completed lots (POOL-sourced entries debit
-    Warehouse Pool instead -- see warehouse_service._recalculate_warehouse_pool's
-    Pass 2, not this function).
+
+class StockTerms(NamedTuple):
+    """The pieces Current Stock is made of, each keyed "name_lower|size_lower".
+
+    - anchors:  the newest count per counted item, (moment, counted, id)
+    - moved:    Bill (+), Return/Wastage/Issue (-) and Merge (+/-) movement
+                that took effect after that count
+    - consumed: Completed-lot Production consumption after that count
+
+    BILL, RETURN, WASTAGE, ISSUE and MERGE all net into `moved`; PRODUCTION
+    lands in `consumed`, kept separate to mirror the source's own two-map
+    split. ITEM-sourced components only -- POOL-sourced ones debit the
+    Warehouse Pool (warehouse_service._recalculate_warehouse_pool's Pass 2).
+    """
+
+    anchors: dict
+    moved: dict
+    consumed: dict
+
+    def current(self, key: str, initial_stock) -> float:
+        """Current Stock for one key: the newest count if the item has been
+        counted, its initial_stock if not, plus what happened since."""
+        anchor = self.anchors.get(key)
+        base = anchor[1] if anchor else float(initial_stock or 0)
+        return base + self.moved.get(key, 0.0) - self.consumed.get(key, 0.0)
+
+
+def _get_stock_terms(cur, keys: list | None = None) -> StockTerms:
+    """Everything Current Stock is computed from. Use StockTerms.current() to
+    combine it -- never `initial_stock + moved - consumed` by hand, which is
+    the formula as it stood before counts were anchors and is wrong for
+    every counted item.
+
+    Before migration 049 this returned two maps that every caller added to
+    initial_stock, and adjust_stock_manually stored a count by back-solving
+    initial_stock against the movements that existed at that instant. Any
+    movement dated before the count that reached the formula later -- a lot
+    completed after the count, a backdated issue, an edit to an old lot --
+    then moved a figure somebody had counted with their hands: 78 of 613
+    counted items no longer showed their count on the 2026-10-07 snapshot.
+    Now the count itself is the starting point and only what took effect
+    after it is added, so nothing that predates a count can move it.
     """
     # One aggregate query instead of four full-table transfers plus four
     # Python fold loops (PERF-002). See _MOVEMENT_SQL for how the predicates
     # map onto the code this replaces.
     #
-    # `keys` restricts both halves to a set of (name_lower, size_lower)
-    # tuples, which is what makes a paginated read cheap rather than merely
-    # smaller. None means "every item", the whole-table behaviour every
-    # existing caller relies on.
-    bill_qty_map = _movement_map(cur, keys)
-
-    # Guarded via TABLE_NAMES inside the helper itself -- a no-op until
-    # erp.production exists, same as before this was factored out.
-    consumed_qty_map = _production_consumed_map(cur, keys)
-
-    return bill_qty_map, consumed_qty_map
+    # `keys` restricts the movement half and the anchors to a set of
+    # (name_lower, size_lower) tuples, which is what makes a paginated read
+    # cheap rather than merely smaller. None means "every item", the
+    # whole-table behaviour every existing caller relies on.
+    return StockTerms(
+        anchors=_anchor_map(cur, keys),
+        moved=_movement_map(cur, keys),
+        # Guarded via TABLE_NAMES inside the helper itself -- a no-op until
+        # erp.production exists, same as before this was factored out.
+        consumed=_production_consumed_map(cur, keys),
+    )
 
 
 def _find_stock_row(cur, name: str, size: str):
@@ -401,16 +578,25 @@ _DEFAULT_PAGE_SIZE = 50
 _MAX_PAGE_SIZE = 500
 
 
-def _stock_record(row, bill_qty_map, consumed_qty_map) -> dict:
-    key = f"{row['item_name'].strip().lower()}|{(row['size'] or '').strip().lower()}"
+def _stock_key(name, size) -> str:
+    return f"{str(name or '').strip().lower()}|{str(size or '').strip().lower()}"
+
+
+def _stock_record(row, terms: StockTerms) -> dict:
+    key = _stock_key(row["item_name"], row["size"])
     initial = float(row["initial_stock"])
-    current = initial + bill_qty_map.get(key, 0) - consumed_qty_map.get(key, 0)
+    current = terms.current(key, initial)
+    anchor = terms.anchors.get(key)
     threshold = float(row["threshold"])
     return {
         "name": row["item_name"],
         "size": row["size"] or "",
         "initialStock": initial,
         "currentStock": current,
+        # The count Current Stock starts from, when the item has one -- see
+        # _get_stock_terms. None for an item nobody has counted.
+        "lastCountQty": anchor[1] if anchor else None,
+        "lastCountAt": anchor[0].isoformat() if anchor else None,
         "threshold": threshold,
         "isLowStock": current < threshold,
         "deadStock": bool(row["dead_stock"]),
@@ -446,7 +632,7 @@ def get_stock_data(page=None, page_size=None, search=None, sort=None, direction=
             _conn,
             cur,
         ):
-            bill_qty_map, consumed_qty_map = _get_billed_and_consumed_qty_maps(cur)
+            terms = _get_stock_terms(cur)
             cur.execute(
                 """
                 SELECT id, item_name, size, initial_stock, threshold, dead_stock
@@ -456,9 +642,7 @@ def get_stock_data(page=None, page_size=None, search=None, sort=None, direction=
                 """
             )
             rows = cur.fetchall()
-        return build_response(
-            True, [_stock_record(r, bill_qty_map, consumed_qty_map) for r in rows]
-        )
+        return build_response(True, [_stock_record(r, terms) for r in rows])
 
     # ── Paginated ─────────────────────────────────────────────────────────
     try:
@@ -501,15 +685,13 @@ def get_stock_data(page=None, page_size=None, search=None, sort=None, direction=
             # Cannot narrow: the sort key is the thing being computed. Compute
             # everything, sort, then slice -- no worse than the unpaginated
             # path, and honest about it.
-            bill_qty_map, consumed_qty_map = _get_billed_and_consumed_qty_maps(cur)
+            terms = _get_stock_terms(cur)
             cur.execute(
                 f"SELECT id, item_name, size, initial_stock, threshold, dead_stock "
                 f"FROM erp.stock WHERE {where_sql}",
                 params,
             )
-            records = [
-                _stock_record(r, bill_qty_map, consumed_qty_map) for r in cur.fetchall()
-            ]
+            records = [_stock_record(r, terms) for r in cur.fetchall()]
             records.sort(key=lambda r: r[sort_key], reverse=descending)
             window = records[(page - 1) * size : (page - 1) * size + size]
         else:
@@ -530,10 +712,8 @@ def get_stock_data(page=None, page_size=None, search=None, sort=None, direction=
                 (r["item_name"].strip().lower(), (r["size"] or "").strip().lower())
                 for r in rows
             ]
-            bill_qty_map, consumed_qty_map = _get_billed_and_consumed_qty_maps(
-                cur, keys
-            )
-            window = [_stock_record(r, bill_qty_map, consumed_qty_map) for r in rows]
+            terms = _get_stock_terms(cur, keys)
+            window = [_stock_record(r, terms) for r in rows]
 
     return build_response(
         True,
@@ -605,10 +785,9 @@ def adjust_stock_manually(conn, cur, item_name, size, new_current_stock, reason)
         raise ValueError("A reason is required for manual stock adjustments.")
 
     # DATA-002. This is a read-modify-write over a derived value:
-    # old_current_stock is initial_stock + billed - consumed, and the new
-    # initial_stock is computed backwards from it. Two operators correcting
-    # the same item at the same moment both read the same old value, both
-    # compute new_initial_stock from it, and the second write silently
+    # old_current_stock is computed from the movements, and initial_stock is
+    # moved by the difference. Two operators correcting the same item at the
+    # same moment both read the same old value and the second write silently
     # discards the first -- a lost update, with an adjustments-log entry for
     # each that makes it look as though both took effect.
     locks.lock_keys(cur, locks.STOCK, [f"{item_name}|{size or ''}"])
@@ -624,11 +803,9 @@ def adjust_stock_manually(conn, cur, item_name, size, new_current_stock, reason)
     if row is None:
         raise ValueError("Item not found in Stock database.")
 
-    bill_qty_map, consumed_qty_map = _get_billed_and_consumed_qty_maps(cur)
-    key = f"{row['item_name'].strip().lower()}|{(row['size'] or '').strip().lower()}"
-    billed = bill_qty_map.get(key, 0)
-    consumed = consumed_qty_map.get(key, 0)
-    old_current_stock = float(row["initial_stock"]) + billed - consumed
+    key = _stock_key(row["item_name"], row["size"])
+    terms = _get_stock_terms(cur, [tuple(key.split("|", 1))])
+    old_current_stock = terms.current(key, row["initial_stock"])
 
     if new_stock_val == old_current_stock:
         # buildResponse() forces data to null on failure -- bypassed here
@@ -643,7 +820,18 @@ def adjust_stock_manually(conn, cur, item_name, size, new_current_stock, reason)
             "message": "New stock value is the same as the current value -- nothing to adjust.",
         }
 
-    new_initial_stock = new_stock_val - billed + consumed
+    # The row inserted below IS the count from here on: _get_stock_terms
+    # starts this item from new_value and adds only what takes effect after
+    # created_at, so nothing dated before this moment can move it again.
+    #
+    # initial_stock still moves by exactly the difference the row records.
+    # The formula no longer reads it for a counted item, but the Item Ledger
+    # does: initial_stock less every count's (new - old) is the stock the
+    # item opened with before anybody counted it, and that is where the
+    # ledger's history starts (items_service.get_item_ledger_data).
+    new_initial_stock = float(row["initial_stock"]) + (
+        new_stock_val - old_current_stock
+    )
     user_id = get_current_user_id()
 
     cur.execute(
@@ -672,8 +860,15 @@ def import_stock_data(conn, cur, items):
     if not isinstance(items, list) or not items:
         raise ValueError("Import file is empty or invalid.")
 
-    bill_qty_map, consumed_qty_map = _get_billed_and_consumed_qty_maps(cur)
+    terms = _get_stock_terms(cur)
     user_id = get_current_user_id()
+
+    # A re-imported figure is a count like any other: the RESET row written
+    # below becomes the item's anchor (see _get_stock_terms). `terms` was
+    # read once, before any of them were written, so an item listed twice in
+    # one file must start its second line from the first line's figure, not
+    # from the stale read.
+    imported_now: dict = {}
 
     updated_count = 0
     added_count = 0
@@ -689,10 +884,7 @@ def import_stock_data(conn, cur, items):
         if not name or qty < 0:
             continue
 
-        key = f"{name.lower()}|{size.lower()}"
-        billed = bill_qty_map.get(key, 0)
-        consumed = consumed_qty_map.get(key, 0)
-        new_initial_stock = qty - billed + consumed
+        key = _stock_key(name, size)
 
         cur.execute(
             "SELECT id, initial_stock FROM erp.stock WHERE lower(item_name) = lower(%s) AND lower(size) = lower(%s) AND deleted_at IS NULL",
@@ -701,12 +893,18 @@ def import_stock_data(conn, cur, items):
         existing = cur.fetchone()
 
         if existing:
-            old_current_stock = float(existing["initial_stock"]) + billed - consumed
-            cur.execute(
-                "UPDATE erp.stock SET initial_stock = %s, updated_by = %s WHERE id = %s",
-                (new_initial_stock, user_id, existing["id"]),
+            old_current_stock = (
+                imported_now[key]
+                if key in imported_now
+                else terms.current(key, existing["initial_stock"])
             )
             if qty != old_current_stock:
+                # Same bookkeeping as adjust_stock_manually: initial_stock
+                # moves by what the RESET row records.
+                cur.execute(
+                    "UPDATE erp.stock SET initial_stock = initial_stock + %s, updated_by = %s WHERE id = %s",
+                    (qty - old_current_stock, user_id, existing["id"]),
+                )
                 cur.execute(
                     """
                     INSERT INTO erp.stock_adjustments (item_name, size, action, old_value, new_value, reason, created_by)
@@ -714,11 +912,14 @@ def import_stock_data(conn, cur, items):
                     """,
                     (name, size, old_current_stock, qty, user_id),
                 )
+                imported_now[key] = qty
             updated_count += 1
         else:
+            # A new Stock row has no count behind it: its opening is
+            # back-solved so it reads `qty` now, exactly as before.
             cur.execute(
                 "INSERT INTO erp.stock (item_name, size, initial_stock, updated_by) VALUES (%s, %s, %s, %s)",
-                (name, size, new_initial_stock, user_id),
+                (name, size, qty - terms.current(key, 0), user_id),
             )
             added_count += 1
 
@@ -812,6 +1013,10 @@ def check_stock_adjustment_conflicts(items, bill_date):
                        reason
                 FROM erp.stock_adjustments
                 WHERE (lower(item_name), lower(COALESCE(size, ''))) IN %s
+                  -- Counts only. A MERGE row is a movement, not a count:
+                  -- nothing on a shelf was looked at, so there is no
+                  -- counted figure a bill could double up on.
+                  AND action IN ('ADJUST', 'RESET')
                 ORDER BY lower(item_name), lower(COALESCE(size, '')), created_at DESC
                 """,
                 (tuple(keys),),

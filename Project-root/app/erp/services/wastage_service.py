@@ -2,7 +2,7 @@
 
 Records component-wise material wastage/losses. Vendor is optional.
 BASE_QTY debits Stock the same way vendor Returns do -- see
-stock_service._get_billed_and_consumed_qty_maps's WASTAGE term.
+stock_service._get_stock_terms's WASTAGE term.
 
 saveWastage's `existingWastageId` folds in the source's separate
 updateWastage(wastageId, formData) (module_wastage.js) -- same convention

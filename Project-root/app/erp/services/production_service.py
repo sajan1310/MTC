@@ -27,7 +27,7 @@ Stock is this project's own live-computed view (never materialized) --
 unlike the source's recalculateStock(), which had to be called explicitly
 because Stock was a real cached sheet, nothing here needs to "trigger" a
 Stock rebuild: the next getStockData call already reflects any Production
-change via stock_service._get_billed_and_consumed_qty_maps's PRODUCTION
+change via stock_service._get_stock_terms's PRODUCTION
 term. Warehouse Pool, by contrast, IS a materialized table in this port
 (same as source), so warehouse_service._recalculate_warehouse_pool(cur) is
 called unconditionally after every mutating call here, matching source's

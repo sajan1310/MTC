@@ -585,7 +585,7 @@ def save_bill(conn, cur, form_data):
 
     # Items the user chose "Ledger only" for in the checkStockAdjustmentConflicts
     # warning flow -- still saved and shown in the ledger, but excluded from
-    # Stock's Billed Qty sum (see stock_service._get_billed_and_consumed_qty_maps).
+    # Stock's Billed Qty sum (see stock_service._get_stock_terms).
     exclude_raw = form_data.get("excludeFromStockKeys")
     if isinstance(exclude_raw, str):
         try:

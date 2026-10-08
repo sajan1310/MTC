@@ -36,6 +36,7 @@ no-ops until their own rounds land, the same tolerance the source's own
 
 from __future__ import annotations
 
+import bisect
 import json
 import math
 
@@ -241,8 +242,38 @@ def get_item_master_refresh_map(cur) -> dict:
 
 
 def _propagate_item_identity_change(
-    cur, old_name: str, old_size: str, new_name: str, new_size: str
+    cur,
+    old_name: str,
+    old_size: str,
+    new_name: str,
+    new_size: str,
+    *,
+    carry_counts: bool = False,
 ) -> None:
+    """Re-points every reference to (old_name, old_size) at (new_name,
+    new_size). Shared by a rename, a merge and a stale-reference repair.
+
+    `carry_counts` moves the item's stock counts (erp.stock_adjustments) as
+    well, and only a RENAME passes it. A renamed item is the same shelf
+    under a new name, so its counts go with it -- left behind, the renamed
+    item would lose the count its Current Stock starts from and jump to an
+    uncounted figure (stock_service._get_stock_terms). A merge or a repair
+    is a different item's history arriving: its counts were never counts of
+    this shelf and must never become its anchor, so they stay where they
+    were and _merge_stock_and_delete carries the stock across instead.
+    """
+    if carry_counts:
+        rename_utils.rename_composite_key(
+            cur,
+            "erp.stock_adjustments",
+            "item_name",
+            "size",
+            old_name,
+            old_size,
+            new_name,
+            new_size,
+        )
+
     for sheet_key in (
         "PO_LINES",
         "BILL_LINES",
@@ -969,7 +1000,12 @@ def save_item(conn, cur, form_data):
                 },
             )
             _propagate_item_identity_change(
-                cur, original_name, original_size, new_name, new_size
+                cur,
+                original_name,
+                original_size,
+                new_name,
+                new_size,
+                carry_counts=True,
             )
     else:
         # Plain edit (identity unchanged) -- backfills a missing Stock row
@@ -1291,7 +1327,51 @@ def _merge_stock_and_delete(
     combine Stock (stock_rows' own "merge" action), re-point PO/Bill/BOM/
     Process Component references via the same cascade saveItem's own
     identity-change path uses, then soft-delete the losing item row.
+
+    A merge must leave the kept item holding exactly what the two held
+    between them, and the fold of initial_stock alone no longer guarantees
+    that. Current Stock starts from an item's newest count when it has one
+    (stock_service._get_stock_terms), so for a kept item that has been
+    counted the folded initial_stock is never read -- and the merged-in
+    item's own count, if it had one, does not carry across either (see
+    _propagate_item_identity_change's carry_counts). So both figures are
+    read before the merge and the kept item's after it, and any difference
+    is booked as a MERGE row: a movement dated at the merge, never an
+    anchor, since nobody counted anything. For the common case -- neither
+    item ever counted, both in one base unit -- the fold already balances
+    and no row is written.
     """
+    from . import stock_service
+
+    keep_key = stock_service._stock_key(keep_name, keep_size)
+    remove_key = stock_service._stock_key(remove_name, remove_size)
+
+    before = stock_service._get_stock_terms(
+        cur, [tuple(keep_key.split("|", 1)), tuple(remove_key.split("|", 1))]
+    )
+    keep_before = before.current(
+        keep_key, _get_stock_initial(cur, keep_name, keep_size)
+    )
+    remove_before = before.current(
+        remove_key, _get_stock_initial(cur, remove_name, remove_size)
+    )
+
+    # Counted in the merged-in item's own Base Unit -- convert it into the
+    # kept item's, exactly as stock_rows' fold converts initial_stock.
+    unit_info_map = get_item_unit_info_map(cur)
+    remove_info = lookup_item_unit_info(unit_info_map, remove_name, remove_size)
+    keep_info = lookup_item_unit_info(unit_info_map, keep_name, keep_size)
+    if remove_info["baseUnit"] != keep_info["baseUnit"]:
+        try:
+            remove_before = units_service.convert_qty_to_base_unit(
+                remove_before,
+                remove_info["baseUnit"],
+                keep_info,
+                units_service.get_units_map(cur),
+            )
+        except ValueError:
+            pass
+
     stock_rows.sync_stock_for_item(
         cur,
         "merge",
@@ -1303,6 +1383,27 @@ def _merge_stock_and_delete(
         },
     )
     _propagate_item_identity_change(cur, remove_name, remove_size, keep_name, keep_size)
+
+    after = stock_service._get_stock_terms(cur, [tuple(keep_key.split("|", 1))])
+    keep_after = after.current(keep_key, _get_stock_initial(cur, keep_name, keep_size))
+    shortfall = keep_before + remove_before - keep_after
+    if abs(shortfall) > 1e-9:
+        cur.execute(
+            """
+            INSERT INTO erp.stock_adjustments (item_name, size, action, old_value, new_value, reason, created_by)
+            VALUES (%s, %s, 'MERGE', %s, %s, %s, %s)
+            """,
+            (
+                keep_name,
+                keep_size,
+                keep_after,
+                keep_after + shortfall,
+                f'Merged in "{remove_name}"'
+                + (f" ({remove_size})" if remove_size else "")
+                + f", {remove_before:g} on hand",
+                get_current_user_id(),
+            ),
+        )
     cur.execute(
         "UPDATE erp.items SET deleted_at = NOW(), updated_by = %s WHERE id = %s",
         (get_current_user_id(), remove_id),
@@ -1668,13 +1769,25 @@ def _ledger_entry(
         "enteredQty": None,
         # Stock on hand for this size immediately after this row, filled in
         # by get_item_ledger_data once every entry is known and ordered.
-        # None on rows that move no stock -- see countsTowardStock below.
+        # None on a row that moves no stock: a PO or a "Ledger only" bill.
         "balance": None,
-        # Whether this row is part of the Current Stock arithmetic. False for
-        # rows that are informational only (a PO is an intent to buy, not a
-        # receipt; a manual adjustment is already absorbed into initial_stock
-        # -- see the reconciliation note in get_item_ledger_data).
+        # Whether this row is part of today's Current Stock: the size's
+        # newest count, or a movement that took effect after it. False for a
+        # PO (an order, not a receipt), a "Ledger only" bill, and anything a
+        # later count already holds -- see `superseded`.
         "countsTowardStock": True,
+        # A later count already holds this row. It happened, and it moves
+        # the running balance up to that count, but it can never move the
+        # stock again -- see get_item_ledger_data.
+        "superseded": False,
+        # When the row takes effect against a count (ISO) -- the moment the
+        # Stock formula judges it by. A bill's is when it was entered, which
+        # is why a bill can sit later in the ledger than its own date.
+        "effectiveAt": "",
+        # The date (ISO) of a count this row is dated on or before but took
+        # effect after -- an invoice delivered after the shelf was counted.
+        # Such a row sits after that count, out of date order; "" otherwise.
+        "arrivedAfterCount": "",
     }
     entry.update(kwargs)
     return entry
@@ -1684,8 +1797,8 @@ def _ledger_entry(
 def get_item_ledger_data(item_name):
     """Every stock movement for one Items Master name, across all its size
     variants, in BASE UNITS -- computed server-side from the exact same
-    terms, signs and unit conversions as the Current Stock formula
-    (_get_billed_and_consumed_qty_maps), so the ledger reconciles with the
+    terms, signs, unit conversions and count anchors as Current Stock
+    (stock_service._get_stock_terms), so the ledger reconciles with the
     Stock page by construction rather than by two implementations happening
     to agree.
 
@@ -1699,25 +1812,39 @@ def get_item_ledger_data(item_name):
     and quantities were shown as-entered rather than in base units, so a
     line entered in Dozen displayed 1 while moving 12 units of stock.
 
-    `countsTowardStock` marks which rows participate in the arithmetic:
+    A stock count -- an ADJUST row from adjustStockManually, or a RESET from
+    importStockData -- is where the stock starts from, not a correction laid
+    on top of it (migration 049). So each size is replayed in the order its
+    rows took effect: every movement moves the running balance, and every
+    count RESETS it to what was counted, entering the ledger as the variance
+    between the counted figure and the balance the book had reached -- the
+    number a stocktake exists to produce, and the same layout
+    getWarehousePoolLedger gives a recounted bucket. A count's `bookAtCount`
+    is what the Stock page showed when it was entered; where it differs from
+    `computedBalance`, something dated before the count reached the books
+    after it.
 
-    - A Bill line with affects_stock = FALSE ("Ledger only", chosen in the
-      stock-adjustment conflict flow) is shown but excluded, matching the
-      Stock formula's own affects_stock filter.
-    - A PO row is an order, not a movement -- shown for context in the
-      Order Qty column, never counted.
-    - A manual Stock Adjustment is NOT a movement either, despite reading
-      like one. adjust_stock_manually rewrites initial_stock to
-      (new_stock - billed + consumed), so an adjustment is already fully
-      absorbed into the initialStock the reconciliation starts from.
-      Counting its delta again would double-apply it -- these rows are
-      history annotations, and `reconciliation` proves the balance without
-      them.
+    Rows a later count already holds are `superseded`: listed, and moving
+    the running balance up to that count, but outside today's Current Stock,
+    because nothing that predates a count may move it again however late it
+    arrives. That is the defect migration 049 closes -- lots completed after
+    a count but dated before it used to come off a counted figure a second
+    time.
 
-    The returned `reconciliation` block does that proof per size variant:
-    initialStock + incoming - outgoing (counted rows only) must equal the
-    currentStock the Stock page shows for the same variant, and `balanced`
-    reports whether it does.
+    `countsTowardStock` marks the rows Current Stock is made of: the size's
+    newest count and every movement after it. Never counted:
+
+    - a Bill line with affects_stock = FALSE ("Ledger only", chosen in the
+      stock-count conflict flow) -- shown with no balance, matching the
+      Stock formula's own affects_stock filter;
+    - a PO row -- an order, not a movement, shown in the Order Qty column;
+    - anything superseded by a later count.
+
+    The returned `reconciliation` block proves the arithmetic per size
+    variant: the counted figure (initial_stock, for a size nobody has
+    counted) + incoming - outgoing over the counted rows must equal the
+    currentStock the Stock page shows, and `balanced` reports whether it
+    does.
     """
     # Local import: stock_service imports THIS module, so a module-level
     # import would be circular -- same precedent as stock_rows.py's own
@@ -1733,15 +1860,20 @@ def get_item_ledger_data(item_name):
 
     entries: list = []
 
+    # `_at` (when the row takes effect) and `_moves` (whether it is a
+    # movement at all) drive the replay below and are stripped before the
+    # entries are returned. Every `_at` comes from stock_service's moment
+    # expressions, the same ones the Stock formula filters on.
     with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
         _conn,
         cur,
     ):
-        # Bill: the one term that ADDS to stock.
+        # Bill: the one term that ADDS to stock, effective when entered.
         cur.execute(
-            """
+            f"""
             SELECT h.bill_number, h.bill_date, h.vendor, l.size, l.narration,
-                   l.qty, l.unit, l.base_qty, l.base_rate, l.affects_stock
+                   l.qty, l.unit, l.base_qty, l.base_rate, l.affects_stock,
+                   {stock_service._BILL_MOMENT_SQL} AS stock_at
             FROM erp.bill_lines l
             JOIN erp.bill_headers h ON h.id = l.header_id
             WHERE h.deleted_at IS NULL AND lower(btrim(l.item_name)) = %s
@@ -1763,15 +1895,17 @@ def get_item_ledger_data(item_name):
                     price=float(row["base_rate"] or 0),
                     unit=row["unit"] or "",
                     enteredQty=float(row["qty"] or 0),
-                    countsTowardStock=affects_stock,
+                    _at=row["stock_at"],
+                    _moves=affects_stock,
                 )
             )
 
         # Return / Wastage / Issue: all three DEBIT stock, same direction.
         cur.execute(
-            """
+            f"""
             SELECT h.return_number, h.return_date, h.vendor, l.size, l.narration,
-                   l.qty, l.unit, l.base_qty, l.base_rate
+                   l.qty, l.unit, l.base_qty, l.base_rate,
+                   {stock_service._doc_moment_sql("h.return_date", "h.created_at")} AS stock_at
             FROM erp.return_lines l
             JOIN erp.return_headers h ON h.id = l.header_id
             WHERE h.deleted_at IS NULL AND lower(btrim(l.item_name)) = %s
@@ -1792,13 +1926,16 @@ def get_item_ledger_data(item_name):
                     price=float(row["base_rate"] or 0),
                     unit=row["unit"] or "",
                     enteredQty=float(row["qty"] or 0),
+                    _at=row["stock_at"],
+                    _moves=True,
                 )
             )
 
         cur.execute(
-            """
+            f"""
             SELECT h.wastage_id, h.wastage_date, h.vendor, l.size, l.reason,
-                   l.qty, l.unit, l.base_qty
+                   l.qty, l.unit, l.base_qty,
+                   {stock_service._doc_moment_sql("h.wastage_date", "h.created_at")} AS stock_at
             FROM erp.wastage_lines l
             JOIN erp.wastage_headers h ON h.id = l.header_id
             WHERE h.deleted_at IS NULL AND lower(btrim(l.item_name)) = %s
@@ -1819,13 +1956,16 @@ def get_item_ledger_data(item_name):
                     outgoingQty=float(row["base_qty"] or 0),
                     unit=row["unit"] or "",
                     enteredQty=float(row["qty"] or 0),
+                    _at=row["stock_at"],
+                    _moves=True,
                 )
             )
 
         cur.execute(
-            """
+            f"""
             SELECT h.issue_id, h.issue_date, h.issued_to, h.reference, l.size,
-                   l.qty, l.unit, l.base_qty, l.rate
+                   l.qty, l.unit, l.base_qty, l.rate,
+                   {stock_service._doc_moment_sql("h.issue_date", "h.created_at")} AS stock_at
             FROM erp.issue_lines l
             JOIN erp.issue_headers h ON h.id = l.header_id
             WHERE h.deleted_at IS NULL AND lower(btrim(l.item_name)) = %s
@@ -1846,6 +1986,8 @@ def get_item_ledger_data(item_name):
                     price=float(row["rate"] or 0),
                     unit=row["unit"] or "",
                     enteredQty=float(row["qty"] or 0),
+                    _at=row["stock_at"],
+                    _moves=True,
                 )
             )
 
@@ -1872,13 +2014,16 @@ def get_item_ledger_data(item_name):
                     outgoingQty=comp["baseQty"],
                     unit=comp["unit"],
                     enteredQty=comp["enteredQty"],
+                    _at=comp["stockAt"],
+                    _moves=True,
                 )
             )
 
         # PO: informational only (an order, not a movement).
         cur.execute(
-            """
-            SELECT h.po_number, h.po_date, h.vendor, l.size, l.narration, l.qty, l.unit, l.base_qty, l.base_rate
+            f"""
+            SELECT h.po_number, h.po_date, h.vendor, l.size, l.narration, l.qty, l.unit, l.base_qty, l.base_rate,
+                   {stock_service._doc_moment_sql("h.po_date", "h.created_at")} AS stock_at
             FROM erp.po_lines l
             JOIN erp.po_headers h ON h.id = l.header_id
             WHERE h.deleted_at IS NULL AND lower(btrim(l.item_name)) = %s
@@ -1900,44 +2045,70 @@ def get_item_ledger_data(item_name):
                     unit=row["unit"] or "",
                     enteredQty=float(row["qty"] or 0),
                     countsTowardStock=False,
+                    _at=row["stock_at"],
+                    _moves=False,
                 )
             )
 
-        # Manual adjustments: informational -- already absorbed into
-        # initial_stock, see this function's docstring.
+        # Counts and merges. A count is replayed as a reset of the running
+        # balance (see below). A MERGE row is an ordinary dated movement --
+        # what _merge_stock_and_delete had to add to keep a merge from
+        # losing stock -- and never an anchor.
         cur.execute(
             """
-            SELECT sa.size, sa.action, sa.old_value, sa.new_value, sa.reason, sa.created_at,
+            SELECT sa.id, sa.size, sa.action, sa.old_value, sa.new_value, sa.reason, sa.created_at,
                    u.email AS user_email
             FROM erp.stock_adjustments sa
             LEFT JOIN public.users u ON u.user_id = sa.created_by
             WHERE lower(btrim(sa.item_name)) = %s
+            ORDER BY sa.created_at, sa.id
             """,
             (target_lower,),
         )
         for row in cur.fetchall():
-            delta = float(row["new_value"] or 0) - float(row["old_value"] or 0)
-            is_reset = str(row["action"] or "").strip().upper() == "RESET"
+            action = str(row["action"] or "").strip().upper()
+            old_value = float(row["old_value"] or 0)
+            new_value = float(row["new_value"] or 0)
+            if action == "MERGE":
+                delta = new_value - old_value
+                entries.append(
+                    _ledger_entry(
+                        row["created_at"],
+                        "Merged In",
+                        "MERGE",
+                        "-",
+                        row["user_email"] or "System",
+                        row["size"],
+                        row["reason"],
+                        incomingQty=delta if delta > 0 else 0.0,
+                        outgoingQty=-delta if delta < 0 else 0.0,
+                        _at=row["created_at"],
+                        _moves=True,
+                    )
+                )
+                continue
             entries.append(
                 _ledger_entry(
                     row["created_at"],
-                    "Stock Reset" if is_reset else "Manual Adjustment",
+                    "Stock Reset" if action == "RESET" else "Stock Count",
                     "ADJUSTMENT",
                     "-",
                     row["user_email"] or "System",
                     row["size"],
                     row["reason"],
-                    incomingQty=delta if delta > 0 else 0.0,
-                    outgoingQty=-delta if delta < 0 else 0.0,
-                    countsTowardStock=False,
+                    countedQty=new_value,
+                    # What the Stock page showed when the count was entered.
+                    bookAtCount=old_value,
+                    _at=row["created_at"],
+                    _moves=False,
+                    _count={
+                        "id": row["id"],
+                        "counted": new_value,
+                        "recorded": new_value - old_value,
+                    },
                 )
             )
 
-        # Reconciliation, per size variant, against the very same maps
-        # get_stock_data renders from.
-        bill_qty_map, consumed_qty_map = (
-            stock_service._get_billed_and_consumed_qty_maps(cur)
-        )
         cur.execute(
             """
             SELECT item_name, size, initial_stock, threshold
@@ -1949,28 +2120,164 @@ def get_item_ledger_data(item_name):
         )
         stock_rows_found = cur.fetchall()
 
+        # The very anchors and sums get_stock_data renders from, for this
+        # item's sizes only.
+        terms = stock_service._get_stock_terms(
+            cur,
+            [
+                (target_lower, (r["size"] or "").strip().lower())
+                for r in stock_rows_found
+            ],
+        )
+
+    # One order per size, fixed before anything is accumulated, so the
+    # display can be its exact reverse.
+    #
+    # Each count cuts a size's history into segments, and a row's segment is
+    # decided by when it took effect -- the very comparison the Stock formula
+    # makes, so a row sits on the same side of a count here as it does in
+    # Current Stock. A row stamped at exactly a count's moment is inside that
+    # count (the formula keeps only `at > count`); a row with no moment has
+    # always been there. Each count closes its segment.
+    #
+    # WITHIN a segment, rows read in date order, as this ledger always has:
+    # an item nobody has counted reads exactly as before, and the only rows
+    # out of date order are the ones that mean something -- an invoice dated
+    # before a count but delivered after it sits just after that count.
+    #
+    # This used to sort on (date, type) twice -- ascending to accumulate, then
+    # `reverse=True` to display. `type` is the row's LABEL, so within a day
+    # rows came out alphabetically, and Python's reverse sort keeps equal keys
+    # in their original order, so each day ran the opposite way to the rest
+    # of the list and the TOP row was not the current balance. Measured: on
+    # 321 of 748 size variants the first balance a reader saw was not the
+    # stock on hand. Within a day: movements, then rows that move nothing (a
+    # PO, a "Ledger only" bill), then by time where it is known; the
+    # insertion index keeps each source's own order beyond that.
+    entries_by_size: dict = {}
+    for index, entry in enumerate(entries):
+        entry["_seq"] = index
+        entries_by_size.setdefault((entry["size"] or "").strip().lower(), []).append(
+            entry
+        )
+
+    for group in entries_by_size.values():
+        counts = sorted(
+            (e for e in group if e.get("_count")),
+            key=lambda e: (e["_at"], e["_count"]["id"]),
+        )
+        count_moments = [e["_at"] for e in counts]
+        for position, entry in enumerate(counts):
+            entry["_segment"] = position
+        for entry in group:
+            if not entry.get("_count"):
+                entry["_segment"] = (
+                    bisect.bisect_left(count_moments, entry["_at"])
+                    if entry["_at"] is not None
+                    else 0
+                )
+                # Dated on or before the count it follows: it reached the
+                # shelf after that count, which is why it sits after it.
+                if entry["_segment"] > 0:
+                    previous = counts[entry["_segment"] - 1]
+                    if (entry["dateRaw"] or "") <= (previous["dateRaw"] or ""):
+                        entry["arrivedAfterCount"] = previous["dateRaw"]
+        group.sort(
+            key=lambda e: (
+                e["_segment"],
+                1 if e.get("_count") else 0,
+                e["dateRaw"] or "",
+                0 if e["_moves"] else 1,
+                e["_at"] is not None,
+                e["_at"] if e["_at"] is not None else 0,
+                e["_seq"],
+            )
+        )
+
+    initial_by_size = {
+        (row["size"] or "").strip().lower(): float(row["initial_stock"])
+        for row in stock_rows_found
+    }
+
+    # Running stock balance, per size variant. Computed here rather than in
+    # the browser for the reason the whole ledger moved server-side: it has
+    # to apply the same anchors, rows and signs as Current Stock, or it is a
+    # second implementation that merely happens to agree.
+    for size_lower, group in entries_by_size.items():
+        anchor = terms.anchors.get(f"{target_lower}|{size_lower}")
+        anchor_at = anchor[0] if anchor else None
+        anchor_id = anchor[2] if anchor else None
+
+        # Where the size's history opens: initial_stock less every count's
+        # recorded difference -- stock_service.adjust_stock_manually moves
+        # initial_stock by exactly that, so this is the stock the item had
+        # before anybody counted it. A size with movements but no erp.stock
+        # row opens at zero, the honest reading of "no opening recorded".
+        running = initial_by_size.get(size_lower, 0.0) - sum(
+            e["_count"]["recorded"] for e in group if e.get("_count")
+        )
+        for entry in group:
+            count = entry.get("_count")
+            if count is not None:
+                # The count enters as what it did to the book: the variance
+                # between what was counted and the balance reached. That keeps
+                # ONE running balance continuous from the first row to the
+                # last -- computed + variance = counted.
+                variance = count["counted"] - running
+                entry["computedBalance"] = running
+                entry["variance"] = variance
+                entry["incomingQty"] = variance if variance > 0 else 0.0
+                entry["outgoingQty"] = -variance if variance < 0 else 0.0
+                running = count["counted"]
+                entry["balance"] = running
+                is_anchor = count["id"] == anchor_id
+                entry["countsTowardStock"] = is_anchor
+                # An earlier count is itself inside the newest one.
+                entry["superseded"] = not is_anchor
+            elif entry["_moves"]:
+                running += entry["incomingQty"] - entry["outgoingQty"]
+                entry["balance"] = running
+                held = anchor is not None and (
+                    entry["_at"] is None or entry["_at"] <= anchor_at
+                )
+                entry["superseded"] = held
+                entry["countsTowardStock"] = not held
+            else:
+                # A PO or a "Ledger only" bill moved no stock, so it has no
+                # balance to report. Deliberately None and not the
+                # carried-forward figure: repeating the previous row's number
+                # reads as "this row settled at that balance", which is the
+                # one thing these rows did not do.
+                entry["balance"] = None
+                entry["countsTowardStock"] = False
+
+    # Reconciliation, per size variant, against the very terms get_stock_data
+    # renders from.
     reconciliation = []
     for row in stock_rows_found:
         size = (row["size"] or "").strip()
-        key = f"{row['item_name'].strip().lower()}|{size.lower()}"
-        initial = float(row["initial_stock"])
-        current = initial + bill_qty_map.get(key, 0) - consumed_qty_map.get(key, 0)
-
         size_lower = size.lower()
+        key = f"{target_lower}|{size_lower}"
+        initial = float(row["initial_stock"])
+        current = terms.current(key, initial)
+        anchor = terms.anchors.get(key)
+
         counted = [
             e
-            for e in entries
-            if e["countsTowardStock"]
-            and (e["size"] or "").strip().lower() == size_lower
+            for e in entries_by_size.get(size_lower, [])
+            if e["countsTowardStock"] and not e.get("_count")
         ]
         incoming = sum(e["incomingQty"] for e in counted)
         outgoing = sum(e["outgoingQty"] for e in counted)
-        computed = initial + incoming - outgoing
+        computed = (anchor[1] if anchor else initial) + incoming - outgoing
 
         reconciliation.append(
             {
                 "size": size,
                 "initialStock": initial,
+                # The count Current Stock starts from; None if never counted.
+                "countedStock": anchor[1] if anchor else None,
+                "countedAt": anchor[0].isoformat() if anchor else None,
                 "incomingQty": incoming,
                 "outgoingQty": outgoing,
                 "computedStock": computed,
@@ -1984,92 +2291,24 @@ def get_item_ledger_data(item_name):
             }
         )
 
-    # Running stock balance, per size variant.
-    #
-    # Computed here rather than in items.js for the reason the whole ledger
-    # moved server-side: the balance has to start from the same
-    # initial_stock, count the same rows and apply the same signs as the
-    # Current Stock formula, or it is a second implementation that merely
-    # happens to agree. Doing it beside `reconciliation` -- which already
-    # holds each size's initial_stock and proves initial + in - out ==
-    # currentStock -- makes the last row's balance the same arithmetic that
-    # block asserts, so a drift shows up as `balanced: false` rather than as
-    # a quietly wrong column.
-    #
-    # Accumulated oldest-first, then re-sorted newest-first for display,
-    # matching get_contractor_account_ledger and get_warehouse_pool_ledger.
-    initial_by_size = {
-        (row["size"] or "").strip().lower(): float(row["initial_stock"])
-        for row in stock_rows_found
-    }
-    # One chronological order for the whole ledger, fixed before anything is
-    # accumulated, so the display can be its exact reverse.
-    #
-    # This used to sort on (date, type) twice -- ascending to accumulate,
-    # then `reverse=True` to display. Two things went wrong with that, and
-    # together they are why the balance looked different after a stock
-    # adjustment:
-    #
-    #   - `type` is the row's LABEL, so within a day rows were ordered
-    #     alphabetically: "Manual Adjustment" before "Production
-    #     Consumption" because M < P, whatever the order they happened in.
-    #   - Python's reverse sort keeps equal keys in their ORIGINAL order.
-    #     Dates came out newest-first but each day's rows stayed oldest-
-    #     first, so a day ran the opposite way to the rest of the list and
-    #     the TOP row was not the current balance. Measured: on 321 of 748
-    #     size variants the first balance a reader saw was not the stock
-    #     on hand -- while the arithmetic was right on all 748.
-    #
-    # Within a day, stock movements come before the rows that move nothing
-    # (a PO, a "Ledger only" bill, a manual adjustment), so a day's
-    # annotations sit beside the balance that day ended on rather than
-    # interrupting it. The insertion index keeps each source's own order
-    # beyond that: there is no transaction timestamp on these rows, and an
-    # invented order is worse than the order the records were read in.
-    for index, entry in enumerate(entries):
-        entry["_seq"] = index
-    entries.sort(
-        key=lambda e: (
-            e["dateRaw"] or "",
-            0 if e["countsTowardStock"] else 1,
-            e["_seq"],
-        )
-    )
-    for index, entry in enumerate(entries):
-        entry["_seq"] = index
-
-    entries_by_size = {}
-    for entry in entries:
-        entries_by_size.setdefault((entry["size"] or "").strip().lower(), []).append(
-            entry
-        )
-
-    for size_lower, group in entries_by_size.items():
-        # A size with movements but no erp.stock row opens at zero rather
-        # than being skipped: its rows still need a balance, and starting
-        # from nothing is the honest reading of "no opening stock recorded".
-        running = initial_by_size.get(size_lower, 0.0)
-        for entry in group:
-            if entry["countsTowardStock"]:
-                running += entry["incomingQty"] - entry["outgoingQty"]
-                entry["balance"] = running
-            else:
-                # A PO, a "Ledger only" bill or a manual adjustment moved no
-                # stock, so it has no balance to report. Deliberately None
-                # and not the carried-forward figure: repeating the previous
-                # row's number here reads as "this row settled at that
-                # balance", which is the one thing these rows did not do.
-                entry["balance"] = None
-
     # Newest-first for display: the EXACT reverse of the order just
-    # accumulated, not a second sort. So the top row is always the last
-    # one accumulated -- its balance is computedStock, which the
-    # reconciliation block proves equals currentStock -- and reading down
-    # the column, each balance is the row below it plus that row's
-    # movement.
-    entries.sort(key=lambda e: e["_seq"], reverse=True)
+    # accumulated, not a second sort. So the top row of every size is always
+    # the last one accumulated, and reading down the column, each balance is
+    # the row below it plus that row's movement -- or, on a count, the figure
+    # counted. Sizes follow one another; both shells group them by size.
+    entries = [
+        entry
+        for size_lower in sorted(entries_by_size)
+        for entry in entries_by_size[size_lower]
+    ]
+    entries.reverse()
     for entry in entries:
+        at = entry.pop("_at", None)
+        entry["effectiveAt"] = at.isoformat() if at is not None else ""
+        entry.pop("_moves", None)
+        entry.pop("_count", None)
         entry.pop("_seq", None)
+        entry.pop("_segment", None)
 
     return build_response(
         True, {"itemName": target, "entries": entries, "reconciliation": reconciliation}

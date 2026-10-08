@@ -274,10 +274,12 @@ def test_item_ledger_excludes_ledger_only_bill_from_the_balance(erp_client):
     assert recon["balanced"] is True
 
 
-def test_item_ledger_manual_adjustment_is_shown_but_not_double_counted(erp_client):
-    """adjust_stock_manually rewrites initial_stock, so an adjustment is
-    already absorbed into the initialStock the reconciliation starts from.
-    Counting its delta again would double-apply it.
+def test_item_ledger_a_count_is_where_the_balance_starts(erp_client):
+    """A stock count states the shelf (migration 049). It enters the ledger
+    as the variance between what was counted and the balance the book had
+    reached, and the running balance becomes the counted figure -- the
+    reconciliation starts from that count, not from initial_stock, so the
+    variance is never applied twice.
     """
     name = _unique_name("LedgerAdjusted")
     _create_item_with_stock(erp_client, name, initial_stock=20)
@@ -294,14 +296,18 @@ def test_item_ledger_manual_adjustment_is_shown_but_not_double_counted(erp_clien
     assert next(r for r in listed if r["name"] == name)["currentStock"] == 35
 
     data = _ledger(erp_client, name)
-    adjustments = [e for e in data["entries"] if e["kind"] == "ADJUSTMENT"]
-    assert len(adjustments) == 1
-    assert adjustments[0]["incomingQty"] == 15  # 35 - 20, shown for context
-    assert adjustments[0]["countsTowardStock"] is False
+    counts = [e for e in data["entries"] if e["kind"] == "ADJUSTMENT"]
+    assert len(counts) == 1
+    assert counts[0]["incomingQty"] == 15  # counted 35 against a book of 20
+    assert counts[0]["computedBalance"] == 20
+    assert counts[0]["countedQty"] == 35
+    assert counts[0]["balance"] == 35
+    assert counts[0]["countsTowardStock"] is True
 
     recon = data["reconciliation"][0]
-    assert recon["initialStock"] == 35  # the adjustment landed here
+    assert recon["countedStock"] == 35  # where Current Stock starts from
     assert recon["currentStock"] == 35
+    assert recon["computedStock"] == 35
     assert recon["balanced"] is True  # not 35 + 15
 
 
@@ -486,10 +492,9 @@ def test_item_ledger_balance_runs_from_initial_stock_to_current_stock(erp_client
 
 
 def test_item_ledger_balance_is_blank_on_rows_that_move_no_stock(erp_client):
-    """A PO is an order, not a movement, and a manual adjustment is already
-    absorbed into initial_stock. Neither settles the stock at a figure, so
-    neither carries a balance -- repeating the previous row's number on them
-    would read as though they did.
+    """A PO is an order, not a movement. It does not settle the stock at a
+    figure, so it carries no balance -- repeating the previous row's number
+    on it would read as though it did.
     """
     name = _unique_name("LedgerBalanceNoop")
     _create_item_with_stock(erp_client, name, initial_stock=50)
@@ -646,14 +651,14 @@ def test_item_ledger_balance_reads_down_when_a_day_holds_several_rows(erp_client
         assert older["balance"] + movement == newer["balance"], (newer, older)
 
 
-def test_item_ledger_a_days_adjustment_sits_beside_that_days_closing_balance(
+def test_item_ledger_a_count_closes_on_what_was_counted(
     erp_client,
 ):
-    """A manual adjustment moves no stock -- it is already absorbed into
-    initial_stock -- so it carries no balance. Where it SITS still matters:
-    ordered by its label it landed in the middle of a day's movements,
-    reading as though the balance jumped over it. It belongs with the rows
-    that move nothing, after that day's real movements.
+    """A count sits in the ledger at the moment it was taken, after
+    everything it holds. Ordered by its label it once landed in the middle
+    of a day's movements, reading as though the balance jumped over it. Now
+    the issue it holds -- dated before it -- sits below it, superseded, and
+    the count's own balance is the stock on hand.
     """
     name = _unique_name("AdjPlace")
     _create_item_with_stock(erp_client, name, initial_stock=50)
@@ -678,14 +683,17 @@ def test_item_ledger_a_days_adjustment_sits_beside_that_days_closing_balance(
     )
 
     data = _ledger(erp_client, name)
-    types = [e["type"] for e in data["entries"]]
-    assert any("Adjust" in t for t in types), types
+    top, below = data["entries"][0], data["entries"][1]  # newest first
+    assert top["type"] == "Stock Count"
+    assert top["balance"] == 75
+    assert top["computedBalance"] == 40  # 50 - 10, the book before counting
+    assert top["incomingQty"] == 35
 
-    adjustment = next(e for e in data["entries"] if "Adjust" in e["type"])
-    assert adjustment["balance"] is None
-    assert adjustment["countsTowardStock"] is False
+    assert below["kind"] == "ISSUE"
+    assert below["superseded"] is True
+    assert below["countsTowardStock"] is False
+    assert below["balance"] == 40
 
-    counted = [e for e in data["entries"] if e["countsTowardStock"]]
     recon = data["reconciliation"][0]
-    assert counted[0]["balance"] == recon["currentStock"]
+    assert top["balance"] == recon["currentStock"] == 75
     assert recon["balanced"] is True

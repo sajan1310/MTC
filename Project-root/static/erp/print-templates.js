@@ -1199,7 +1199,20 @@ const PrintTemplates = {
       WASTAGE: 'bg-danger',
       ISSUE: 'bg-danger',
       PRODUCTION: 'bg-danger',
-      ADJUSTMENT: 'bg-warning text-dark'
+      ADJUSTMENT: 'bg-warning text-dark',
+      MERGE: 'bg-secondary'
+    };
+
+    // The count each size's stock starts from, by size, so a row a later
+    // count already holds can say which count holds it.
+    const countedAtBySize = new Map(
+      ((ledger && ledger.reconciliation) || [])
+        .filter(r => r.countedAt)
+        .map(r => [String(r.size || '').trim().toLowerCase(), r.countedAt])
+    );
+    const shortDate = iso => {
+      const d = new Date(iso);
+      return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-GB');
     };
 
     const fmtQty = v => {
@@ -1224,40 +1237,71 @@ const PrintTemplates = {
     // are grouped into a separate mini-table per size below, so the size is
     // said once in that group's heading instead of repeated down a column.
     const buildHistRow = entry => {
-      const badgeClass = entry.kind === 'ADJUSTMENT' && entry.type === 'Stock Reset'
+      const isCount = entry.kind === 'ADJUSTMENT';
+      const badgeClass = isCount && entry.type === 'Stock Reset'
         ? 'bg-info'
         : (BADGE_BY_KIND[entry.kind] || 'bg-secondary');
 
       // Quantities are base-unit. Show what was actually typed alongside it
       // whenever the two differ, so a line entered in Dozen reads
       // "12 (1 Dozen)" instead of silently disagreeing with the Stock page.
+      // A count has nothing typed in a unit -- its in/out is a variance.
       const enteredQty = num(entry.enteredQty);
       const baseMoved = num(entry.incomingQty) || num(entry.outgoingQty) || num(entry.orderQty);
-      const showEntered = entry.unit && enteredQty && Math.abs(enteredQty - baseMoved) > 0.0001;
+      const showEntered = !isCount && entry.unit && enteredQty && Math.abs(enteredQty - baseMoved) > 0.0001;
       const enteredNote = showEntered
         ? ` <small class="text-muted">(${fmtQty(enteredQty)} ${esc(entry.unit)})</small>`
         : '';
 
-      // A row the Stock formula does not count -- a "Ledger only" bill, a
-      // PO (an order, not a movement), or a manual adjustment (already
-      // absorbed into Initial Stock). Muted so it can't be misread as a
-      // movement that failed to land.
-      const rowClass = entry.countsTowardStock ? '' : ' class="text-muted fst-italic"';
+      // Two kinds of muted row. A SUPERSEDED row is inside a later stock
+      // count: it happened, and it moved the balance up to that count, but
+      // nothing that predates a count can move the stock again (the server's
+      // Stock formula starts from the count). The other kind never counted
+      // at all -- a "Ledger only" bill, or a PO, an order rather than a
+      // movement -- and is italic too, so it can't be misread as a movement
+      // that failed to land.
+      const sizeKey = String(entry.size || '').trim().toLowerCase();
+      const heldBy = entry.superseded ? (countedAtBySize.get(sizeKey) || '') : '';
+      const heldNote = entry.superseded
+        ? `<div><small class="text-muted">inside the ${heldBy ? `${esc(shortDate(heldBy))} ` : ''}count</small></div>`
+        : '';
+      const rowClass = entry.superseded
+        ? ' class="text-muted"'
+        : (entry.countsTowardStock ? '' : ' class="text-muted fst-italic"');
+      // Dated on or before a count it followed onto the shelf -- typically an
+      // invoice delivered after the count -- which is why it sits after that
+      // count, out of date order.
+      const arrivalNote = entry.arrivedAfterCount
+        ? `<div><small class="text-muted">entered after the ${esc(String(entry.arrivedAfterCount).split('-').reverse().join('/'))} count</small></div>`
+        : '';
 
-      // Balance is the stock on hand after this row, from the server (which
-      // starts it at the same initial_stock the Current Stock formula uses).
-      // null on a row that moved no stock -- a PO, a "Ledger only" bill, an
-      // adjustment -- so the column never implies those settled at a figure.
+      // A count states the shelf: its balance IS the counted figure, and its
+      // in/out is the variance from the balance the book had reached. When
+      // the Stock page showed something else at the time of counting, a row
+      // dated before the count reached the books after it -- say so.
+      const bookThen = entry.bookAtCount;
+      const lateNote = bookThen !== null && bookThen !== undefined
+        && Math.abs(num(bookThen) - num(entry.computedBalance)) > 0.0001
+        ? `; the book showed ${fmtBalance(bookThen)} when counted`
+        : '';
+      const countNote = isCount
+        ? `<div><small class="text-muted">counted ${fmtBalance(entry.countedQty)} against a book of ${fmtBalance(entry.computedBalance)}${lateNote}</small></div>`
+        : '';
+
+      // Balance is the stock on hand after this row, from the server, which
+      // runs it on the same counts and movements as Current Stock. null on a
+      // row that moved no stock -- a PO, a "Ledger only" bill -- so the
+      // column never implies those settled at a figure.
       const balanceCell = (entry.balance === null || entry.balance === undefined)
         ? '<span class="text-muted">-</span>'
         : fmtBalance(entry.balance);
 
       return `<tr${rowClass}>
         <td>${esc(entry.date || '')}</td>
-        <td><span class="badge ${badgeClass}">${esc(entry.type || '')}</span></td>
+        <td><span class="badge ${badgeClass}">${esc(entry.type || '')}</span>${heldNote}${arrivalNote}</td>
         <td><strong class="text-dark">${esc(entry.ref || '-')}</strong></td>
         <td><strong class="text-primary">${esc(entry.party || '-')}</strong></td>
-        <td><small class="text-muted">${esc(entry.narration || '-')}</small></td>
+        <td><small class="text-muted">${esc(entry.narration || '-')}</small>${countNote}</td>
         <td class="text-end">${entry.price !== null && entry.price !== undefined ? money(entry.price) : '-'}</td>
         <td class="text-center text-primary fw-bold">${fmtQty(entry.orderQty)}</td>
         <td class="text-center text-success fw-bold">${fmtQty(entry.incomingQty)}${entry.incomingQty ? enteredNote : ''}</td>
@@ -1331,6 +1375,8 @@ const PrintTemplates = {
       ? reconList.map(r => ({
         size: r.size,
         initialStock: r.initialStock,
+        countedStock: r.countedStock,
+        countedAt: r.countedAt,
         currentStock: r.currentStock,
         isLowStock: r.isLowStock,
         computedStock: r.computedStock,
@@ -1338,7 +1384,7 @@ const PrintTemplates = {
       }))
       : (src.stock || [])
         .filter(s => (s.name || '').toLowerCase() === nameLower)
-        .map(s => ({ ...s, balanced: true }))
+        .map(s => ({ ...s, countedStock: s.lastCountQty, countedAt: s.lastCountAt, balanced: true }))
     ).sort((a, b) => String(a.size || '').localeCompare(String(b.size || '')));
 
     const pendingMap = getPendingByItem();
@@ -1358,9 +1404,16 @@ const PrintTemplates = {
         ? ` <span class="badge bg-danger" title="Ledger movements total ${s.computedStock}, but Current Stock is ${s.currentStock}. These should match -- please report this.">Mismatch</span>`
         : '';
 
+      // Where this size's stock starts from: its newest count -- a count is
+      // the figure Current Stock is built on -- or, for a size nobody has
+      // counted, the opening stock it was set up with.
+      const startCell = s.countedStock !== null && s.countedStock !== undefined
+        ? `${s.countedStock}<div><small class="text-muted">counted ${esc(shortDate(s.countedAt))}</small></div>`
+        : `<span class="text-muted">Not counted</span><div><small class="text-muted">opening ${s.initialStock}</small></div>`;
+
       stockHtml += `<tr>
         <td>${esc(s.size || '-')}</td>
-        <td class="text-center fw-bold">${s.initialStock}</td>
+        <td class="text-center fw-bold">${startCell}</td>
         <td class="text-center fw-bold ${s.isLowStock ? 'text-danger' : 'text-success'}">${s.currentStock}${driftBadge}</td>
         <td class="text-center fw-bold text-warning">${pendingText}</td>
       </tr>`;

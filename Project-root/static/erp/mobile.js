@@ -3881,14 +3881,25 @@ MApp.Stock = {
 
       panel.innerHTML = adjustBtn + movements.slice(0, 8).map(m => {
         const delta = (m.incomingQty || 0) - (m.outgoingQty || 0);
-        // A row the Stock formula does not count -- a "Ledger only" bill,
-        // or a PO, which is an intent to buy rather than a receipt. Shown
-        // for context, muted, and never given a signed quantity that
-        // would read as a movement.
+        const signed = `${delta >= 0 ? '+' : ''}${MApp.Util.formatQty(delta)}`;
+        // A stock count states the shelf, so it shows what was counted --
+        // that is the figure stock starts from, and its balance -- rather
+        // than a signed movement. A row a later count already holds
+        // (superseded) did happen, so it keeps its signed quantity, muted
+        // and labelled: nothing that predates a count can move the stock
+        // again. A row the Stock formula never counts -- a "Ledger only"
+        // bill, or a PO, an intent to buy rather than a receipt -- is shown
+        // for context and never given a signed quantity that would read as
+        // a movement.
+        const isCount = m.kind === 'ADJUSTMENT';
         const counts = m.countsTowardStock !== false;
-        const qtyHtml = counts
-          ? `<span style="font-weight:700;color:${delta >= 0 ? 'var(--mb-enamel-green-ink)' : 'var(--mb-enamel-red-ink)'};">${delta >= 0 ? '+' : ''}${MApp.Util.formatQty(delta)}</span>`
-          : '<span class="mb-text-steel">not counted</span>';
+        const qtyHtml = isCount
+          ? `<span style="font-weight:700;color:var(--mb-ink);">counted ${MApp.Util.formatQty(m.countedQty)}</span>`
+          : m.superseded === true
+            ? `<span class="mb-text-steel">${signed} · inside count</span>`
+            : counts
+              ? `<span style="font-weight:700;color:${delta >= 0 ? 'var(--mb-enamel-green-ink)' : 'var(--mb-enamel-red-ink)'};">${signed}</span>`
+              : '<span class="mb-text-steel">not counted</span>';
         // enteredQty differs from the base quantity whenever the line was
         // entered in a non-base unit -- a line entered in Dozen moves 12.
         // Showing both is the point: the old client-side version showed
