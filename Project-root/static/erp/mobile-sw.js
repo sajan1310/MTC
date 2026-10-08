@@ -144,7 +144,11 @@
 // Opening balances) first says what the bucket will read afterwards. Both
 // redraw in place instead of re-opening their sheet, which left a stale
 // history entry for Back to step over.
-const CACHE_NAME = 'erp-mobile-shell-v77';
+// v78: a stock count is where an item's stock starts from. An expanded
+// stock card shows a count as "counted N" and a movement a later count
+// already holds as "inside count"; the printed Item Ledger shows the last
+// count instead of Initial Stock.
+const CACHE_NAME = 'erp-mobile-shell-v78';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

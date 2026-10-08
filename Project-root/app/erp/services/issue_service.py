@@ -4,7 +4,7 @@ Records ad-hoc issuance of Stock items -- components a contractor needs
 beyond what a Process's own recipe (BOM) calls for. Deliberately separate
 from Production's Components Consumed list: issuing an item here never
 touches a lot's BOM/costing, it only debits Stock directly (same mechanism
-as Wastage -- see stock_service._get_billed_and_consumed_qty_maps's ISSUE
+as Wastage -- see stock_service._get_stock_terms's ISSUE
 term). Reference (e.g. a Production Lot #) is optional and purely
 informational.
 

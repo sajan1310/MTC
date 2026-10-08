@@ -203,8 +203,8 @@ def test_check_stock_adjustment_conflicts_empty_when_no_history(erp_client):
 
 
 def test_bill_moves_current_stock_away_from_initial(erp_client):
-    """First real (non-zero) exercise of a _get_billed_and_consumed_qty_maps
-    term (Phase 2c) -- everything before this round only ever saw
+    """First real (non-zero) exercise of a _get_stock_terms movement term
+    (Phase 2c) -- everything before this round only ever saw
     currentStock == initialStock, since no source table had a real query.
     """
     name = _unique_name("BilledStockItem")
