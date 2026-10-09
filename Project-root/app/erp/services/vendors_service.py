@@ -251,7 +251,7 @@ def sync_vendors_from_po_history(conn, cur):
     """
     cur.execute(
         """
-        SELECT h.vendor, h.contact, l.item_name, l.size, l.narration, l.unit, l.base_rate
+        SELECT h.vendor, h.contact, l.item_name, l.size, l.narration, l.unit, l.price, l.base_rate
         FROM erp.po_headers h
         JOIN erp.po_lines l ON l.header_id = h.id
         WHERE h.deleted_at IS NULL
@@ -276,6 +276,9 @@ def sync_vendors_from_po_history(conn, cur):
             and rate is not None
             and float(rate) >= items_service.MIN_VENDOR_RATE
         ):
+            # Filed in the line's own unit, as a live save files it --
+            # see po_service._auto_extract_from_po.
+            rate = row["price"]
             items_service._auto_extract_item(
                 cur,
                 item_name,

@@ -375,6 +375,9 @@ def _load_bill_list(cur, only_header_id=None) -> list:
     cur.execute(query, params)
     rows = cur.fetchall()
 
+    item_unit_map = items_service.get_item_unit_info_map(cur) if rows else {}
+    units_map = units_service.get_units_map(cur) if rows else {}
+
     bill_map: dict = {}
     for row in rows:
         key = f"{row['vendor'].strip().lower()}|{row['bill_number'].strip().lower()}"
@@ -422,12 +425,13 @@ def _load_bill_list(cur, only_header_id=None) -> list:
         if line_bill_type == "LABOR":
             bill["billType"] = "LABOR"
 
+        unit = row["unit"] or "Pcs"
         bill["items"].append(
             {
                 "name": row["item_name"],
                 "size": row["size"] or "",
                 "narration": row["narration"] or "",
-                "unit": row["unit"] or "Pcs",
+                "unit": unit,
                 "qty": qty,
                 "price": price,
                 "gstRatePct": gst_rate_pct,
@@ -435,6 +439,16 @@ def _load_bill_list(cur, only_header_id=None) -> list:
                 "poNumber": row_po_num,
                 "baseQty": float(row["base_qty"]),
                 "baseRate": float(row["base_rate"]),
+                # What a rate suggested from this line is measured in --
+                # see units_service.rate_per_base_unit_now.
+                "ratePerBaseUnit": units_service.rate_per_base_unit_now(
+                    price,
+                    unit,
+                    items_service.lookup_item_unit_info(
+                        item_unit_map, row["item_name"], row["size"] or ""
+                    ),
+                    units_map,
+                ),
                 "affectsStock": bool(row["affects_stock"]),
                 "billType": line_bill_type,
                 # Labor Job lines only -- which Process this line's job-work
@@ -758,6 +772,7 @@ def save_bill(conn, cur, form_data):
                 "size": size,
                 "narration": narration,
                 "unit": unit,
+                "price": price,
                 "baseRate": base_rate,
                 "poNumber": item_po_number,
             }
@@ -769,6 +784,8 @@ def save_bill(conn, cur, form_data):
         rate = item["baseRate"]
         if rate < _MIN_VENDOR_RATE:
             continue
+        # The vendor's rate in the unit it was charged in, beside that unit
+        # as the Purchase Unit -- see po_service._auto_extract_from_po.
         items_service._auto_extract_item(
             cur,
             item["name"],
@@ -776,7 +793,7 @@ def save_bill(conn, cur, form_data):
             item["narration"],
             item["unit"],
             vendor,
-            rate,
+            item["price"],
         )
         cur.execute(
             """

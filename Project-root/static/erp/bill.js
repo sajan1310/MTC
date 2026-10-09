@@ -760,8 +760,14 @@ App.Bill = {
 
   getRowHtml(item = {}) {
     const rowUid = `bill-${++App.State.rowSeq}`;
+    // A saved line keeps the unit it was billed in (see
+    // App.Utils.applyDefaultBaseUnit), and shows what it comes to.
+    const unitItem = item.name ? App.Utils.itemUnitKey(item.name, item.size) : '';
+    const unitHint = item.name
+      ? App.Utils.unitHintText(App.Utils.findItemRecord(item.name, item.size), item.qty, item.unit || 'Pcs')
+      : '';
     return `
-    <tr data-po="${escapeHtml(String(item.poNumber || ''))}" data-row-uid="${rowUid}" data-auto-matched="${item.autoMatched ? 'auto' : ''}" data-process-name="${escapeHtml(item.processName || '')}" data-color="${escapeHtml(item.color || '')}">
+    <tr${unitItem ? ` data-unit-item="${escapeHtml(unitItem)}"` : ''} data-po="${escapeHtml(String(item.poNumber || ''))}" data-row-uid="${rowUid}" data-auto-matched="${item.autoMatched ? 'auto' : ''}" data-process-name="${escapeHtml(item.processName || '')}" data-color="${escapeHtml(item.color || '')}">
       <td class="goods-col"><input type="text"   class="form-control b-item-name"  list="itemList" value="${escapeHtml(item.name || '')}" ${App.Bill.isLaborMode() ? '' : 'required'}>
           <div class="po-match-info small mt-1" data-role="po-match-info"></div></td>
       <td class="goods-col"><input type="text"   class="form-control b-item-size"  list="sizeList-${rowUid}" value="${escapeHtml(item.size || '')}">
@@ -770,7 +776,8 @@ App.Bill = {
       <td class="labor-col"><select class="form-select b-color-select"></select></td>
       <td><input type="text"   class="form-control b-item-narration" list="narrationList-${rowUid}" value="${escapeHtml(item.narration || '')}">
           <datalist class="row-narration-list" id="narrationList-${rowUid}"></datalist></td>
-      <td><input type="number" class="form-control b-item-qty"                   value="${escapeHtml(String(item.qty ?? ''))}" required></td>
+      <td><input type="number" class="form-control b-item-qty"                   value="${escapeHtml(String(item.qty ?? ''))}" required>
+          <div class="form-text unit-conv-hint" data-role="unit-conv-hint">${escapeHtml(unitHint)}</div></td>
       <td><input type="text"   class="form-control item-unit"    list="unitList" value="${escapeHtml(item.unit || 'Pcs')}"></td>
       <td><input type="number" class="form-control b-item-price" step="0.01"     value="${escapeHtml(String(item.price ?? ''))}" required>
           <div class="rate-conflict-info small mt-1" data-role="rate-conflict-info"></div></td>
@@ -997,7 +1004,20 @@ App.Bill = {
     );
   },
 
-  getLatestRate(itemName, itemSize, itemNarration, vendorName, poNumber) {
+  // The rate to suggest for a line, in `unit` -- the unit the line is in
+  // (its item's Base Unit unless the operator picked another). Each source
+  // is quoted in its own unit: a PO or bill line in the unit it was raised
+  // in, a vendor's Items Master rate per the item's Purchase Unit. So each
+  // is brought to `unit` through its rate per Base Unit
+  // (App.Utils.rateInUnit) -- a rate of Rs 100 a Gross is Rs 0.6944 a
+  // piece. With no `unit`, the rate per Base Unit itself, which is what the
+  // phone's lines -- always in the Base Unit -- are filled with.
+  getLatestRate(itemName, itemSize, itemNarration, vendorName, poNumber, unit) {
+    const source = this._latestRateSource(itemName, itemSize, itemNarration, vendorName, poNumber);
+    return App.Utils.rateInUnit(source, unit, App.Utils.findItemRecord(itemName, itemSize));
+  },
+
+  _latestRateSource(itemName, itemSize, itemNarration, vendorName, poNumber) {
     const nameLower = String(itemName || '').trim().toLowerCase();
     const sizeLower = String(itemSize || '').trim().toLowerCase();
     const narrationLower = String(itemNarration || '').trim().toLowerCase();
@@ -1014,7 +1034,7 @@ App.Bill = {
           String(i.size || '').trim().toLowerCase() === sizeLower &&
           String(i.narration || '').trim().toLowerCase() === narrationLower
         );
-        if (poItem) return poItem.price;
+        if (poItem) return { rate: poItem.price, unit: poItem.unit, perBase: poItem.ratePerBaseUnit };
       }
     }
 
@@ -1025,7 +1045,13 @@ App.Bill = {
     );
     if (masterItem && vendorLower) {
       const vRate = (masterItem.vendors || []).find(v => String(v.vendor).trim().toLowerCase() === vendorLower);
-      if (vRate) return vRate.rate;
+      if (vRate) {
+        return {
+          rate: vRate.rate,
+          unit: masterItem.purchaseUnit || masterItem.baseUnit || 'Pcs',
+          perBase: vRate.ratePerBaseUnit
+        };
+      }
     }
 
     // 3/4. Fallback: search PO history, then Bill history. Item identity
@@ -1043,7 +1069,7 @@ App.Bill = {
           String(i.size || '').trim().toLowerCase() === sizeLower &&
           (!requireNarrationMatch || String(i.narration || '').trim().toLowerCase() === narrationLower)
         );
-        if (line) return line.price;
+        if (line) return { rate: line.price, unit: line.unit, perBase: line.ratePerBaseUnit };
       }
       return null;
     };
@@ -1097,12 +1123,17 @@ App.Bill = {
     const vendor = document.getElementById('billVendor')?.value || '';
     const poNumber = row?.dataset?.po || '';
     const priceInput = $('.b-item-price', row);
+    const unit = $('.item-unit', row)?.value?.trim() || 'Pcs';
 
     if (!name || !priceInput) return;
+    // A price the operator typed is theirs; one this filled in follows the
+    // row's item, vendor and unit.
+    if (Number(priceInput.value) > 0 && priceInput.dataset.autoRate !== '1') return;
 
-    const rate = this.getLatestRate(name, size, narration, vendor, poNumber);
+    const rate = this.getLatestRate(name, size, narration, vendor, poNumber, unit);
     if (rate !== null && rate > 0) {
       priceInput.value = rate;
+      priceInput.dataset.autoRate = '1';
     }
   },
 
@@ -1233,15 +1264,24 @@ App.Bill = {
         const name = $('.b-item-name', row)?.value?.trim().toLowerCase() || '';
         const size = $('.b-item-size', row)?.value?.trim().toLowerCase() || '';
         const billRate = toNumber($('.b-item-price', row)?.value);
+        const billUnit = $('.item-unit', row)?.value?.trim() || 'Pcs';
         const po = vendorPOs.find(p => String(p.poNumber) === select.value);
         const poItem = po?.items?.find(i =>
           String(i.name || '').trim().toLowerCase() === name &&
           String(i.size || '').trim().toLowerCase() === size
         );
-        if (poItem && billRate > 0 && Math.abs(poItem.price - billRate) > 0.01) {
+        // Compared in the bill line's own unit: a PO at Rs 100 a Gross and
+        // a bill at Rs 0.6944 a piece agree.
+        const poRateInBillUnit = poItem
+          ? App.Utils.rateInUnit(
+            { rate: poItem.price, unit: poItem.unit, perBase: poItem.ratePerBaseUnit },
+            billUnit, App.Utils.findItemRecord(name, size))
+          : null;
+        const comparable = poRateInBillUnit !== null ? poRateInBillUnit : poItem?.price;
+        if (poItem && billRate > 0 && Math.abs(comparable - billRate) > 0.01) {
           App.Bill.renderRateConflict(row, {
-            poRate: poItem.price, poUnit: poItem.unit,
-            billRate, billUnit: $('.item-unit', row)?.value?.trim() || 'Pcs'
+            poRate: poItem.price, poUnit: poItem.unit, poRateInBillUnit,
+            billRate, billUnit
           });
         } else {
           App.Bill.renderRateConflict(row, null);
@@ -1372,26 +1412,35 @@ App.Bill = {
     if (!info) return;
     if (!conflict) { info.innerHTML = ''; return; }
 
-    row.dataset.poRate = conflict.poRate;
-    row.dataset.poRateUnit = conflict.poUnit || '';
+    const k = v => String(v || '').trim().toLowerCase();
+    const sameUnit = k(conflict.poUnit) === k(conflict.billUnit);
+    const inBillUnit = sameUnit ? conflict.poRate : conflict.poRateInBillUnit;
+    // The PO's rate in this line's unit, or nothing to offer: adopting it
+    // never changes the line's unit (that would re-read its quantity).
+    row.dataset.poRate = inBillUnit !== null && inBillUnit !== undefined ? String(inBillUnit) : '';
+    const poSide = sameUnit || inBillUnit === null || inBillUnit === undefined
+      ? `₹${escapeHtml(String(conflict.poRate))}/${escapeHtml(conflict.poUnit || 'unit')}`
+      : `₹${escapeHtml(String(conflict.poRate))}/${escapeHtml(conflict.poUnit || 'unit')} (₹${escapeHtml(String(inBillUnit))}/${escapeHtml(conflict.billUnit || 'unit')})`;
     info.innerHTML = `
       <span class="badge bg-warning-subtle text-warning-emphasis">
-        PO rate: ₹${escapeHtml(String(conflict.poRate))}/${escapeHtml(conflict.poUnit || 'unit')}
+        PO rate: ${poSide}
         vs Bill: ₹${escapeHtml(String(conflict.billRate))}/${escapeHtml(conflict.billUnit || 'unit')}
       </span>
-      <a href="#" class="ms-1" data-action="use-po-rate">Use PO rate</a> ·
+      ${row.dataset.poRate ? '<a href="#" class="ms-1" data-action="use-po-rate">Use PO rate</a> ·' : ''}
       <a href="#" data-action="keep-bill-rate">Keep bill rate</a>`;
   },
 
-  // Resolves a rate conflict notice: 'use-po-rate' overwrites the row's
-  // price (and unit) with the PO's quoted figure; 'keep-bill-rate' just
-  // dismisses the notice and leaves the as-entered bill rate in place.
+  // Resolves a rate conflict notice: 'use-po-rate' puts the PO's rate,
+  // quoted in this line's unit, in the row's price -- the unit stays the
+  // operator's; 'keep-bill-rate' just dismisses the notice and leaves the
+  // as-entered bill rate in place.
   resolveRateConflict(row, action) {
     if (action === 'use-po-rate') {
       const priceInput = $('.b-item-price', row);
-      const unitInput = $('.item-unit', row);
-      if (priceInput && row.dataset.poRate) priceInput.value = row.dataset.poRate;
-      if (unitInput && row.dataset.poRateUnit) unitInput.value = row.dataset.poRateUnit;
+      if (priceInput && row.dataset.poRate) {
+        priceInput.value = row.dataset.poRate;
+        delete priceInput.dataset.autoRate;
+      }
     }
     App.Bill.renderRateConflict(row, null);
   }
@@ -1507,16 +1556,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (e.target.matches('.b-item-name, .b-item-size')) {
-      App.Utils.applyDefaultPurchaseUnit(e.target, '.b-item-name', '.b-item-size', '.item-unit');
+      App.Utils.applyDefaultBaseUnit(e.target, '.b-item-name', '.b-item-size', '.item-unit');
       const row = e.target.closest('tr');
       if (row) App.Bill.refreshNarrationList(row);
     }
 
-    if (e.target.matches('.b-item-name, .b-item-size, .b-item-narration')) {
+    // A unit the operator picked re-quotes a suggested rate in it.
+    if (e.target.matches('.b-item-name, .b-item-size, .b-item-narration, #billItemsBody .item-unit')) {
       const row = e.target.closest('tr');
       if (row) {
         App.Bill.autoFillRate(row);
       }
+    }
+    if (e.target.matches('.b-item-price')) {
+      delete e.target.dataset.autoRate;
+    }
+    if (e.target.matches('.b-item-name, .b-item-size, .b-item-qty, #billItemsBody .item-unit')) {
+      App.Utils.refreshUnitHint(e.target.closest('tr'), '.b-item-name', '.b-item-size', '.b-item-qty');
     }
 
     // Re-suggest PO matches when a row's identifying fields settle. Only
@@ -1525,7 +1581,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // real PO number, autoMatched = 'auto') must keep re-arming here too,
     // or once ANY suggestion lands it can never be re-evaluated again as
     // the user keeps editing qty/name/etc.
-    if (e.target.matches('.b-item-name, .b-item-size, .b-item-narration, .b-item-qty, .b-item-price')) {
+    if (e.target.matches('.b-item-name, .b-item-size, .b-item-narration, .b-item-qty, .b-item-price, #billItemsBody .item-unit')) {
       const row = e.target.closest('tr');
       if (row && row.dataset.autoMatched !== 'manual') {
         clearTimeout(App.State.billAutoMatchTimer);
@@ -1561,7 +1617,7 @@ document.addEventListener('DOMContentLoaded', () => {
     App.Bill.refreshRowNarrationLists();
     $$('#billItemsBody tr').forEach(row => {
       const priceInput = $('.b-item-price', row);
-      if (priceInput && (!Number(priceInput.value) || Number(priceInput.value) === 0)) {
+      if (priceInput && (!Number(priceInput.value) || priceInput.dataset.autoRate === '1')) {
         App.Bill.autoFillRate(row);
       }
     });

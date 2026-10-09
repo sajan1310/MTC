@@ -1198,6 +1198,9 @@ def _auto_extract_item(
       change printed production sheets. Purchase Unit is kept synced to
       whatever unit was actually used on this line; this vendor's rate is
       inserted or updated (existing rates for other vendors are untouched).
+      `rate` must be quoted per that same unit -- the line's own price --
+      because every reader takes a vendor rate as per the Purchase Unit
+      (_row_to_item_record's ratePerBaseUnit, BOM costing, rate fill).
 
     Returns the item's id.
     """

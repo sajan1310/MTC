@@ -507,8 +507,11 @@ App.Return = {
 
   getRowHtml(item = {}) {
     const rowUid = `return-${++App.State.rowSeq}`;
+    // A saved line keeps the unit it was entered in until a different item
+    // is chosen on it (App.Utils.applyDefaultBaseUnit).
+    const unitItem = item.name ? App.Utils.itemUnitKey(item.name, item.size) : '';
     return `
-    <tr data-row-uid="${rowUid}">
+    <tr data-row-uid="${rowUid}"${unitItem ? ` data-unit-item="${escapeHtml(unitItem)}"` : ''}>
       <td><input type="text"   class="form-control r-item-name"  list="itemList" value="${escapeHtml(item.name || '')}" required></td>
       <td><input type="text"   class="form-control r-item-size"  list="sizeList-${rowUid}" value="${escapeHtml(item.size || '')}">
           <datalist class="row-size-list" id="sizeList-${rowUid}"></datalist></td>
@@ -867,8 +870,11 @@ App.Wastage = {
   // no item name is skipped instead, and submit() checks the rest.
   getRowHtml(item = {}) {
     const rowUid = `wastage-${++App.State.rowSeq}`;
+    // A saved line keeps the unit it was entered in until a different item
+    // is chosen on it (App.Utils.applyDefaultBaseUnit).
+    const unitItem = item.name ? App.Utils.itemUnitKey(item.name, item.size) : '';
     return `
-    <tr data-row-uid="${rowUid}">
+    <tr data-row-uid="${rowUid}"${unitItem ? ` data-unit-item="${escapeHtml(unitItem)}"` : ''}>
       <td><input type="text" class="form-control w-item-name" list="itemList" value="${escapeHtml(item.name || '')}" placeholder="Item name"></td>
       <td><input type="text" class="form-control w-item-size" list="sizeList-${rowUid}" value="${escapeHtml(item.size || '')}" placeholder="Size">
           <datalist class="row-size-list" id="sizeList-${rowUid}"></datalist></td>
@@ -1316,6 +1322,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (e.target.matches('#wastageItemsBody .w-item-name')) {
       App.Utils.applyDependentSizeList(e.target, '.w-item-size');
+    }
+    // A line is in its item's Base Unit unless the operator picks another.
+    if (e.target.matches('#returnItemsBody .r-item-name, #returnItemsBody .r-item-size')) {
+      App.Utils.applyDefaultBaseUnit(e.target, '.r-item-name', '.r-item-size', '.item-unit');
+    }
+    if (e.target.matches('#wastageItemsBody .w-item-name, #wastageItemsBody .w-item-size')) {
+      App.Utils.applyDefaultBaseUnit(e.target, '.w-item-name', '.w-item-size', '.item-unit');
     }
     // ...and each pool row's colours to the buckets of the item chosen.
     if (e.target.matches('#wastagePoolItemsBody .wp-item-name')) {

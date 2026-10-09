@@ -451,7 +451,13 @@
 // later count already holds ("inside the count"), and its stock table shows
 // the last count instead of Initial Stock. print-templates.js is precached,
 // so without the bump an installed client renders the new rows the old way.
-const CACHE_NAME = 'erp-shell-v89';
+// v90: a PO, bill, return, wastage or issue line starts in its item's Base
+// Unit and changes unit only when the operator picks one; a line in another
+// unit shows what it comes to ("= 28800 Pcs"), and a suggested rate is
+// quoted in the line's unit. core.js, po.js, bill.js, return.js and issue.js
+// are precached, so without the bump an installed client keeps defaulting
+// to the Purchase Unit.
+const CACHE_NAME = 'erp-shell-v90';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

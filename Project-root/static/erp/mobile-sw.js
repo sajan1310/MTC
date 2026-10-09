@@ -148,7 +148,10 @@
 // stock card shows a count as "counted N" and a movement a later count
 // already holds as "inside count"; the printed Item Ledger shows the last
 // count instead of Initial Stock.
-const CACHE_NAME = 'erp-mobile-shell-v78';
+// v79: a rate suggested for a PO or bill line is per the item's Base Unit,
+// the unit the line is in -- a vendor quoting Rs 100 a Gross fills a line of
+// pieces at Rs 0.6944, not Rs 100 a piece.
+const CACHE_NAME = 'erp-mobile-shell-v79';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so
