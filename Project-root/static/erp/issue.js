@@ -353,8 +353,11 @@ App.Issue = {
 
   getRowHtml(item = {}) {
     const rowUid = `issue-${++App.State.rowSeq}`;
+    // A saved line keeps the unit it was entered in until a different item
+    // is chosen on it (App.Utils.applyDefaultBaseUnit).
+    const unitItem = item.name ? App.Utils.itemUnitKey(item.name, item.size) : '';
     return `
-    <tr data-row-uid="${rowUid}">
+    <tr data-row-uid="${rowUid}"${unitItem ? ` data-unit-item="${escapeHtml(unitItem)}"` : ''}>
       <td><input type="text" class="form-control i-item-name" list="itemList" value="${escapeHtml(item.name || '')}" required placeholder="Item name"></td>
       <td><input type="text" class="form-control i-item-size" list="sizeList-${rowUid}" value="${escapeHtml(item.size || '')}" placeholder="Size">
           <datalist class="row-size-list" id="sizeList-${rowUid}"></datalist></td>
@@ -530,6 +533,10 @@ document.addEventListener('DOMContentLoaded', function () {
   document.addEventListener('input', e => {
     if (e.target.matches('#issueItemsBody .i-item-name')) {
       App.Utils.applyDependentSizeList(e.target, '.i-item-size');
+    }
+    // A line is in its item's Base Unit unless the operator picks another.
+    if (e.target.matches('#issueItemsBody .i-item-name, #issueItemsBody .i-item-size')) {
+      App.Utils.applyDefaultBaseUnit(e.target, '.i-item-name', '.i-item-size', '.item-unit');
     }
   });
 });

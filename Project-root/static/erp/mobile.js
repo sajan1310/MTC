@@ -8236,8 +8236,17 @@ MApp.PurchaseHints = {
   // vendor's rate in Items Master; else the latest PO, then bill, for this
   // item + size (+ vendor, when there is one), an exact narration first.
   // Says where the rate came from as well, so the form can.
+  //
+  // Per the item's Base Unit, the unit every line here is in: a vendor's
+  // rate is held per the item's Purchase Unit and a PO or bill line's in
+  // its own unit, so each comes as its ratePerBaseUnit -- Rs 100 a Gross
+  // fills a line of pieces at Rs 0.6944, not at Rs 100 a piece.
   latestRate({ pos, bills, items }, { name, size, narration, vendor }) {
     const k = v => this._k(v);
+    const perBase = (converted, asQuoted) => {
+      const n = converted !== undefined && converted !== null ? Number(converted) : Number(asQuoted);
+      return Math.round(n * 10000) / 10000;
+    };
     const nameKey = k(name);
     const sizeKey = k(size);
     const narrationKey = k(narration);
@@ -8247,7 +8256,7 @@ MApp.PurchaseHints = {
     const master = (items || []).find(i => k(i.name) === nameKey && k(i.size) === sizeKey);
     if (master && vendorKey) {
       const v = (master.vendors || []).find(x => k(x.vendor) === vendorKey);
-      if (v) return { rate: v.rate, source: 'this vendor\'s rate in Items Master' };
+      if (v) return { rate: perBase(v.ratePerBaseUnit, v.rate), source: 'this vendor\'s rate in Items Master' };
     }
 
     const find = (records, exactNarration, describe) => {
@@ -8256,7 +8265,7 @@ MApp.PurchaseHints = {
         const line = (rec.items || []).find(i =>
           k(i.name) === nameKey && k(i.size) === sizeKey &&
           (!exactNarration || k(i.narration) === narrationKey));
-        if (line) return { rate: line.price, source: describe(rec) };
+        if (line) return { rate: perBase(line.ratePerBaseUnit, line.price), source: describe(rec) };
       }
       return null;
     };

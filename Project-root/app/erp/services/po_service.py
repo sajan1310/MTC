@@ -254,8 +254,19 @@ def _auto_extract_from_po(
         if rate < _MIN_VENDOR_RATE:
             continue
 
+        # Items Master holds a vendor's rate in the unit it was quoted in:
+        # _auto_extract_item files this line's unit as the Purchase Unit
+        # beside it, and every reader converts from that unit. Handed the
+        # base rate instead, it filed spokes bought at Rs 100 a Gross as
+        # Rs 0.69 a Gross. Rate History stays per Base Unit.
         items_service._auto_extract_item(
-            cur, name, item["size"], item["narration"], item["unit"], vendor_name, rate
+            cur,
+            name,
+            item["size"],
+            item["narration"],
+            item["unit"],
+            vendor_name,
+            item["price"],
         )
 
         cur.execute(
@@ -308,6 +319,9 @@ def _load_po_list(cur, billed_map: dict, only_po_number: str | None = None) -> l
     cur.execute(query, params)
     rows = cur.fetchall()
 
+    item_unit_map = items_service.get_item_unit_info_map(cur) if rows else {}
+    units_map = units_service.get_units_map(cur) if rows else {}
+
     po_map: dict = {}
     for row in rows:
         po_number = row["po_number"]
@@ -330,16 +344,27 @@ def _load_po_list(cur, billed_map: dict, only_po_number: str | None = None) -> l
 
         qty = float(row["qty"])
         price = float(row["price"])
+        unit = row["unit"] or "Pcs"
         po["items"].append(
             {
                 "name": row["item_name"],
                 "narration": row["narration"] or "",
                 "size": row["size"] or "",
                 "qty": qty,
-                "unit": row["unit"] or "Pcs",
+                "unit": unit,
                 "price": price,
                 "baseQty": float(row["base_qty"]),
                 "baseRate": float(row["base_rate"]),
+                # What a rate suggested from this line is measured in --
+                # see units_service.rate_per_base_unit_now.
+                "ratePerBaseUnit": units_service.rate_per_base_unit_now(
+                    price,
+                    unit,
+                    items_service.lookup_item_unit_info(
+                        item_unit_map, row["item_name"], row["size"] or ""
+                    ),
+                    units_map,
+                ),
             }
         )
         po["grandTotal"] += qty * price
@@ -765,7 +790,11 @@ def suggest_po_allocations(vendor, items, bill_date=None):
                             "narration": str(po_item["narration"] or ""),
                             "price": po_item["price"],
                             "unit": str(po_item["unit"] or "Pcs"),
-                            "baseRate": po_item["baseRate"],
+                            # Today's reading of the PO's rate, not the one
+                            # stored with it -- a line saved while its unit
+                            # was missing holds a base rate 144x too high,
+                            # and would disagree with every bill line.
+                            "baseRate": po_item["ratePerBaseUnit"],
                             "remainingBaseQty": remaining_base_qty,
                         }
                     )
@@ -885,6 +914,9 @@ def suggest_po_allocations(vendor, items, bill_date=None):
                     allocation["rateConflict"] = {
                         "poRate": c["price"],
                         "poUnit": c["unit"],
+                        # What adopting the PO's rate puts on this line --
+                        # quoted in the line's own unit, which stays.
+                        "poRateInBillUnit": allocation["poRateInBillUnit"],
                         "billRate": price,
                         "billUnit": unit,
                     }

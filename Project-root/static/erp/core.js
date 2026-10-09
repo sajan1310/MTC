@@ -1515,12 +1515,99 @@ const App = {
       if (sizes.length === 1 && !sizeInput.value.trim()) sizeInput.value = sizes[0];
     },
 
-    // Defaults a PO/Bill row's Unit field to the matched item's Purchase
-    // Unit (e.g. 'Gross') so the market-quoted unit is pre-selected instead
-    // of the generic 'Pcs' placeholder every row starts with. Only
-    // overwrites when the field still holds that generic default -- never
-    // clobbers a unit the user already picked deliberately.
-    applyDefaultPurchaseUnit(triggerEl, nameSelector, sizeSelector, unitSelector) {
+    // The Items Master record for a name + size, or undefined.
+    findItemRecord(name, size) {
+      const k = v => String(v || '').trim().toLowerCase();
+      return (App.State.globalItems || []).find(i =>
+        k(i.name) === k(name) && k(i.size) === k(size));
+    },
+
+    // How many of an item's Base Unit one `unitName` makes -- the rule
+    // units_service.convert_qty_to_base_unit saves by: a factor ratio
+    // within one family, Weight -> Count through the item's weight per Base
+    // Unit, and a unit the Units master doesn't know counted as one Base
+    // Unit. null when the two can't be converted.
+    baseUnitsPer(unitName, item) {
+      const k = v => String(v || '').trim().toLowerCase();
+      const units = App.State.globalUnits || [];
+      const find = name => units.find(u => k(u.unitName) === k(name));
+      const base = find((item && item.baseUnit) || 'Pcs') || { family: 'Count', factorToBase: 1 };
+      const from = find(unitName) || { family: base.family, factorToBase: 1 };
+      if (from.family === base.family) {
+        return Number(from.factorToBase) / (Number(base.factorToBase) || 1);
+      }
+      const weight = Number(item && item.weightPerBaseUnit) || 0;
+      if (from.family === 'Weight' && base.family === 'Count' && weight > 0) {
+        return Number(from.factorToBase) / weight;
+      }
+      return null;
+    },
+
+    // A suggested rate brought into the unit a line is in. `source` is
+    // { rate, unit, perBase }: a figure as quoted, the unit it was quoted
+    // in, and its rate per Base Unit (ratePerBaseUnit, from the server).
+    // In its own unit it comes back untouched; with no `unit`, per Base
+    // Unit. null when the units can't be converted -- no rate is better
+    // than one in the wrong unit.
+    rateInUnit(source, unit, item) {
+      if (!source) return null;
+      const k = v => String(v || '').trim().toLowerCase();
+      const perBase = source.perBase !== undefined && source.perBase !== null
+        ? Number(source.perBase) : Number(source.rate);
+      if (!unit) return Math.round(perBase * 10000) / 10000;
+      if (k(unit) === k(source.unit)) return Number(source.rate);
+      const per = App.Utils.baseUnitsPer(unit, item);
+      if (per === null || !(per > 0)) return null;
+      return Math.round(perBase * per * 10000) / 10000;
+    },
+
+    // What a row's quantity comes to in its item's Base Unit -- "= 28800
+    // Pcs" -- whenever it is entered in a unit that converts; '' otherwise.
+    unitHintText(item, qty, unit) {
+      if (!item || !unit) return '';
+      const baseUnit = item.baseUnit || 'Pcs';
+      if (String(unit).trim().toLowerCase() === baseUnit.trim().toLowerCase()) return '';
+      const per = App.Utils.baseUnitsPer(unit, item);
+      if (per === null || per === 1) return '';
+      const n = toNumber(qty);
+      return n > 0
+        ? `= ${formatQty(n * per)} ${baseUnit}`
+        : `1 ${String(unit).trim()} = ${formatQty(per)} ${baseUnit}`;
+    },
+
+    // Keeps a row's "= N Pcs" line (data-role="unit-conv-hint", under its
+    // quantity) in step with its item, quantity and unit.
+    refreshUnitHint(row, nameSelector, sizeSelector, qtySelector) {
+      if (!row) return;
+      const qtyInput = row.querySelector(qtySelector);
+      if (!qtyInput) return;
+      const name = row.querySelector(nameSelector)?.value?.trim() || '';
+      const size = row.querySelector(sizeSelector)?.value?.trim() || '';
+      const unit = row.querySelector('.item-unit')?.value?.trim() || '';
+      const text = name ? App.Utils.unitHintText(App.Utils.findItemRecord(name, size), qtyInput.value, unit) : '';
+      let hint = row.querySelector('[data-role="unit-conv-hint"]');
+      if (!hint) {
+        if (!text) return;
+        hint = document.createElement('div');
+        hint.className = 'form-text unit-conv-hint';
+        hint.dataset.role = 'unit-conv-hint';
+        qtyInput.insertAdjacentElement('afterend', hint);
+      }
+      hint.textContent = text;
+    },
+
+    // A PO/Bill row's Unit is its item's Base Unit, and only the operator
+    // changes it: a quantity and rate are read in another unit only when
+    // someone picked that unit on the row. Choosing a different item puts
+    // the row back on that item's Base Unit; a row opened from a saved
+    // document (getRowHtml stamps data-unit-item) keeps its saved unit
+    // until then.
+    //
+    // It used to take the item's Purchase Unit, which every save rewrites
+    // to the unit its line used -- so the same spoke defaulted to Gross on
+    // one bill and to Pcs on the next, and one bill typed in pieces turned
+    // the next PO to pieces too.
+    applyDefaultBaseUnit(triggerEl, nameSelector, sizeSelector, unitSelector) {
       const row = triggerEl.closest('tr');
       if (!row) return;
       const unitInput = row.querySelector(unitSelector);
@@ -1532,17 +1619,19 @@ const App = {
       const size = sizeInput ? sizeInput.value.trim() : '';
       if (!name) return;
 
-      const item = (App.State.globalItems || []).find(i =>
-        String(i.name || '').trim().toLowerCase() === name.toLowerCase() &&
-        String(i.size || '').trim().toLowerCase() === size.toLowerCase()
-      );
+      const item = App.Utils.findItemRecord(name, size);
       if (!item) return;
 
-      const purchaseUnit = item.purchaseUnit || item.baseUnit || 'Pcs';
-      const current = unitInput.value.trim();
-      if (!current || current === 'Pcs') {
-        unitInput.value = purchaseUnit;
-      }
+      const key = App.Utils.itemUnitKey(name, size);
+      if (row.dataset.unitItem === key) return;
+      row.dataset.unitItem = key;
+      unitInput.value = item.baseUnit || 'Pcs';
+    },
+
+    // The data-unit-item stamp a row carries for the item its unit was set
+    // for (see applyDefaultBaseUnit).
+    itemUnitKey(name, size) {
+      return `${String(name || '').trim().toLowerCase()}|${String(size || '').trim().toLowerCase()}`;
     },
 
     // Aggregates outstanding (ordered - billed) quantity per item (name+size)

@@ -778,14 +778,21 @@ App.PO = {
 
   getRowHtml(item = {}) {
     const rowUid = `po-${++App.State.rowSeq}`;
+    // A saved line keeps the unit it was raised in (see
+    // App.Utils.applyDefaultBaseUnit), and shows what it comes to.
+    const unitItem = item.name ? App.Utils.itemUnitKey(item.name, item.size) : '';
+    const unitHint = item.name
+      ? App.Utils.unitHintText(App.Utils.findItemRecord(item.name, item.size), item.qty, item.unit || 'Pcs')
+      : '';
     return `
-    <tr>
+    <tr${unitItem ? ` data-unit-item="${escapeHtml(unitItem)}"` : ''}>
       <td><input type="text"   class="form-control item-name"      list="itemList" value="${escapeHtml(item.name || '')}" required></td>
       <td><input type="text"   class="form-control item-narration" list="narrationList-${rowUid}" value="${escapeHtml(item.narration || '')}">
           <datalist class="row-narration-list" id="narrationList-${rowUid}"></datalist></td>
       <td><input type="text"   class="form-control item-size"      list="sizeList-${rowUid}" value="${escapeHtml(item.size || '')}">
           <datalist class="row-size-list" id="sizeList-${rowUid}"></datalist></td>
-      <td><input type="number" class="form-control item-qty"   min="0" step="any"   value="${escapeHtml(String(item.qty ?? ''))}" required></td>
+      <td><input type="number" class="form-control item-qty"   min="0" step="any"   value="${escapeHtml(String(item.qty ?? ''))}" required>
+          <div class="form-text unit-conv-hint" data-role="unit-conv-hint">${escapeHtml(unitHint)}</div></td>
       <td><input type="text"   class="form-control item-unit"      list="unitList" value="${escapeHtml(item.unit || 'Pcs')}"></td>
       <td><input type="number" class="form-control item-price" min="0" step="0.01"   value="${escapeHtml(String(item.price ?? ''))}" required></td>
       <td><button type="button" class="btn btn-outline-danger btn-sm" data-action="remove-row">✕</button></td>
@@ -816,9 +823,11 @@ App.PO = {
       return;
     }
 
+    // Each vendor's rate is held per the item's Purchase Unit.
+    const perUnit = item.purchaseUnit || item.baseUnit || 'Pcs';
     const parts = item.vendors.map(v => {
       const isCurrent = vendorName && (v.vendor || '').trim().toLowerCase() === vendorName;
-      const label = `${escapeHtml(App.Utils.formatNameCase(v.vendor))}: <strong>${formatCurrency(v.rate)}</strong>`;
+      const label = `${escapeHtml(App.Utils.formatNameCase(v.vendor))}: <strong>${formatCurrency(v.rate)}</strong>/${escapeHtml(perUnit)}`;
       return isCurrent ? `<span class="text-primary">${label}</span>` : label;
     });
 
@@ -839,13 +848,17 @@ App.PO = {
     const narration = $('.item-narration', row)?.value?.trim() || '';
     const vendor = document.getElementById('formVendor')?.value || '';
     const priceInput = $('.item-price', row);
+    const unit = $('.item-unit', row)?.value?.trim() || 'Pcs';
 
     if (!name || !priceInput) return;
-    if (Number(priceInput.value) > 0) return;
+    // A price the operator typed is theirs; one this filled in follows the
+    // row's item, vendor and unit.
+    if (Number(priceInput.value) > 0 && priceInput.dataset.autoRate !== '1') return;
 
-    const rate = App.Bill.getLatestRate(name, size, narration, vendor, '');
+    const rate = App.Bill.getLatestRate(name, size, narration, vendor, '', unit);
     if (rate !== null && rate > 0) {
       priceInput.value = rate;
+      priceInput.dataset.autoRate = '1';
     }
   },
 
@@ -1094,14 +1107,24 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('input', e => {
     if (e.target.matches('#itemsBody .item-name')) {
       App.Utils.applyDependentSizeList(e.target, '.item-size');
-      App.Utils.applyDefaultPurchaseUnit(e.target, '.item-name', '.item-size', '.item-unit');
+      App.Utils.applyDefaultBaseUnit(e.target, '.item-name', '.item-size', '.item-unit');
       App.PO.refreshNarrationList(e.target.closest('tr'));
       App.PO.autoFillRate(e.target.closest('tr'));
     }
     if (e.target.matches('#itemsBody .item-size')) {
-      App.Utils.applyDefaultPurchaseUnit(e.target, '.item-name', '.item-size', '.item-unit');
+      App.Utils.applyDefaultBaseUnit(e.target, '.item-name', '.item-size', '.item-unit');
       App.PO.refreshNarrationList(e.target.closest('tr'));
       App.PO.autoFillRate(e.target.closest('tr'));
+    }
+    // The operator picked a unit: a suggested rate is re-quoted in it.
+    if (e.target.matches('#itemsBody .item-unit')) {
+      App.PO.autoFillRate(e.target.closest('tr'));
+    }
+    if (e.target.matches('#itemsBody .item-price')) {
+      delete e.target.dataset.autoRate;
+    }
+    if (e.target.matches('#itemsBody .item-name, #itemsBody .item-size, #itemsBody .item-qty, #itemsBody .item-unit')) {
+      App.Utils.refreshUnitHint(e.target.closest('tr'), '.item-name', '.item-size', '.item-qty');
     }
     if (e.target.matches('#itemsBody .item-narration')) {
       App.PO.autoFillRate(e.target.closest('tr'));

@@ -726,6 +726,7 @@ def test_suggest_po_allocations_price_mismatch_flags_rate_conflict_but_still_all
     assert result["allocations"][0]["rateConflict"] == {
         "poRate": 20,
         "poUnit": "Pcs",
+        "poRateInBillUnit": 20,
         "billRate": 25,
         "billUnit": "Pcs",
     }

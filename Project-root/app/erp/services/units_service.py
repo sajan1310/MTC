@@ -64,6 +64,68 @@ def _rename_unit_everywhere(cur, old_name: str, new_name: str) -> None:
             )
 
 
+def _unit_usage(cur, unit_name: str) -> list:
+    """What still names `unit_name`, as short phrases ("6 items",
+    "57 bill lines") -- empty when nothing does.
+
+    Deleting a unit renames nothing: everything that used it goes on naming
+    it, and lookup_unit no longer knows it, so it reads as one of the item's
+    Base Unit. The next save of a PO or bill line in it stores its quantity
+    and rate unconverted, and every lot consuming it is re-read the same way.
+    "Gross" was deleted on 2026-09-08 and added back the next afternoon;
+    three POs raised in between stored 200 Gross as 200 pieces.
+    """
+    cur.execute(
+        """
+        SELECT
+          (SELECT count(*) FROM erp.items
+            WHERE deleted_at IS NULL
+              AND (lower(btrim(base_unit)) = %(u)s
+                   OR lower(btrim(COALESCE(purchase_unit, ''))) = %(u)s)) AS items,
+          (SELECT count(*) FROM erp.po_lines l
+             JOIN erp.po_headers h ON h.id = l.header_id AND h.deleted_at IS NULL
+            WHERE lower(btrim(l.unit)) = %(u)s) AS po_lines,
+          (SELECT count(*) FROM erp.bill_lines l
+             JOIN erp.bill_headers h ON h.id = l.header_id AND h.deleted_at IS NULL
+            WHERE lower(btrim(l.unit)) = %(u)s) AS bill_lines,
+          (SELECT count(*) FROM erp.return_lines l
+             JOIN erp.return_headers h ON h.id = l.header_id AND h.deleted_at IS NULL
+            WHERE lower(btrim(l.unit)) = %(u)s) AS return_lines,
+          (SELECT count(*) FROM erp.wastage_lines l
+             JOIN erp.wastage_headers h ON h.id = l.header_id AND h.deleted_at IS NULL
+            WHERE lower(btrim(l.unit)) = %(u)s) AS wastage_lines,
+          (SELECT count(*) FROM erp.issue_lines l
+             JOIN erp.issue_headers h ON h.id = l.header_id AND h.deleted_at IS NULL
+            WHERE lower(btrim(l.unit)) = %(u)s) AS issue_lines,
+          (SELECT count(*) FROM erp.process_components
+            WHERE lower(btrim(COALESCE(unit, ''))) = %(u)s) AS recipe_lines,
+          (SELECT count(*) FROM erp.production p
+             CROSS JOIN LATERAL jsonb_array_elements(
+               CASE WHEN jsonb_typeof(p.components_consumed) = 'array'
+                    THEN p.components_consumed ELSE '[]'::jsonb END) c
+            WHERE p.deleted_at IS NULL
+              AND lower(btrim(COALESCE(c->>'unit', ''))) = %(u)s) AS lot_components
+        """,
+        {"u": str(unit_name or "").strip().lower()},
+    )
+    row = cur.fetchone()
+    labels = [
+        ("items", "item", "items"),
+        ("po_lines", "PO line", "PO lines"),
+        ("bill_lines", "bill line", "bill lines"),
+        ("return_lines", "return line", "return lines"),
+        ("wastage_lines", "wastage line", "wastage lines"),
+        ("issue_lines", "issue line", "issue lines"),
+        ("recipe_lines", "process component", "process components"),
+        ("lot_components", "lot component", "lot components"),
+    ]
+    return [
+        f"{row[key]} {one if row[key] == 1 else many}"
+        for key, one, many in labels
+        if row[key]
+    ]
+
+
 @rpc_method("getUnitsData")
 def get_units_data():
     with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
@@ -173,12 +235,20 @@ def delete_unit(conn, cur, unit_name):
         raise ValueError("Unit not found.")
 
     cur.execute(
-        "SELECT id FROM erp.units WHERE lower(unit_name) = lower(%s) AND deleted_at IS NULL",
+        "SELECT id, unit_name FROM erp.units WHERE lower(unit_name) = lower(%s) AND deleted_at IS NULL",
         (target,),
     )
     row = cur.fetchone()
     if row is None:
         raise ValueError("Unit not found.")
+
+    in_use = _unit_usage(cur, row["unit_name"])
+    if in_use:
+        raise ValueError(
+            f'"{row["unit_name"]}" is still used by {", ".join(in_use)}, so it '
+            "can't be deleted: they would stop converting and be read as their "
+            "item's base unit."
+        )
 
     cur.execute(
         "UPDATE erp.units SET deleted_at = NOW(), updated_by = %s WHERE id = %s",
@@ -196,15 +266,32 @@ def delete_units_bulk(conn, cur, unit_names):
     if not targets:
         return build_response(True, None, "No units selected.")
 
+    # The ones still in use stay, exactly as deleteUnit refuses them; the
+    # rest of the selection still goes.
     cur.execute(
-        """
-        UPDATE erp.units SET deleted_at = NOW(), updated_by = %s
-        WHERE deleted_at IS NULL AND lower(unit_name) = ANY(%s)
-        """,
-        (get_current_user_id(), list(targets)),
+        "SELECT unit_name FROM erp.units WHERE deleted_at IS NULL AND lower(unit_name) = ANY(%s)",
+        (list(targets),),
     )
-    rows_deleted = cur.rowcount
-    return build_response(True, None, f"Deleted {rows_deleted} unit(s).")
+    kept = []
+    for row in cur.fetchall():
+        if _unit_usage(cur, row["unit_name"]):
+            kept.append(row["unit_name"])
+            targets.discard(row["unit_name"].strip().lower())
+
+    rows_deleted = 0
+    if targets:
+        cur.execute(
+            """
+            UPDATE erp.units SET deleted_at = NOW(), updated_by = %s
+            WHERE deleted_at IS NULL AND lower(unit_name) = ANY(%s)
+            """,
+            (get_current_user_id(), list(targets)),
+        )
+        rows_deleted = cur.rowcount
+    message = f"Deleted {rows_deleted} unit(s)."
+    if kept:
+        message += f" Kept {', '.join(sorted(kept))}: still in use."
+    return build_response(True, None, message)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -321,3 +408,19 @@ def convert_rate_to_base_unit(
     if base_units_per_from_unit <= 0:
         return 0.0
     return float(rate or 0) / base_units_per_from_unit
+
+
+def rate_per_base_unit_now(rate, from_unit: str, item: dict, units_map: dict) -> float:
+    """A line's rate per its item's Base Unit, measured against today's Units
+    and Items Master -- the as-entered rate where the unit cannot be
+    converted, the same fallback every save applies.
+
+    For suggesting a rate on a new line, a document's stored base_rate is
+    the wrong figure: it says what the line's unit meant on the day it was
+    saved. A PO raised while "Gross" was missing from the Units master holds
+    Rs 100 a Gross as Rs 100 a piece.
+    """
+    try:
+        return convert_rate_to_base_unit(rate, from_unit, item, units_map)
+    except ValueError:
+        return float(rate or 0)

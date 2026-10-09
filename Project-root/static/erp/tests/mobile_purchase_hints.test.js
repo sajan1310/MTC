@@ -195,6 +195,22 @@ describe('the suggestions themselves', () => {
     expect(H().latestRate(DATA, { name: 'Grip', size: '', narration: 'Rubber', vendor: 'Gupta Traders' }))
       .toEqual({ rate: 12, source: 'bill INV-71 (01/09/2026)' });
   });
+
+  // Every line here is in its item's Base Unit, so a rate quoted per Gross
+  // -- a vendor's Items Master rate, or a PO line's -- comes per piece.
+  test('a rate quoted per Gross fills a line of pieces per piece', () => {
+    const gross = {
+      pos: [{ poNumber: '1233', poDate: '09/09/2026', vendor: 'WeBest Bikes',
+        items: [{ name: 'Rim Spoke', size: '14 inch', narration: '', qty: 200, unit: 'Gross', price: 100, ratePerBaseUnit: 100 / 144 }] }],
+      bills: [],
+      items: [{ name: 'Rim Spoke', size: '14 inch', narration: '', baseUnit: 'Pcs', purchaseUnit: 'Gross',
+        vendors: [{ vendor: 'Mahadev Industries', rate: 102, ratePerBaseUnit: 102 / 144 }] }]
+    };
+    expect(H().latestRate(gross, { name: 'Rim Spoke', size: '14 inch', narration: '', vendor: 'Mahadev Industries' }))
+      .toEqual({ rate: 0.7083, source: 'this vendor\'s rate in Items Master' });
+    expect(H().latestRate(gross, { name: 'Rim Spoke', size: '14 inch', narration: '', vendor: 'WeBest Bikes' }))
+      .toEqual({ rate: 0.6944, source: 'PO 1233 (09/09/2026)' });
+  });
 });
 
 describe('the history the suggestions come from', () => {
