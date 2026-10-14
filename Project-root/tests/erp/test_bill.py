@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import uuid
 
+import database
+
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
@@ -741,6 +743,115 @@ def test_labor_bill_survives_edit_round_trip(erp_client):
     assert bill["issuingParty"] == "Updated Issuer"
     assert bill["items"][0]["color"] == "Red"
     assert bill["items"][0]["qty"] == 8
+
+
+# A Labor Job bill pays for work on goods that are already ours -- the
+# process's Production lot puts them in the Warehouse Pool. Counting the bill
+# too put the same goods in Items Stock (bill 1210: 103 painted frames in
+# both). New Labor lines stay out of Stock; ones saved before that rule keep
+# counting, so existing stock does not move when such a bill is edited.
+
+
+def _labor_bill(client, process_name, contractor, bill_number, qty, existing=False):
+    payload = {
+        "billType": "LABOR",
+        "vendor": contractor,
+        "billNumber": bill_number,
+        "billDate": "01/01/2026",
+        "items": [
+            {"processName": process_name, "color": "Black", "qty": qty, "price": 5}
+        ],
+    }
+    if existing:
+        payload["existingVendor"] = contractor
+        payload["existingBillNumber"] = bill_number
+    body = _rpc(client, "saveBill", [payload], mutation=True).get_json()
+    assert body["success"] is True, body["message"]
+    return body["data"]["bill"]
+
+
+def _stock_of(client, name):
+    listed = _rpc(client, "getStockData").get_json()["data"]
+    return next(r for r in listed if r["name"] == name and r["size"] == "")[
+        "currentStock"
+    ]
+
+
+def test_a_labor_bill_does_not_add_to_stock(erp_client):
+    process_payload, _process_id = _save_process(erp_client)
+    contractor = _unique_name("Contractor")
+    bill_number = _unique_name("LABOR")
+    output = process_payload["outputItemName"]
+
+    bill = _labor_bill(
+        erp_client, process_payload["processName"], contractor, bill_number, 10
+    )
+    assert bill["items"][0]["affectsStock"] is False
+    assert _stock_of(erp_client, output) == 0
+
+    # Editing it never brings it into Stock either.
+    bill = _labor_bill(
+        erp_client,
+        process_payload["processName"],
+        contractor,
+        bill_number,
+        12,
+        existing=True,
+    )
+    assert bill["items"][0]["affectsStock"] is False
+    assert _stock_of(erp_client, output) == 0
+
+
+def test_an_older_labor_bill_keeps_counting_when_edited(erp_client):
+    process_payload, _process_id = _save_process(erp_client)
+    contractor = _unique_name("Contractor")
+    bill_number = _unique_name("LABOR")
+    output = process_payload["outputItemName"]
+
+    _labor_bill(erp_client, process_payload["processName"], contractor, bill_number, 10)
+    # What a Labor bill saved before the rule looks like: its line counts.
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            """
+            UPDATE erp.bill_lines l SET affects_stock = TRUE
+              FROM erp.bill_headers h
+             WHERE h.id = l.header_id AND h.bill_number = %s AND h.vendor = %s
+            """,
+            (bill_number, contractor),
+        )
+    assert _stock_of(erp_client, output) == 10
+
+    bill = _labor_bill(
+        erp_client,
+        process_payload["processName"],
+        contractor,
+        bill_number,
+        10,
+        existing=True,
+    )
+    assert bill["items"][0]["affectsStock"] is True
+    assert _stock_of(erp_client, output) == 10
+
+
+def test_a_goods_bill_still_adds_to_stock(erp_client):
+    vendor = _unique_name("Vendor")
+    item = _unique_name("Item")
+    body = _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "vendor": vendor,
+                "billNumber": _unique_name("GOODS"),
+                "billDate": "01/01/2026",
+                "items": [{"name": item, "qty": 7, "price": 5}],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+    assert body["data"]["bill"]["items"][0]["affectsStock"] is True
+    assert _stock_of(erp_client, item) == 7
 
 
 def test_bill_search_haystack_covers_labor_fields(erp_client):
