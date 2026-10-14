@@ -597,6 +597,26 @@ def save_bill(conn, cur, form_data):
             if p["active"]:
                 process_by_name[p["processName"].strip().lower()] = p
 
+    # A Labor Job bill pays a contractor for work done on goods that are
+    # already ours. Those goods come back through the process's Production
+    # lot, which credits the Warehouse Pool -- so counting the bill as well
+    # put the same goods into Items Stock under the output's name. Bill 1210
+    # (2026-10-12) did exactly that: 103 painted frames in Stock AND in the
+    # pool. A Labor line therefore never counts toward Stock.
+    #
+    # The exception is a bill saved before that rule, whose lines already
+    # count. An edit rewrites every line below, and existing stock must not
+    # move because somebody corrected a rate, so such a bill keeps counting
+    # the way it always has.
+    labor_counts_toward_stock = False
+    if bill_type == "LABOR" and is_edit:
+        cur.execute(
+            "SELECT bool_or(affects_stock) AS counted FROM erp.bill_lines "
+            "WHERE header_id = %s AND bill_type = 'LABOR'",
+            (header_id,),
+        )
+        labor_counts_toward_stock = bool(cur.fetchone()["counted"])
+
     # Items the user chose "Ledger only" for in the checkStockAdjustmentConflicts
     # warning flow -- still saved and shown in the ledger, but excluded from
     # Stock's Billed Qty sum (see stock_service._get_stock_terms).
@@ -737,7 +757,9 @@ def save_bill(conn, cur, form_data):
             base_rate = price
 
         item_key = f"{name.lower()}|{size.lower()}"
-        affects_stock = item_key not in exclude_set
+        affects_stock = item_key not in exclude_set and (
+            bill_type != "LABOR" or labor_counts_toward_stock
+        )
 
         item_id = _find_item_id(cur, name, size)
         cur.execute(
