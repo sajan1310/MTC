@@ -1594,6 +1594,158 @@ def test_a_recount_still_carries_everything_after_it_forward(erp_client):
     assert _pool_by_color(erp_client, name)[""]["availableQty"] == 52
 
 
+# Lots are entered ahead of their date and marked Completed when the work is
+# done. A count taken in between saw a shelf without that lot's goods, so the
+# lot has to move the bucket after the count, not vanish into it (migration
+# 051). Fitted Frame 14 inch Jungle King lost 30 frames to a 13:19 count on
+# 2026-10-02 from a lot dated that day and completed at 17:46.
+
+
+def _pending_lot(client, down_id, up_name, qty):
+    payload = {
+        "processId": down_id,
+        "assignedTo": "Worker A",
+        "status": "Pending",
+        "qty": qty,
+        "componentsConsumed": [{"itemName": up_name, "qty": qty, "sourceType": "POOL"}],
+    }
+    body = _rpc(client, "saveProduction", [payload], mutation=True).get_json()
+    assert body["success"] is True, body["message"]
+    return body["data"]["row"]
+
+
+def _set_status(client, row, status):
+    body = _rpc(
+        client,
+        "updateProductionStatus",
+        [row["rowIdx"], row["qty"], status],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+
+def test_a_lot_finished_after_a_count_moves_the_bucket_after_it(erp_client):
+    up_name, name, down_id = _stage_fed_by_pool(erp_client)
+    lot = _pending_lot(erp_client, down_id, up_name, 12)
+
+    _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [name, down_id, "", "", 40, "physical recount"],
+        mutation=True,
+    )
+    _set_status(erp_client, lot, "Completed")
+
+    assert _pool_by_color(erp_client, name)[""]["availableQty"] == 52
+
+    # The ledger agrees: the lot is a movement after the count, not history
+    # behind it.
+    resp = _rpc(erp_client, "getWarehousePoolLedger", [name, "", ""])
+    ledger = resp.get_json()["data"]
+    credit = next(e for e in ledger if e["type"] == "Production Credit")
+    assert credit["superseded"] is False
+    assert ledger[0]["balance"] == 52
+
+
+def test_a_lot_finished_after_a_count_of_its_input_still_consumes_it(erp_client):
+    up_name, _name, down_id = _stage_fed_by_pool(erp_client)
+    up_id = _pool_by_color(erp_client, up_name)[""]["processId"]
+    lot = _pending_lot(erp_client, down_id, up_name, 12)
+
+    _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [up_name, up_id, "", "", 40, "physical recount"],
+        mutation=True,
+    )
+    _set_status(erp_client, lot, "Completed")
+
+    assert _pool_by_color(erp_client, up_name)[""]["availableQty"] == 28
+
+
+def test_switching_a_finished_lot_back_and_forth_does_not_add_it_again(erp_client):
+    """A lot keeps the first time it was marked Completed. The shelf counted
+    after that already held its goods, and taking the lot back to In
+    Progress and finishing it again does not make them new stock."""
+    up_name, name, down_id = _stage_fed_by_pool(erp_client)
+    lot = _pending_lot(erp_client, down_id, up_name, 12)
+    _set_status(erp_client, lot, "Completed")
+
+    _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [name, down_id, "", "", 40, "physical recount"],
+        mutation=True,
+    )
+    _set_status(erp_client, lot, "In Progress")
+    _set_status(erp_client, lot, "Completed")
+
+    assert _pool_by_color(erp_client, name)[""]["availableQty"] == 40
+
+
+def test_a_lot_with_no_known_entry_time_keeps_its_date(erp_client):
+    """Lots written before migration 045 carry midnight of their own date as
+    created_at -- a placeholder, not an entry time. July painting lots were
+    marked Completed in a batch on 25/09, long after a count had found their
+    frames on the shelf; judging them by that click would add the frames a
+    second time. Such a lot keeps being judged by its date."""
+    up_name, name, down_id = _stage_fed_by_pool(erp_client)
+    lot = _pending_lot(erp_client, down_id, up_name, 12)
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "UPDATE erp.production SET created_at = production_date::timestamptz "
+            "WHERE id = %s",
+            (lot["rowIdx"],),
+        )
+
+    _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [name, down_id, "", "", 40, "physical recount"],
+        mutation=True,
+    )
+    _set_status(erp_client, lot, "Completed")
+
+    assert _pool_by_color(erp_client, name)[""]["availableQty"] == 40
+
+
+def test_editing_a_finished_lot_keeps_when_it_was_finished(erp_client):
+    up_name, name, down_id = _stage_fed_by_pool(erp_client)
+    lot = _pending_lot(erp_client, down_id, up_name, 12)
+    _set_status(erp_client, lot, "Completed")
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "SELECT completed_at FROM erp.production WHERE id = %s", (lot["rowIdx"],)
+        )
+        finished = cur.fetchone()[0]
+    assert finished is not None
+
+    body = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "rowIdx": lot["rowIdx"],
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "status": "Completed",
+                "qty": 12,
+                "remarks": "edited",
+                "componentsConsumed": [
+                    {"itemName": up_name, "qty": 12, "sourceType": "POOL"}
+                ],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "SELECT completed_at FROM erp.production WHERE id = %s", (lot["rowIdx"],)
+        )
+        assert cur.fetchone()[0] == finished
+
+
 def test_the_newest_recount_wins(erp_client):
     """Two counts of the same shelf: the later one is the current truth and
     replaces the earlier one rather than stacking on it."""
@@ -1881,9 +2033,22 @@ def test_a_count_is_recorded_as_the_count_not_widened_past_it(erp_client):
     reported a failure to converge, blaming colour-agnostic consumption that
     was not involved.
     """
-    up_name, name, down_id = _stage_fed_by_pool(erp_client)
-    # Dated ahead of today, so the count cannot freeze it.
-    _make_lot(erp_client, down_id, up_name, 12, date.today() + timedelta(days=5))
+    _up_name, name, down_id = _stage_fed_by_pool(erp_client)
+    # An entry dated ahead of today, so the count cannot freeze it. Not a
+    # lot: a lot already marked Completed is on the shelf whatever date it
+    # carries, and a count holds it (migration 051).
+    _rpc(
+        erp_client,
+        "saveWarehousePoolOpening",
+        [
+            {
+                "processId": down_id,
+                "qty": 12,
+                "date": (date.today() + timedelta(days=5)).isoformat(),
+            }
+        ],
+        mutation=True,
+    )
 
     body = _rpc(
         erp_client,
@@ -1896,7 +2061,7 @@ def test_a_count_is_recorded_as_the_count_not_widened_past_it(erp_client):
     # The count is the count: the delta it implied is the delta applied.
     assert body["data"]["requestedQty"] == 40
     assert body["data"]["appliedDelta"] == body["data"]["expectedDelta"] == 28
-    # The future-dated lot carries forward on top of it.
+    # The future-dated entry carries forward on top of it.
     assert body["data"]["newAvailableQty"] == 52
     assert "movement dated after the count" in body["message"]
 

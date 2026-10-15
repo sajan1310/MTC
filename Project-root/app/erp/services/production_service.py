@@ -70,6 +70,34 @@ from ..envelope import build_response
 from ..registry import rpc_method
 
 _PRODUCTION_STATUS_OPTIONS = ("Pending", "In Progress", "Completed", "Cancelled")
+
+# erp.production.completed_at (migration 051): the FIRST time a lot was marked
+# Completed. warehouse_service judges a lot entered ahead of its date by it,
+# so a pool count taken before the work was finished cannot swallow the lot.
+# Both status writes use this one expression; its single placeholder is
+# "will this write leave the lot Completed?". In an UPDATE the right-hand
+# side reads the row as it was, so `status` here is the OLD status.
+#   - becoming Completed stamps NOW(), once;
+#   - an edit that keeps a lot Completed keeps what it had -- NULL included,
+#     for a lot finished before the activity log began, which then goes on
+#     being judged by its date;
+#   - leaving Completed keeps the stamp, so switching a finished lot back
+#     and forth never turns it into new stock. A lot that has no stamp gets
+#     the moment it was being judged by, for the same reason.
+_COMPLETED_AT_SQL = """
+    CASE
+        WHEN %s THEN COALESCE(
+            completed_at,
+            CASE WHEN lower(status) = 'completed' THEN NULL ELSE NOW() END
+        )
+        WHEN lower(status) = 'completed' THEN COALESCE(
+            completed_at,
+            CASE WHEN created_at IS NOT NULL AND created_at::date = production_date
+                 THEN created_at ELSE production_date::timestamptz END
+        )
+        ELSE completed_at
+    END
+"""
 _COLOR_GROUP_COMMON = config_maps.COMPONENT_COLOR_GROUP_COMMON
 _COLOR_COMBO_DELIMITER = config_maps.COLOR_COMBO_DELIMITER
 
@@ -1238,10 +1266,11 @@ def save_production(conn, cur, form_data):
     sheet_reset = False
     if is_edit:
         cur.execute(
-            """
+            f"""
             UPDATE erp.production SET
                 production_date = %s, product_id = %s, product_name = %s, bom_product_id = %s,
-                qty = %s, assigned_by = %s, assigned_to = %s, contractor_id = %s, status = %s, remarks = %s,
+                qty = %s, assigned_by = %s, assigned_to = %s, contractor_id = %s, status = %s,
+                completed_at = {_COMPLETED_AT_SQL}, remarks = %s,
                 process_id = %s, process_master_id = %s, lot_number = %s,
                 contractor_rate = %s, contractor_payable = %s, extra_charge_type = %s, extra_charge_amount = %s,
                 output_item_name = %s,
@@ -1258,6 +1287,7 @@ def save_production(conn, cur, form_data):
                 assigned_to,
                 resolved_contractor_id,
                 status,
+                status.lower() == "completed",
                 remarks,
                 process_id,
                 resolved_process_master_id,
@@ -1299,11 +1329,12 @@ def save_production(conn, cur, form_data):
             """
             INSERT INTO erp.production
                 (production_date, product_id, product_name, bom_product_id, qty, assigned_by, assigned_to,
-                 contractor_id, status, remarks, process_id, process_master_id, lot_number,
+                 contractor_id, status, completed_at, remarks, process_id, process_master_id, lot_number,
                  contractor_rate, contractor_payable, extra_charge_type, extra_charge_amount,
                  output_item_name, components_consumed, color,
                  color_breakdown, updated_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CASE WHEN %s THEN NOW() END,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
@@ -1316,6 +1347,7 @@ def save_production(conn, cur, form_data):
                 assigned_to,
                 resolved_contractor_id,
                 status,
+                status.lower() == "completed",
                 remarks,
                 process_id,
                 resolved_process_master_id,
@@ -1509,8 +1541,9 @@ def update_production_status(conn, cur, row_idx, expected_qty, new_status):
         )
 
     cur.execute(
-        "UPDATE erp.production SET status = %s, updated_by = %s WHERE id = %s",
-        (status, get_current_user_id(), target_id),
+        f"UPDATE erp.production SET status = %s, completed_at = {_COMPLETED_AT_SQL}, "
+        "updated_by = %s WHERE id = %s",
+        (status, status.lower() == "completed", get_current_user_id(), target_id),
     )
 
     warehouse_service._recalculate_warehouse_pool(cur)

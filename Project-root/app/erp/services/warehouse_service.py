@@ -410,6 +410,41 @@ def _effective_at(day, created_at):
     return datetime.combine(day, time.min)
 
 
+def _lot_freeze_at(row, lot_at):
+    """The moment a recount judges a Completed lot by: is it already inside
+    the count, or does it move the bucket after it?
+
+    A lot entered on or before its own date was planned ahead and finished
+    later -- here, 535 of 753 logged lots were marked Completed after their
+    date. Its goods reached the shelf when it was marked Completed, so that
+    is its moment (migration 051). Judged by its date instead, a count taken
+    during that day swallowed a lot finished hours after it: Fitted Frame
+    14 inch Jungle King lost 30 frames to a 13:19 count on 2026-10-02 from a
+    lot completed at 17:46.
+
+    A lot entered AFTER its date is past work typed in late, and a count in
+    between already holds it -- migration 045's case -- so it keeps `lot_at`.
+    So does any lot with no recorded completion (finished before the
+    activity log began on 2026-08-26), and any lot whose entry time is
+    migration 045's placeholder, midnight of its own date: nobody knows when
+    it was entered, so nobody knows it was entered ahead. Those are the 696
+    lots dated 08/07-12/09, and many were marked Completed in batches long
+    after the work -- July painting lots closed on 25/09 -- so their
+    completion says when somebody tidied up, not when the frames came back.
+
+    Only the freeze reads this. Which bucket a drain pays from, and what a
+    bucket held on a given day, stay on the lot's date.
+    """
+    completed = _naive_local(row.get("completed_at"))
+    entered = _naive_local(row.get("created_at"))
+    day = row.get("production_date")
+    if completed is None or entered is None or day is None:
+        return lot_at
+    if entered == datetime.combine(day, time.min):
+        return lot_at
+    return completed if entered.date() <= day else lot_at
+
+
 def _get_warehouse_pool_opening_rows(cur, exclude_ids=frozenset()) -> list:
     cur.execute(
         "SELECT id, output_item_name, process_id, product_tag, color, qty, "
@@ -957,7 +992,7 @@ def _build_warehouse_pool_buckets(
         cur.execute(
             f"""
             SELECT process_id, output_item_name, product_id, color_breakdown, qty,
-                   lot_number, production_date, created_at, remarks,
+                   lot_number, production_date, created_at, completed_at, remarks,
                    components_consumed
             FROM {table}
             WHERE deleted_at IS NULL AND lower(status) = 'completed'
@@ -972,6 +1007,7 @@ def _build_warehouse_pool_buckets(
             # same-day lot have an order. Absent (every row written before
             # migration 045) this falls back to the start of the lot's date.
             lot_at = _effective_at(lot_date, row.get("created_at"))
+            freeze_at = _lot_freeze_at(row, lot_at)
             lot_remarks = str(row["remarks"] or "")
             process_id = str(row["process_id"] or "").strip()
             own_output_item_name = str(row["output_item_name"] or "").strip()
@@ -1017,7 +1053,7 @@ def _build_warehouse_pool_buckets(
                     else:
                         bucket["sawSubGroupCredit"] = True
                     note_credit(bucket, lot_at)
-                    if frozen(bucket, lot_at):
+                    if frozen(bucket, freeze_at):
                         # Already on the shelf when this bucket was counted.
                         return
                     bucket["producedQty"] += float(qty or 0)
@@ -1029,7 +1065,7 @@ def _build_warehouse_pool_buckets(
                         lot_ref,
                         lot_remarks,
                         float(qty or 0),
-                        at=lot_at,
+                        at=freeze_at,
                     )
 
                 primary_entries = [
@@ -1241,7 +1277,7 @@ def _build_warehouse_pool_buckets(
                 qty = float(row["qty"] or 0)
                 bucket = get_bucket(output_item_name, process_id, product_tag, "")
                 note_credit(bucket, lot_at)
-                if not frozen(bucket, lot_at):
+                if not frozen(bucket, freeze_at):
                     bucket["producedQty"] += qty
                     bucket["credits"].append((lot_at or datetime.min, qty))
                     record(
@@ -1251,7 +1287,7 @@ def _build_warehouse_pool_buckets(
                         lot_ref,
                         lot_remarks,
                         qty,
-                        at=lot_at,
+                        at=freeze_at,
                     )
 
         # Pass 2: debit POOL-sourced components consumed by Completed lots
@@ -1275,6 +1311,7 @@ def _build_warehouse_pool_buckets(
             lot_ref = str(row["lot_number"] or "")
             lot_date = row["production_date"]
             lot_at = _effective_at(lot_date, row.get("created_at"))
+            freeze_at = _lot_freeze_at(row, lot_at)
             lot_remarks = str(row["remarks"] or "")
             for comp in row["components_consumed"] or []:
                 comp = comp or {}
@@ -1339,12 +1376,17 @@ def _build_warehouse_pool_buckets(
                             # recount and take the balance -- 1,810 of the
                             # 2,003 units it drained against this database
                             # were dated before the count they drained.
-                            "draws": [(lot_at, lot_date, qty, lot_ref, lot_remarks)],
+                            # The last field is the moment the freeze
+                            # judges the draw by (_lot_freeze_at); the
+                            # first still orders the settlement.
+                            "draws": [
+                                (lot_at, lot_date, qty, lot_ref, lot_remarks, freeze_at)
+                            ],
                         }
                     else:
                         entry["qty"] += qty
                         entry["draws"].append(
-                            (lot_at, lot_date, qty, lot_ref, lot_remarks)
+                            (lot_at, lot_date, qty, lot_ref, lot_remarks, freeze_at)
                         )
                     continue
 
@@ -1433,7 +1475,7 @@ def _build_warehouse_pool_buckets(
                     "",
                     color,
                 )
-                if not frozen(debited, lot_at):
+                if not frozen(debited, freeze_at):
                     debited["consumedQty"] += qty
                     record(
                         debited,
@@ -1442,7 +1484,7 @@ def _build_warehouse_pool_buckets(
                         lot_ref,
                         lot_remarks,
                         -qty,
-                        at=lot_at,
+                        at=freeze_at,
                     )
 
         # Pass 2b: debit Warehouse Pool wastage (migration 048) -- processed
@@ -1605,15 +1647,22 @@ def _build_warehouse_pool_buckets(
             # and its docstring covers why the cutoff is a day rather than a
             # timestamp.
             draws = sorted(
-                entry.get("draws") or [(None, None, entry["qty"], "", "")],
+                entry.get("draws") or [(None, None, entry["qty"], "", "", None)],
                 key=lambda d: (d[0] or datetime.min, str(d[3])),
             )
             # One summarising line per bucket per draw: which bucket pays is
             # decided by this settlement rather than by any single lot, but
             # the lot that caused the draw is still the honest reference.
-            for draw_at, draw_date, draw_qty, draw_ref, draw_remarks in draws:
+            for (
+                _draw_at,
+                draw_date,
+                draw_qty,
+                draw_ref,
+                draw_remarks,
+                freeze_at,
+            ) in draws:
                 remaining = draw_qty
-                blank_eligible = not frozen(blank_bucket, draw_at)
+                blank_eligible = not frozen(blank_bucket, freeze_at)
 
                 if blank_eligible:
                     available_blank = _available_at(blank_bucket, draw_date)
@@ -1628,14 +1677,14 @@ def _build_warehouse_pool_buckets(
                             draw_ref,
                             _COMMON_DRAIN_NOTE,
                             -take,
-                            at=draw_at,
+                            at=freeze_at,
                         )
 
                 if remaining > 0:
                     for bucket in colored:
                         if remaining <= 0:
                             break
-                        if frozen(bucket, draw_at):
+                        if frozen(bucket, freeze_at):
                             continue
                         available = _available_at(bucket, draw_date)
                         take = min(remaining, available)
@@ -1650,7 +1699,7 @@ def _build_warehouse_pool_buckets(
                             draw_ref,
                             _COMMON_DRAIN_NOTE,
                             -take,
-                            at=draw_at,
+                            at=freeze_at,
                         )
 
                 # What nothing could pay belongs to the ITEM -- which colour
@@ -1683,7 +1732,7 @@ def _build_warehouse_pool_buckets(
                         draw_ref,
                         _COMMON_DRAIN_SHORTFALL_NOTE,
                         -remaining,
-                        at=draw_at,
+                        at=freeze_at,
                     )
 
     if (headers_table := config_maps.TABLE_NAMES.get("DISPATCH_HEADERS")) and (
