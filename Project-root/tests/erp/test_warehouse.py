@@ -1683,6 +1683,32 @@ def test_switching_a_finished_lot_back_and_forth_does_not_add_it_again(erp_clien
     assert _pool_by_color(erp_client, name)[""]["availableQty"] == 40
 
 
+def test_a_lot_with_no_known_entry_time_keeps_its_date(erp_client):
+    """Lots written before migration 045 carry midnight of their own date as
+    created_at -- a placeholder, not an entry time. July painting lots were
+    marked Completed in a batch on 25/09, long after a count had found their
+    frames on the shelf; judging them by that click would add the frames a
+    second time. Such a lot keeps being judged by its date."""
+    up_name, name, down_id = _stage_fed_by_pool(erp_client)
+    lot = _pending_lot(erp_client, down_id, up_name, 12)
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "UPDATE erp.production SET created_at = production_date::timestamptz "
+            "WHERE id = %s",
+            (lot["rowIdx"],),
+        )
+
+    _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [name, down_id, "", "", 40, "physical recount"],
+        mutation=True,
+    )
+    _set_status(erp_client, lot, "Completed")
+
+    assert _pool_by_color(erp_client, name)[""]["availableQty"] == 40
+
+
 def test_editing_a_finished_lot_keeps_when_it_was_finished(erp_client):
     up_name, name, down_id = _stage_fed_by_pool(erp_client)
     lot = _pending_lot(erp_client, down_id, up_name, 12)

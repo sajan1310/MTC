@@ -31,6 +31,15 @@ ALTER TABLE erp.production
 -- INTO Completed per lot, from either write path (the status buttons log
 -- new_status, the lot form logs the form's status). Lots with no logged
 -- completion stay NULL and keep being judged by their date.
+--
+-- With the row-version trigger off for this statement only. Left on, it
+-- stamped updated_at and bumped row_version on all 754 backfilled lots
+-- (checked on the 2026-10-14 backup): every one would read as edited at
+-- deploy time, and an edit form or queued phone save holding the old
+-- version would be refused as a conflict. Filling in a fact about the past
+-- is not an edit. DDL is transactional, so a failure rolls this back too.
+ALTER TABLE erp.production DISABLE TRIGGER trg_erp_production_touch_row_version;
+
 WITH ev AS (
     SELECT a.id, a.logged_at,
            substring(a.detail FROM 'Lot #([^ ]+) ') AS lot,
@@ -59,3 +68,5 @@ UPDATE erp.production p
  WHERE p.lot_number = done.lot
    AND p.deleted_at IS NULL
    AND p.completed_at IS NULL;
+
+ALTER TABLE erp.production ENABLE TRIGGER trg_erp_production_touch_row_version;

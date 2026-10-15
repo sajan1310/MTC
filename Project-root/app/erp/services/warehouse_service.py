@@ -425,7 +425,12 @@ def _lot_freeze_at(row, lot_at):
     A lot entered AFTER its date is past work typed in late, and a count in
     between already holds it -- migration 045's case -- so it keeps `lot_at`.
     So does any lot with no recorded completion (finished before the
-    activity log began on 2026-08-26).
+    activity log began on 2026-08-26), and any lot whose entry time is
+    migration 045's placeholder, midnight of its own date: nobody knows when
+    it was entered, so nobody knows it was entered ahead. Those are the 696
+    lots dated 08/07-12/09, and many were marked Completed in batches long
+    after the work -- July painting lots closed on 25/09 -- so their
+    completion says when somebody tidied up, not when the frames came back.
 
     Only the freeze reads this. Which bucket a drain pays from, and what a
     bucket held on a given day, stay on the lot's date.
@@ -434,6 +439,8 @@ def _lot_freeze_at(row, lot_at):
     entered = _naive_local(row.get("created_at"))
     day = row.get("production_date")
     if completed is None or entered is None or day is None:
+        return lot_at
+    if entered == datetime.combine(day, time.min):
         return lot_at
     return completed if entered.date() <= day else lot_at
 
