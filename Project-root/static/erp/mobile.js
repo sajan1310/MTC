@@ -19372,6 +19372,14 @@ MApp.Handoff = {
   // implementing it. Keep both markers exactly as they are.
   CAPABILITIES: [
     {
+      title: 'Audit report',
+      body: 'Checks every ledger and lists what went wrong and where, most important first, to review and hand to Claude Code.',
+      where: 'Dashboard → Audit (admin)',
+      tab: '',
+      why: 'A long, ranked list read side by side with the ledgers it points to, and copied out to a computer.',
+      methods: ['runAudit', 'getAuditStatus', 'getAuditReport', 'setAuditFindingStatus', 'getAuditBrief']
+    },
+    {
       title: 'Items identity review',
       body: 'Items whose name or size drifted apart from the copy held elsewhere, reconciled one decision at a time.',
       where: 'Items Master → Sync Review',

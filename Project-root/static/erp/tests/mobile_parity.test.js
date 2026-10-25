@@ -111,6 +111,13 @@ const DESKTOP_SRC = fs
 // is the MApp screen that must explain the capability and hand off to
 // desktop -- silence is the degradation, a documented handoff is not.
 const DESKTOP_ONLY = {
+  // The Audit report (audit_service.py): a ranked list reviewed beside the
+  // ledgers it cites, then copied out to Claude Code on a computer.
+  getAuditBrief: 'Dashboard → Audit',
+  getAuditReport: 'Dashboard → Audit',
+  getAuditStatus: 'Dashboard → Audit',
+  runAudit: 'Dashboard → Audit',
+  setAuditFindingStatus: 'Dashboard → Audit',
   clearLogo: 'Settings → Logo',
   extractColorsFromItemMaster: 'Stock → Colour Master',
   fixItemIdentityDriftReference: 'Items → Sync Review',

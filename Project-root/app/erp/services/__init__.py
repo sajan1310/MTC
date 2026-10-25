@@ -34,6 +34,7 @@ from . import users_service  # noqa: F401
 from . import profile_service  # noqa: F401
 from . import roles_service  # noqa: F401
 from . import remarks_service  # noqa: F401
+from . import audit_service  # noqa: F401
 
 __all__ = [
     "activity_service",
@@ -64,4 +65,5 @@ __all__ = [
     "profile_service",
     "roles_service",
     "remarks_service",
+    "audit_service",
 ]

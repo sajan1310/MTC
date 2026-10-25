@@ -465,7 +465,11 @@
 // v92: Production > Inspections, where an admin reviews what floor
 // inspectors checked, flagged and cleared, and sends a flagged lot back.
 // inspection.js is new and precached; production.js opens the sub-tab.
-const CACHE_NAME = 'erp-shell-v92';
+// v93: the Dashboard's Audit button and report (audit_service.py). The
+// button is in the server-rendered page, but what it calls lives in
+// dashboard.js, which is precached -- without the bump an installed client
+// shows the button and has nothing behind it.
+const CACHE_NAME = 'erp-shell-v93';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
