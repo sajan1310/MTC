@@ -21,6 +21,10 @@
       <button class="nav-link fw-bold text-dark" id="btn-productionAllSubTab"
         onclick="App.Production.switchSubTab('productionAllSubTab')">All Activity</button>
     </li>
+    <li class="nav-item">
+      <button class="nav-link fw-bold text-dark" id="btn-inspectionsSubTab"
+        onclick="App.Production.switchSubTab('inspectionsSubTab')">Inspections</button>
+    </li>
   </ul>
 
   <!-- PRODUCTION LOG SUB-TAB -->
@@ -274,6 +278,71 @@
     </div>
   </div>
 
+  <!-- INSPECTIONS SUB-TAB. Review only: inspectors check and clear lots in
+       the phone app; an admin reads the result here and sends a flagged lot
+       back after changing it. App.Inspection (inspection.js). -->
+  <div id="inspectionsSubTab" class="production-sub-tab" style="display:none;">
+    <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
+      <div class="d-flex flex-wrap gap-2 align-items-center flex-grow-1" style="max-width: 900px;">
+        <input type="text" id="searchInspections" class="form-control" style="flex: 1 1 240px; min-width: 200px;"
+          placeholder="Search lot, process, item or remarks..." aria-label="Search inspections" autocomplete="off"
+          oninput="App.Utils.debouncedFilter(this, () => App.Inspection.onSearch(this.value))">
+        <select id="inspectionsFilter" class="form-select w-auto" aria-label="Which inspections to show"
+          onchange="App.Inspection.setFilter(this.value)">
+          <option value="attention" selected>Needs attention</option>
+          <option value="flagged">Flagged for admin</option>
+          <option value="notStarted">Not started</option>
+          <option value="cleared">Inspected</option>
+          <option value="all">All</option>
+        </select>
+      </div>
+      <button class="btn btn-outline-dark fw-bold shadow-sm" type="button" onclick="App.Inspection.load()">
+        <i class="bi bi-arrow-clockwise"></i> Refresh
+      </button>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover table-bordered align-middle mb-0">
+        <thead class="table-dark">
+          <tr>
+            <th scope="col">Lot</th>
+            <th scope="col">Process / Item</th>
+            <th scope="col" class="text-center">Lot Status</th>
+            <th scope="col">Inspection</th>
+            <th scope="col" class="text-end">Checked</th>
+            <th scope="col">Remarks</th>
+            <th scope="col">Updated</th>
+            <th scope="col" class="text-center">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="inspectionsTableBody">
+          <tr><td colspan="8" class="text-center p-4">Loading inspections...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="inspectionsEmptyState" class="text-center p-5 border rounded-3 bg-white shadow-sm mt-3" style="display: none;">
+      <i class="bi bi-clipboard-check fs-1 text-muted d-block mb-3"></i>
+      <h5 class="fw-bold text-dark">Nothing to show</h5>
+      <p class="text-muted mb-0">Lots appear here once an inspector starts checking them in the phone app.</p>
+    </div>
+  </div>
+
+</div>
+
+<!-- Inspection detail: the checklist as the inspector left it, read-only. -->
+<div class="modal fade" id="inspectionDetailModal" tabindex="-1" aria-hidden="true" aria-labelledby="inspectionDetailTitle">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable modal-fullscreen-sm-down">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold" id="inspectionDetailTitle" style="font-family: 'Outfit', sans-serif;">Inspection</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="inspectionDetailBody"></div>
+      <div class="modal-footer">
+        <div id="inspectionDetailFooterActions" class="me-auto d-flex flex-wrap gap-2 align-items-end"></div>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- Colorwise Production Summary Modal -->

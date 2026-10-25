@@ -154,7 +154,10 @@
 // v80: in light mode on a screen 640px or wider -- a tablet, or a phone
 // turned sideways -- screen titles were dark on the dark frame colour. The
 // app now paints its own background.
-const CACHE_NAME = 'erp-mobile-shell-v80';
+// v81: Inspection -- a lot's materials checked against its live Production
+// Sheet, flagged for an admin or cleared, from the drawer's Production
+// group. mobile.js and mobile_styles.css carry the screens.
+const CACHE_NAME = 'erp-mobile-shell-v81';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

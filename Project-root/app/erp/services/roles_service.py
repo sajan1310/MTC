@@ -49,6 +49,11 @@ ASSIGNABLE_TABS = [
     ("productsTab", "Products & Processes"),
     ("contractorsTab", "Contractors"),
     ("productionTab", "Production"),
+    # Not a sidebar tab: inspectors work in the phone/tablet app, and the
+    # desktop review sits under Production. A permission area all the same,
+    # so an admin can make an "Inspector" role that may inspect lots without
+    # being able to edit them.
+    ("inspectionTab", "Inspection"),
     ("clientsTab", "Clients"),
     ("dispatchTab", "Dispatch"),
 ]
@@ -82,6 +87,7 @@ TAB_BY_SERVICE_MODULE = {
     "contractors_service": "contractorsTab",
     "production_service": "productionTab",
     "issue_service": "productionTab",
+    "inspection_service": "inspectionTab",
     "clients_service": "clientsTab",
     "dispatch_service": "dispatchTab",
     "users_service": "usersTab",

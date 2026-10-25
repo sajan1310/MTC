@@ -108,6 +108,10 @@ TABLES = [
     "erp.client_orders_headers",
     "erp.client_orders_lines",
     "erp.production",
+    # Who inspected and cleared which lot, and what they checked (053).
+    # Business records, small: one row per lot and one per checked item.
+    "erp.lot_inspections",
+    "erp.lot_inspection_checks",
     "erp.dispatch_headers",
     "erp.dispatch_lines",
     "erp.dispatch_plan_lines",
