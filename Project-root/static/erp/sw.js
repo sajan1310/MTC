@@ -457,7 +457,12 @@
 // quoted in the line's unit. core.js, po.js, bill.js, return.js and issue.js
 // are precached, so without the bump an installed client keeps defaulting
 // to the Purchase Unit.
-const CACHE_NAME = 'erp-shell-v90';
+// v91: the header wraps instead of running off the right edge between 800
+// and 1240px, where it hid the bell and the account menu, and its button
+// labels appear from 1200px. styles.css is precached, so without the bump an
+// installed client keeps the header that overflows. (planning-board.js is not
+// precached; its ?v= in index.html moved to 6 for the touch-drag fix.)
+const CACHE_NAME = 'erp-shell-v91';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

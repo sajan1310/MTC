@@ -346,3 +346,18 @@ describe('chrome surfaces are dark in both themes', () => {
     expect(CSS.slice(at, at + 160)).toContain('var(--mb-safety-on-ink)');
   });
 });
+
+describe('the app paints its own ground at every width', () => {
+  // From 640px up the shell frames itself as a phone, and that rule paints
+  // body the dark frame colour. #mapp-root had no background of its own, so
+  // in light mode every screen title and plain-text line sat on the frame:
+  // titles measured 1.1:1 and links 2.5:1. 640px includes a phone turned
+  // sideways (800-900px), not only tablets. Every pair the suite above
+  // measures against --mb-workshop holds only if the app really sits on it.
+  test('#mapp-root sets its background from the page-ground token', () => {
+    const at = CSS.search(/^#mapp-root \{/m);
+    expect(at).toBeGreaterThan(-1);
+    const body = CSS.slice(at, CSS.indexOf('\n}', at));
+    expect(body).toMatch(/background:\s*var\(--mb-workshop\)/);
+  });
+});

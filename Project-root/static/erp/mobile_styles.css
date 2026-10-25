@@ -384,6 +384,13 @@ textarea:focus-visible,
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
+  /* The app's own ground. It used to borrow body's, which is the same
+     colour on a phone -- until the 640px rule below repaints body as the
+     dark frame around the app. Then every screen title and plain-text
+     line in light mode sat on that frame colour: titles measured 1.1:1,
+     links 2.5:1. 640px is not only tablets: a phone turned sideways is
+     800-900px wide. */
+  background: var(--mb-workshop);
 }
 
 /* On a tablet/desktop-width viewport, frame the app as a phone rather than
