@@ -78,7 +78,11 @@ from flask_login import current_user
 import database
 
 from . import process_service
-from .current_user import get_current_user_email, get_current_user_id, get_current_user_role
+from .current_user import (
+    get_current_user_email,
+    get_current_user_id,
+    get_current_user_role,
+)
 from .production_service import _coerce_row_id
 from .. import date_utils
 from ..envelope import build_response
@@ -127,7 +131,9 @@ def _color_key(component: dict) -> str:
 def _sheet_qty(component: dict) -> float:
     """requiredQty on a saved sheet row, qty on a recorded-consumption row
     (mobile _rowsFor reads requiredQty whenever the key is present)."""
-    raw = component["requiredQty"] if "requiredQty" in component else component.get("qty")
+    raw = (
+        component["requiredQty"] if "requiredQty" in component else component.get("qty")
+    )
     try:
         return round(float(raw or 0), 4)
     except (TypeError, ValueError):
@@ -263,16 +269,48 @@ def discrepancies(items, removed) -> list[dict]:
         if item["state"] == "revised":
             before = item.get("previous") or {}
             changes = []
-            if before.get("qty") is not None and float(before["qty"]) != float(item["qty"]):
-                changes.append({"field": "qty", "label": "Quantity", "from": before["qty"], "to": item["qty"]})
-            if _text(before.get("narration")).lower() != _text(item["narration"]).lower():
-                changes.append({"field": "narration", "label": "Specification",
-                                "from": before.get("narration") or "", "to": item["narration"]})
+            if before.get("qty") is not None and float(before["qty"]) != float(
+                item["qty"]
+            ):
+                changes.append(
+                    {
+                        "field": "qty",
+                        "label": "Quantity",
+                        "from": before["qty"],
+                        "to": item["qty"],
+                    }
+                )
+            if (
+                _text(before.get("narration")).lower()
+                != _text(item["narration"]).lower()
+            ):
+                changes.append(
+                    {
+                        "field": "narration",
+                        "label": "Specification",
+                        "from": before.get("narration") or "",
+                        "to": item["narration"],
+                    }
+                )
             out.append(dict(_row_label(item), kind="changed", changes=changes))
         elif item["state"] == "new":
-            out.append(dict(_row_label(item), kind="added", qty=item["qty"], narration=item["narration"]))
+            out.append(
+                dict(
+                    _row_label(item),
+                    kind="added",
+                    qty=item["qty"],
+                    narration=item["narration"],
+                )
+            )
     for row in removed:
-        out.append(dict(_row_label(row), kind="removed", qty=row.get("qty"), narration=row.get("narration") or ""))
+        out.append(
+            dict(
+                _row_label(row),
+                kind="removed",
+                qty=row.get("qty"),
+                narration=row.get("narration") or "",
+            )
+        )
     return out
 
 
@@ -304,7 +342,9 @@ def _load_lot(cur, row_idx, *, for_update=False) -> dict:
 
 
 def _process_names(cur) -> dict[str, str]:
-    cur.execute("SELECT process_id, process_name FROM erp.process_master WHERE deleted_at IS NULL")
+    cur.execute(
+        "SELECT process_id, process_name FROM erp.process_master WHERE deleted_at IS NULL"
+    )
     return {_text(r["process_id"]).lower(): r["process_name"] for r in cur.fetchall()}
 
 
@@ -364,7 +404,12 @@ def _identity(cur) -> dict:
         found = cur.fetchone()
         label = found["role_name"] if found else role
     name = _text(getattr(current_user, "name", "")) or get_current_user_email()
-    return {"id": get_current_user_id(), "name": name, "role": role, "roleLabel": label or "User"}
+    return {
+        "id": get_current_user_id(),
+        "name": name,
+        "role": role,
+        "roleLabel": label or "User",
+    }
 
 
 def _is_admin() -> bool:
@@ -383,7 +428,11 @@ def _lot_header(lot, process_name) -> dict:
         "productName": lot["product_name"] or "",
         "qty": float(lot["qty"] or 0),
         "status": lot["status"],
-        "colors": [c.get("color") for c in (lot["color_breakdown"] or []) if isinstance(c, dict) and c.get("color")],
+        "colors": [
+            c.get("color")
+            for c in (lot["color_breakdown"] or [])
+            if isinstance(c, dict) and c.get("color")
+        ],
         "updatedAt": _iso(lot["updated_at"]),
     }
 
@@ -391,7 +440,9 @@ def _lot_header(lot, process_name) -> dict:
 def _changed_since_cleared(inspection, rows) -> bool:
     if not inspection or inspection["status"] != STATUS_CLEARED:
         return False
-    signed = {r.get("key"): r.get("fingerprint") for r in (inspection["cleared_sheet"] or [])}
+    signed = {
+        r.get("key"): r.get("fingerprint") for r in (inspection["cleared_sheet"] or [])
+    }
     return signed != {r["key"]: r["fingerprint"] for r in rows}
 
 
@@ -416,7 +467,9 @@ def _inspection_payload(inspection, rows) -> dict:
 
 def _refuse_if_closed(lot, inspection) -> None:
     if lot["status"].lower() == "cancelled":
-        raise ValueError(f"Lot #{lot['lot_number']} was cancelled, so there is nothing to inspect.")
+        raise ValueError(
+            f"Lot #{lot['lot_number']} was cancelled, so there is nothing to inspect."
+        )
     if inspection is not None and inspection["status"] == STATUS_CLEARED:
         raise ValueError(f"Lot #{lot['lot_number']} has already been cleared.")
 
@@ -428,7 +481,10 @@ def _refuse_if_closed(lot, inspection) -> None:
 def get_inspection_lots():
     """Lots waiting for inspection (Pending / In Progress) and every lot that
     already has an inspection, each with its checklist counts."""
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(
             f"""
             SELECT {_LOT_COLUMNS}
@@ -451,7 +507,9 @@ def get_inspection_lots():
                 ([r["id"] for r in inspections.values()],),
             )
             for r in cur.fetchall():
-                checks_by_inspection.setdefault(r["inspection_id"], {})[r["item_key"]] = r
+                checks_by_inspection.setdefault(r["inspection_id"], {})[
+                    r["item_key"]
+                ] = r
         names = _process_names(cur)
 
     out = []
@@ -459,13 +517,24 @@ def get_inspection_lots():
         rows = sheet_rows(lot["custom_components"], lot["components_consumed"])
         inspection = inspections.get(lot["id"])
         checks = checks_by_inspection.get(inspection["id"], {}) if inspection else {}
-        items, removed = merge_checklist(rows, checks, inspection["baseline"] if inspection else None)
+        items, removed = merge_checklist(
+            rows, checks, inspection["baseline"] if inspection else None
+        )
         header = _lot_header(lot, names.get(_text(lot["process_id"]).lower()))
-        stamps = [s for s in (lot["updated_at"], inspection["updated_at"] if inspection else None) if s]
+        stamps = [
+            s
+            for s in (
+                lot["updated_at"],
+                inspection["updated_at"] if inspection else None,
+            )
+            if s
+        ]
         header.update(
             itemCount=len(rows),
             lastUpdated=_iso(max(stamps)) if stamps else "",
-            inspection=dict(_inspection_payload(inspection, rows), summary=summarize(items, removed)),
+            inspection=dict(
+                _inspection_payload(inspection, rows), summary=summarize(items, removed)
+            ),
         )
         out.append(header)
     return build_response(True, out)
@@ -474,12 +543,17 @@ def get_inspection_lots():
 @rpc_method("getInspection")
 def get_inspection(row_idx):
     """One lot's checklist, with retained checks and Revised/New badges."""
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         lot = _load_lot(cur, row_idx)
         inspection = _load_inspection(cur, lot["id"])
         rows = sheet_rows(lot["custom_components"], lot["components_consumed"])
         checks = _load_checks(cur, inspection["id"] if inspection else None)
-        items, removed = merge_checklist(rows, checks, inspection["baseline"] if inspection else None)
+        items, removed = merge_checklist(
+            rows, checks, inspection["baseline"] if inspection else None
+        )
         header = _lot_header(lot, _process_name(cur, lot["process_id"]))
         identity = _identity(cur)
     return build_response(
@@ -507,9 +581,13 @@ def set_inspection_check(conn, cur, row_idx, item_key, result, item_fingerprint)
     rows = sheet_rows(lot["custom_components"], lot["components_consumed"])
     row = next((r for r in rows if r["key"] == _text(item_key)), None)
     if row is None:
-        raise ValueError("That item is no longer on this lot's Production Sheet. Reload the checklist.")
+        raise ValueError(
+            "That item is no longer on this lot's Production Sheet. Reload the checklist."
+        )
     if _text(item_fingerprint) != row["fingerprint"]:
-        raise ValueError("That item changed on the Production Sheet after the checklist loaded. Reload it.")
+        raise ValueError(
+            "That item changed on the Production Sheet after the checklist loaded. Reload it."
+        )
 
     result = _text(result).lower()
     if result and result not in RESULTS:
@@ -529,14 +607,24 @@ def set_inspection_check(conn, cur, row_idx, item_key, result, item_fingerprint)
                SET result = EXCLUDED.result, fingerprint = EXCLUDED.fingerprint,
                    snapshot = EXCLUDED.snapshot, checked_at = NOW(), checked_by = EXCLUDED.checked_by
             """,
-            (inspection["id"], row["key"], result, row["fingerprint"], psycopg2.extras.Json(row), user_id),
+            (
+                inspection["id"],
+                row["key"],
+                result,
+                row["fingerprint"],
+                psycopg2.extras.Json(row),
+                user_id,
+            ),
         )
     else:
         cur.execute(
             "DELETE FROM erp.lot_inspection_checks WHERE inspection_id = %s AND item_key = %s",
             (inspection["id"], row["key"]),
         )
-    cur.execute("UPDATE erp.lot_inspections SET updated_by = %s WHERE id = %s", (user_id, inspection["id"]))
+    cur.execute(
+        "UPDATE erp.lot_inspections SET updated_by = %s WHERE id = %s",
+        (user_id, inspection["id"]),
+    )
 
     # The one write to the lot: checking starts the work. Conditional, so a
     # status the supervisor changed meanwhile is left alone.
@@ -551,15 +639,26 @@ def set_inspection_check(conn, cur, row_idx, item_key, result, item_fingerprint)
         if cur.rowcount == 1:
             lot_status = "In Progress"
 
-    items, removed = merge_checklist(rows, _load_checks(cur, inspection["id"]), inspection["baseline"])
-    message = f"Lot #{lot['lot_number']} is now In Progress." if lot_status != lot["status"] else ""
+    items, removed = merge_checklist(
+        rows, _load_checks(cur, inspection["id"]), inspection["baseline"]
+    )
+    message = (
+        f"Lot #{lot['lot_number']} is now In Progress."
+        if lot_status != lot["status"]
+        else ""
+    )
     # The row as the merge now sees it, so the client never guesses what an
     # untick turns a row back into (pending, or still revised).
     merged = next((i for i in items if i["key"] == row["key"]), None)
     return build_response(
         True,
-        {"key": row["key"], "result": result or None, "item": merged, "lotStatus": lot_status,
-         "summary": summarize(items, removed)},
+        {
+            "key": row["key"],
+            "result": result or None,
+            "item": merged,
+            "lotStatus": lot_status,
+            "summary": summarize(items, removed),
+        },
         message,
     )
 
@@ -572,7 +671,9 @@ def save_inspection_remarks(conn, cur, row_idx, remarks, flag_for_admin=False):
     lot = _load_lot(cur, row_idx, for_update=True)
     remarks = _text(remarks)[:MAX_REMARKS]
     if flag_for_admin and not remarks:
-        raise ValueError("Write what needs to change before flagging the lot for an admin.")
+        raise ValueError(
+            "Write what needs to change before flagging the lot for an admin."
+        )
 
     rows = sheet_rows(lot["custom_components"], lot["components_consumed"])
     inspection = _start_inspection(cur, lot, rows)
@@ -584,9 +685,19 @@ def save_inspection_remarks(conn, cur, row_idx, remarks, flag_for_admin=False):
         cur.execute(
             "UPDATE erp.lot_inspections SET remarks = %s, status = %s, flagged_at = NOW(), "
             "flagged_by = %s, flagged_by_name = %s, updated_by = %s WHERE id = %s",
-            (remarks, STATUS_FLAGGED, user_id, identity["name"], user_id, inspection["id"]),
+            (
+                remarks,
+                STATUS_FLAGGED,
+                user_id,
+                identity["name"],
+                user_id,
+                inspection["id"],
+            ),
         )
-        status, message = STATUS_FLAGGED, f"Remarks saved. Lot #{lot['lot_number']} is flagged for an admin."
+        status, message = (
+            STATUS_FLAGGED,
+            f"Remarks saved. Lot #{lot['lot_number']} is flagged for an admin.",
+        )
     else:
         cur.execute(
             "UPDATE erp.lot_inspections SET remarks = %s, updated_by = %s WHERE id = %s",
@@ -609,10 +720,18 @@ def return_inspection(conn, cur, row_idx, note=""):
     cur.execute(
         "UPDATE erp.lot_inspections SET status = %s, review_note = %s, returned_at = NOW(), "
         "returned_by = %s, updated_by = %s WHERE id = %s",
-        (STATUS_IN_PROGRESS, _text(note)[:MAX_NOTE], user_id, user_id, inspection["id"]),
+        (
+            STATUS_IN_PROGRESS,
+            _text(note)[:MAX_NOTE],
+            user_id,
+            user_id,
+            inspection["id"],
+        ),
     )
     return build_response(
-        True, {"status": STATUS_IN_PROGRESS}, f"Lot #{lot['lot_number']} sent back for re-inspection."
+        True,
+        {"status": STATUS_IN_PROGRESS},
+        f"Lot #{lot['lot_number']} sent back for re-inspection.",
     )
 
 
@@ -631,12 +750,16 @@ def clear_inspection(conn, cur, row_idx, acknowledge_token=None):
         raise ValueError("Check this lot's items before clearing it.")
     _refuse_if_closed(lot, inspection)
     if inspection["status"] == STATUS_FLAGGED:
-        raise ValueError("This lot is waiting for an admin. It can be cleared once it is sent back.")
+        raise ValueError(
+            "This lot is waiting for an admin. It can be cleared once it is sent back."
+        )
 
     rows = sheet_rows(lot["custom_components"], lot["components_consumed"])
     if not rows:
         raise ValueError("This lot has nothing on its Production Sheet to inspect.")
-    items, removed = merge_checklist(rows, _load_checks(cur, inspection["id"]), inspection["baseline"])
+    items, removed = merge_checklist(
+        rows, _load_checks(cur, inspection["id"]), inspection["baseline"]
+    )
 
     acknowledged = None
     diff = discrepancies(items, removed)
@@ -644,30 +767,43 @@ def clear_inspection(conn, cur, row_idx, acknowledge_token=None):
         token = discrepancy_token(diff)
         if not acknowledge_token or _text(acknowledge_token) != token:
             if acknowledge_token and not _is_admin():
-                raise ValueError("Only an admin can accept Production Sheet changes without re-inspecting.")
+                raise ValueError(
+                    "Only an admin can accept Production Sheet changes without re-inspecting."
+                )
             return build_response(
                 True,
-                {"cleared": False, "discrepancies": diff, "token": token,
-                 "changedAgain": bool(acknowledge_token), "canAcknowledge": _is_admin()},
+                {
+                    "cleared": False,
+                    "discrepancies": diff,
+                    "token": token,
+                    "changedAgain": bool(acknowledge_token),
+                    "canAcknowledge": _is_admin(),
+                },
                 "The sheet changed again. Review the new differences."
-                if acknowledge_token else
-                "The live Production Sheet differs from what was inspected.",
+                if acknowledge_token
+                else "The live Production Sheet differs from what was inspected.",
             )
         if not _is_admin():
-            raise ValueError("Only an admin can accept Production Sheet changes without re-inspecting.")
+            raise ValueError(
+                "Only an admin can accept Production Sheet changes without re-inspecting."
+            )
         acknowledged = diff
 
     # With or without an acknowledgement, every row must have been looked at
     # and none may have failed. Acknowledged changes count as accepted.
     accepted = {"revised", "new"} if acknowledged else set()
     failed = [i for i in items if i["state"] == "checked" and i["result"] != "pass"]
-    unchecked = [i for i in items if i["state"] not in accepted and i["state"] != "checked"]
+    unchecked = [
+        i for i in items if i["state"] not in accepted and i["state"] != "checked"
+    ]
     if failed:
         raise ValueError(
             f"{len(failed)} item(s) failed inspection. Flag the lot for an admin instead of clearing it."
         )
     if unchecked:
-        raise ValueError(f"Check every item before clearing the lot ({len(unchecked)} left).")
+        raise ValueError(
+            f"Check every item before clearing the lot ({len(unchecked)} left)."
+        )
 
     identity = _identity(cur)
     cur.execute(
@@ -677,15 +813,26 @@ def clear_inspection(conn, cur, row_idx, acknowledge_token=None):
                cleared_by_role = %s, cleared_sheet = %s, acknowledged = %s, updated_by = %s
          WHERE id = %s
         """,
-        (STATUS_CLEARED, identity["id"], identity["name"], identity["roleLabel"],
-         psycopg2.extras.Json(rows),
-         psycopg2.extras.Json(acknowledged) if acknowledged else None,
-         identity["id"], inspection["id"]),
+        (
+            STATUS_CLEARED,
+            identity["id"],
+            identity["name"],
+            identity["roleLabel"],
+            psycopg2.extras.Json(rows),
+            psycopg2.extras.Json(acknowledged) if acknowledged else None,
+            identity["id"],
+            inspection["id"],
+        ),
     )
     process_name = _process_name(cur, lot["process_id"])
     return build_response(
         True,
-        {"cleared": True, "lotNumber": lot["lot_number"], "processName": process_name,
-         "inspector": identity, "acknowledged": acknowledged or []},
+        {
+            "cleared": True,
+            "lotNumber": lot["lot_number"],
+            "processName": process_name,
+            "inspector": identity,
+            "acknowledged": acknowledged or [],
+        },
         f"Thank you, {identity['name']}. Your lot has been cleared for {process_name}.",
     )
