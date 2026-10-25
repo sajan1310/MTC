@@ -62,6 +62,20 @@
 
   const POOL_GROUP = 'planning-board-pool';
 
+  // On a touch screen a finger has to rest on an item for a moment before
+  // it picks the item up. Without this, 3px of movement started a drag (the
+  // pool list's fallbackTolerance), and because forceFallback makes Sortable
+  // cancel the touchmove, the list could not be scrolled by touch at all: a
+  // finger that meant to scroll picked a card up instead. Measured with
+  // emulated touch in Chrome before the fix -- a swipe over a pool card
+  // started a drag and scrolled the list 0px.
+  //
+  // delayOnTouchOnly keeps a mouse exactly as it was (no delay). Moving more
+  // than touchStartThreshold px during the delay cancels the pick-up, so the
+  // gesture stays a scroll. Spread into both Sortable instances below: a
+  // card's own lines are draggable too, and the same swipe crosses them.
+  const TOUCH_DRAG = { delay: 200, delayOnTouchOnly: true, touchStartThreshold: 5 };
+
   // Enter commits the same way blur does (and blurs afterward, so the
   // input visibly loses focus like a real "submit") -- shared by every
   // commit-on-blur-or-enter text field below (qty, rate, remarks, transport).
@@ -115,6 +129,7 @@
         animation: 150,
         fallbackTolerance: 3,
         forceFallback: true,
+        ...TOUCH_DRAG,
         // No multiDragKey: confirmed against the actual plugin source that
         // it does NOT gate whether a plain click selects at all (a click
         // always does) -- it only gates whether that click clears any prior
@@ -295,6 +310,7 @@
       const sortable = window.Sortable.create(listRef.current, {
         group: { name: POOL_GROUP, pull: false, put: true },
         animation: 150,
+        ...TOUCH_DRAG,
         onAdd(evt) {
           // Sortable already spliced the dragged clone(s) into this DOM
           // list. Read what landed, hand it to the caller, then throw the

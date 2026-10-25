@@ -1229,6 +1229,13 @@
     top: var(--offline-banner-offset, 0);
     z-index: 1000;
     box-shadow: 0 4px 20px rgb(0 0 0 / 2%);
+    /* Wraps at every width, not only 768px and below. Anything that does
+       not fit -- a long account name, a window between breakpoints -- moves
+       to a second row instead of past the right edge, where the bell and
+       the account menu (My Profile, Sign out) used to end up between 800
+       and 1240px, taking the whole page with them sideways. */
+    flex-wrap: wrap;
+    row-gap: 10px;
   }
 
   /* ─────────────────────────────────────────────────────────────────────
@@ -4451,11 +4458,6 @@
     .btn {
       padding: 8px 16px;
       font-size: 13px;
-    }
-
-    .app-header {
-      flex-wrap: wrap;
-      row-gap: 10px;
     }
   }
 

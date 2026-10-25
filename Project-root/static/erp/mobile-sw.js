@@ -151,7 +151,10 @@
 // v79: a rate suggested for a PO or bill line is per the item's Base Unit,
 // the unit the line is in -- a vendor quoting Rs 100 a Gross fills a line of
 // pieces at Rs 0.6944, not Rs 100 a piece.
-const CACHE_NAME = 'erp-mobile-shell-v79';
+// v80: in light mode on a screen 640px or wider -- a tablet, or a phone
+// turned sideways -- screen titles were dark on the dark frame colour. The
+// app now paints its own background.
+const CACHE_NAME = 'erp-mobile-shell-v80';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

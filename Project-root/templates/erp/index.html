@@ -349,26 +349,31 @@
           <img id="brand-icon-logo" alt="Logo" style="display:none;width:40px;height:40px;object-fit:contain;padding:4px;">
         </div>
         <h2 class="text-dark fw-bold mb-0 me-3" style="font-family: 'Outfit', sans-serif; font-size: 24px; letter-spacing: -0.5px;">Maharaja Bikes</h2>
-        <h4 class="text-secondary fw-bold mb-0 border-start border-2 border-secondary ps-3 d-none d-md-block" style="font-family: 'Outfit', sans-serif; font-size: 16px; padding-left: 16px !important; opacity: 0.8;">ERP System</h4>
+        <h4 class="text-secondary fw-bold mb-0 border-start border-2 border-secondary ps-3 d-none d-xl-block" style="font-family: 'Outfit', sans-serif; font-size: 16px; padding-left: 16px !important; opacity: 0.8;">ERP System</h4>
       </div>
 
-      <!-- Master Data Shortcuts -->
+      <!-- Master Data Shortcuts. The labels (and "ERP System", and "Logo"
+           below) appear from 1200px, not 768px: the header only had room
+           for them on a full desktop. From 800 to about 1240px they pushed
+           the bell and the account menu off the right edge -- on a tablet in
+           portrait both were gone and the page scrolled sideways by 267px.
+           Below 1200px these are icon buttons, named by their titles. -->
       <div class="d-flex align-items-center gap-2 me-2">
         <button type="button" class="btn btn-sm btn-outline-secondary" title="Manage Unit Master" onclick="App.Unit.openModal()">
           <i class="bi bi-rulers"></i>
-          <span class="d-none d-md-inline">Units</span>
+          <span class="d-none d-xl-inline">Units</span>
         </button>
         <button type="button" class="btn btn-sm btn-outline-secondary" title="Manage Color Master" onclick="App.Color.openModal()">
           <i class="bi bi-palette"></i>
-          <span class="d-none d-md-inline">Colors</span>
+          <span class="d-none d-xl-inline">Colors</span>
         </button>
         <button type="button" class="btn btn-sm btn-outline-secondary" title="Manage Model Master" onclick="App.Model.openModal()">
           <i class="bi bi-tags"></i>
-          <span class="d-none d-md-inline">Models</span>
+          <span class="d-none d-xl-inline">Models</span>
         </button>
         <button type="button" class="btn btn-sm btn-outline-secondary" title="Manage Process Type Master" onclick="App.ProcessType.openModal()">
           <i class="bi bi-diagram-3"></i>
-          <span class="d-none d-md-inline">Process Types</span>
+          <span class="d-none d-xl-inline">Process Types</span>
         </button>
       </div>
 
@@ -376,7 +381,7 @@
       <div class="d-flex align-items-center gap-2 me-2">
         <label for="logo-upload-input" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" title="Upload company logo" style="font-size:12px;padding:5px 10px;border-radius:8px;cursor:pointer;">
           <i class="bi bi-camera"></i>
-          <span class="d-none d-md-inline">Logo</span>
+          <span class="d-none d-xl-inline">Logo</span>
         </label>
         <input type="file" id="logo-upload-input" accept="image/*" style="display:none;">
         <button id="logo-clear-btn" style="display:none;" class="btn btn-sm btn-outline-danger" title="Remove logo" onclick="App.Logo.clear()">
@@ -420,7 +425,10 @@
         </div>
       </div>
 
-      <span class="badge bg-primary fs-6 px-3 py-2 shadow-sm d-none d-lg-inline-block brand-tagline-badge">
+      <!-- From 1400px (was 992px). With the labels showing, the header needs
+           about 1290px; this badge is what would push the account menu onto
+           a second row on a 1280 or 1366 laptop. -->
+      <span class="badge bg-primary fs-6 px-3 py-2 shadow-sm d-none d-xxl-inline-block brand-tagline-badge">
         Maharaja Trading Co.
       </span>
 
@@ -615,7 +623,7 @@
   <script src="{{ url_for('static', filename='erp/issue.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/client.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/dispatch.js') }}?v=3"></script>
-  <script src="{{ url_for('static', filename='erp/planning-board.js') }}?v=5"></script>
+  <script src="{{ url_for('static', filename='erp/planning-board.js') }}?v=6"></script>
   <script src="{{ url_for('static', filename='erp/dispatch-plan.js') }}?v=6"></script>
   {% if current_user.is_admin %}
   <script src="{{ url_for('static', filename='erp/users.js') }}"></script>

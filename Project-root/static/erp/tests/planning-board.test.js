@@ -508,6 +508,28 @@ describe('App.PlanningBoard', () => {
     expect(poolInstance.options.sort).toBe(false);
   });
 
+  test('on a touch screen an item lifts only after a press, so a swipe scrolls the list', async () => {
+    // Without a delay, 3px of finger movement started a drag and, with
+    // forceFallback, Sortable cancelled the touchmove: the pool could not be
+    // scrolled by touch. In Chrome with emulated touch a swipe over a pool
+    // card started a drag and scrolled the list 0px; with these options it
+    // scrolled 165px, a press-and-hold still dragged, and a mouse still
+    // dragged at once.
+    mount(baseConfig({
+      pool: [{ id: 'P1', label: 'Widget', sublabel: '', availableQty: 5 }],
+      cards: [{ id: 'Acme', title: 'Acme', lines: [] }],
+    }));
+    await flush();
+
+    const poolInstance = instances.find(i => i.el.classList.contains('pb-pool-list'));
+    const cardInstance = instances.find(i => i.el.classList.contains('pb-card-lines'));
+    [poolInstance, cardInstance].forEach(instance => {
+      expect(instance.options.delayOnTouchOnly).toBe(true); // a mouse is unchanged
+      expect(instance.options.delay).toBeGreaterThanOrEqual(150);
+      expect(instance.options.touchStartThreshold).toBeGreaterThan(0);
+    });
+  });
+
   test('unmounting (re-rendering with no cards) destroys that card\'s Sortable instance', async () => {
     mount(baseConfig({ cards: [{ id: 'Acme', title: 'Acme', lines: [] }] }));
     await flush();
