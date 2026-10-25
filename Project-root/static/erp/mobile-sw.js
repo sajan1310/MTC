@@ -157,7 +157,9 @@
 // v81: Inspection -- a lot's materials checked against its live Production
 // Sheet, flagged for an admin or cleared, from the drawer's Production
 // group. mobile.js and mobile_styles.css carry the screens.
-const CACHE_NAME = 'erp-mobile-shell-v81';
+// v82: the desktop-only handoff screen lists the Audit report. mobile.js is
+// precached, so without the bump an installed phone keeps the old list.
+const CACHE_NAME = 'erp-mobile-shell-v82';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

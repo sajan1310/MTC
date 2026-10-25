@@ -281,6 +281,14 @@ _KNOWN_EXCLUDED_FROM_BACKUP = {
     # a 90-day window would dominate the spreadsheet's cell budget while
     # telling a business-data restore nothing.
     "erp.activity_log",
+    # The Audit report's runs and the user's review decisions (migration
+    # 052). Same reasoning: the pg_dump snapshot has them, which is where a
+    # run is re-read from when its findings are handed to Claude Code. A
+    # run's findings are one JSONB value of ~180 KB on live data, past the
+    # 50,000 characters a Sheets cell holds, and neither table is business
+    # data a restore from the spreadsheet would need.
+    "erp.audit_runs",
+    "erp.audit_finding_reviews",
 }
 
 

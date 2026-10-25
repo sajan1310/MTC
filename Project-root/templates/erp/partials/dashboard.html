@@ -45,6 +45,10 @@
       <button id="dashboardBackupBtn" class="btn btn-sm btn-outline-primary fw-500 shadow-sm" onclick="App.Dashboard.triggerBackup()" title="Create Database Backup & Upload to Google Sheets">
         <i class="bi bi-cloud-arrow-up me-1"></i> Backup to Sheets
       </button>
+      <!-- Audit RPCs are admin-gated server-side (audit_service.py). -->
+      <button id="dashboardAuditBtn" class="btn btn-sm btn-outline-dark fw-500 shadow-sm" onclick="App.Dashboard.openAudit()" title="Check everything and list what went wrong, most important first">
+        <i class="bi bi-clipboard2-pulse me-1"></i> Audit
+      </button>
       {% endif %}
       <button id="dashboardRefreshBtn" class="btn btn-sm btn-outline-secondary" onclick="App.Dashboard.loadData()" title="Refresh dashboard">
         <i class="bi bi-arrow-clockwise"></i>
@@ -366,6 +370,49 @@
     </div>
   </section>
 
+</div>
+
+<!-- AUDIT REPORT MODAL
+     Read-only report: what the audit found, highest priority first. The user
+     reviews it here and hands the findings they pick to Claude Code through
+     Copy / Download -- the audit itself never fixes anything. -->
+<div class="modal fade" id="auditModal" tabindex="-1" aria-labelledby="auditModalTitle" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content shadow-lg border-0">
+      <div class="modal-header border-0 pb-0">
+        <div>
+          <h5 class="modal-title fw-bold" id="auditModalTitle"><i class="bi bi-clipboard2-pulse me-2"></i>Audit</h5>
+          <div class="small text-muted" id="auditRunMeta">No audit has been run yet.</div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body pt-2">
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-3" id="auditSummary"></div>
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+          <button type="button" class="btn btn-sm btn-primary" id="auditRunBtn" onclick="App.Dashboard.runAudit()">
+            <i class="bi bi-play-fill me-1"></i> Run audit now
+          </button>
+          <div class="vr mx-1"></div>
+          <button type="button" class="btn btn-sm btn-outline-secondary" onclick="App.Dashboard.markAuditFindings('reviewed')">Mark reviewed</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" onclick="App.Dashboard.markAuditFindings('dismissed')">Dismiss</button>
+          <button type="button" class="btn btn-sm btn-outline-dark" onclick="App.Dashboard.copyAuditBrief()">
+            <i class="bi bi-clipboard me-1"></i> Copy for Claude Code
+          </button>
+          <button type="button" class="btn btn-sm btn-outline-dark" onclick="App.Dashboard.downloadAuditBrief()">
+            <i class="bi bi-download me-1"></i> Download .md
+          </button>
+          <div class="form-check form-switch ms-auto mb-0">
+            <input class="form-check-input" type="checkbox" id="auditShowDismissed" onchange="App.Dashboard.renderAuditReport()">
+            <label class="form-check-label small" for="auditShowDismissed">Show dismissed</label>
+          </div>
+        </div>
+        <div id="auditProgress" class="alert alert-info py-2 small" style="display:none;">
+          <span class="spinner-border spinner-border-sm me-2"></span>Checking everything&hellip;
+        </div>
+        <div id="auditBody"></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- BACKUP PROGRESS MODAL -->

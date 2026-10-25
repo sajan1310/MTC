@@ -474,6 +474,210 @@ App.Dashboard = {
     }
   },
 
+  // ── Audit ──────────────────────────────────────────────────────────────
+  // audit_service.py does the checking and the ranking; this only shows the
+  // latest run, starts a new one, records the user's review decisions, and
+  // hands the ticked findings to Claude Code as a Markdown brief.
+  _audit: null,
+  AUDIT_POLL_INTERVAL_MS: 2000,
+  AUDIT_POLL_MAX: 90,
+
+  AUDIT_BANDS: {
+    P1: { label: 'P1 · act now', cls: 'bg-danger' },
+    P2: { label: 'P2 · this week', cls: 'bg-warning text-dark' },
+    P3: { label: 'P3 · review when convenient', cls: 'bg-secondary' },
+  },
+
+  async openAudit() {
+    const modalEl = document.getElementById('auditModal');
+    if (!modalEl) return;
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    await this.loadAuditReport();
+  },
+
+  async loadAuditReport(runId = null) {
+    const body = document.getElementById('auditBody');
+    try {
+      const res = await Api.callFresh('getAuditReport', runId);
+      this._audit = res?.data || null;
+    } catch (err) {
+      this._audit = null;
+      if (body) body.innerHTML = `<div class="alert alert-danger small">${escapeHtml(err.message || 'Could not load the audit.')}</div>`;
+      return;
+    }
+    this.renderAuditReport();
+  },
+
+  async runAudit() {
+    const btn = document.getElementById('auditRunBtn');
+    const progress = document.getElementById('auditProgress');
+    if (btn) btn.disabled = true;
+    if (progress) progress.style.display = 'block';
+    try {
+      const started = await Api.mutate('runAudit');
+      const runId = started?.data?.runId;
+      if (!runId) throw new Error(started?.message || 'The audit did not start.');
+      // A run takes seconds, not minutes, but it runs on a background thread
+      // like the backup does, so poll rather than wait inline.
+      for (let i = 0; i < this.AUDIT_POLL_MAX; i++) {
+        await new Promise(r => setTimeout(r, this.AUDIT_POLL_INTERVAL_MS));
+        const st = await Api.callFresh('getAuditStatus', runId);
+        const status = st?.data?.status;
+        if (status === 'DONE') { await this.loadAuditReport(runId); return; }
+        if (status === 'FAILED') throw new Error(st.data.error || 'The audit failed.');
+      }
+      throw new Error('The audit is taking longer than expected. Reopen this window in a minute.');
+    } catch (err) {
+      App.Utils.showToast(err.message || 'The audit failed.', true);
+    } finally {
+      if (btn) btn.disabled = false;
+      if (progress) progress.style.display = 'none';
+    }
+  },
+
+  renderAuditReport() {
+    const meta = document.getElementById('auditRunMeta');
+    const summaryEl = document.getElementById('auditSummary');
+    const body = document.getElementById('auditBody');
+    const run = this._audit;
+    if (!body) return;
+    if (!run) {
+      if (meta) meta.textContent = 'No audit has been run yet.';
+      if (summaryEl) summaryEl.innerHTML = '';
+      body.innerHTML = '<div class="text-muted small">Press <strong>Run audit now</strong> to check everything.</div>';
+      return;
+    }
+
+    const when = run.finishedAt ? new Date(run.finishedAt).toLocaleString() : '';
+    if (meta) meta.textContent = `Run #${run.runId} · ${run.trigger === 'nightly' ? 'nightly' : 'run by hand'} · ${when}`;
+
+    const s = run.summary || {};
+    const bands = s.byBand || {};
+    if (summaryEl) {
+      summaryEl.innerHTML =
+        (s.integrityOk
+          ? '<span class="badge bg-success"><i class="bi bi-check2-circle me-1"></i>Calculations consistent</span>'
+          : `<span class="badge bg-danger"><i class="bi bi-bug me-1"></i>${(s.byKind || {}).integrity || 0} calculation problem(s)</span>`) +
+        Object.keys(this.AUDIT_BANDS).map(b =>
+          `<span class="badge ${this.AUDIT_BANDS[b].cls}">${b}: ${bands[b] || 0}</span>`).join('') +
+        ((s.checkErrors || []).length
+          ? `<span class="badge bg-dark">${s.checkErrors.length} check(s) could not run</span>` : '');
+    }
+
+    const showDismissed = document.getElementById('auditShowDismissed')?.checked;
+    const findings = (run.findings || []).filter(f => showDismissed || f.review !== 'dismissed');
+    if (!findings.length) {
+      body.innerHTML = '<div class="text-muted small">Nothing to review.</div>';
+      return;
+    }
+
+    const reviewBadge = r => r === 'reviewed' ? '<span class="badge bg-light text-success border ms-1">reviewed</span>'
+      : r === 'dismissed' ? '<span class="badge bg-light text-secondary border ms-1">dismissed</span>'
+      : r === 'sent_to_claude' ? '<span class="badge bg-light text-primary border ms-1">sent to Claude</span>' : '';
+    const kindBadge = k => k === 'integrity' ? '<span class="badge bg-danger-subtle text-danger-emphasis">calculation</span>'
+      : k === 'info' ? '<span class="badge bg-light text-muted border">expected</span>'
+      : '<span class="badge bg-light text-dark border">entry</span>';
+
+    body.innerHTML = Object.keys(this.AUDIT_BANDS).map(band => {
+      const rows = findings.filter(f => f.priority === band);
+      if (!rows.length) return '';
+      return `
+        <h6 class="mt-3 mb-2"><span class="badge ${this.AUDIT_BANDS[band].cls}">${this.AUDIT_BANDS[band].label}</span>
+          <span class="text-muted small ms-1">${rows.length}</span>
+          <button type="button" class="btn btn-link btn-sm p-0 ms-2" onclick="App.Dashboard.tickAuditBand('${band}')">tick all</button></h6>
+        <div class="list-group">${rows.map(f => `
+          <label class="list-group-item d-flex gap-2 align-items-start">
+            <input class="form-check-input mt-1 audit-tick" type="checkbox" value="${escapeHtml(f.fingerprint)}" data-band="${band}">
+            <div class="flex-grow-1">
+              <div class="fw-semibold">${escapeHtml(f.title)} ${kindBadge(f.kind)}${reviewBadge(f.review)}</div>
+              <div class="small text-body-secondary">${escapeHtml(f.detail)}</div>
+              ${(f.refs || []).length ? `<div class="small mt-1">${f.refs.slice(0, 8).map(r => `<span class="badge bg-light text-dark border me-1">${escapeHtml(r)}</span>`).join('')}</div>` : ''}
+            </div>
+          </label>`).join('')}</div>`;
+    }).join('');
+  },
+
+  tickAuditBand(band) {
+    document.querySelectorAll(`#auditBody .audit-tick[data-band="${band}"]`).forEach(el => { el.checked = true; });
+  },
+
+  _tickedAuditFindings() {
+    const ticked = new Set(Array.from(document.querySelectorAll('#auditBody .audit-tick:checked')).map(el => el.value));
+    return (this._audit?.findings || []).filter(f => ticked.has(f.fingerprint));
+  },
+
+  async markAuditFindings(status) {
+    const picked = this._tickedAuditFindings();
+    if (!picked.length) { App.Utils.showToast('Tick the findings first.', true); return; }
+    try {
+      await Api.mutate('setAuditFindingStatus',
+        picked.map(f => ({ fingerprint: f.fingerprint, valueSig: f.valueSig })), status);
+      picked.forEach(f => { f.review = status; });
+      this.renderAuditReport();
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Could not save.', true);
+    }
+  },
+
+  async _auditBrief() {
+    const picked = this._tickedAuditFindings();
+    if (!picked.length) { App.Utils.showToast('Tick the findings to hand over first.', true); return null; }
+    const res = await Api.call('getAuditBrief', this._audit.runId, picked.map(f => f.fingerprint));
+    if (!res?.success) throw new Error(res?.message || 'Could not build the brief.');
+    return { markdown: res.data.markdown, picked };
+  },
+
+  async copyAuditBrief() {
+    try {
+      const brief = await this._auditBrief();
+      if (!brief) return;
+      // The Clipboard API needs https; on the LAN's http address fall back to
+      // a hidden textarea, which every browser still copies from.
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(brief.markdown);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = brief.markdown;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        ta.remove();
+        if (!ok) throw new Error('This browser would not copy. Use Download .md instead.');
+      }
+      await this._markSent(brief.picked);
+      App.Utils.showToast(`Copied ${brief.picked.length} finding(s). Paste them into Claude Code.`);
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Could not copy.', true);
+    }
+  },
+
+  async downloadAuditBrief() {
+    try {
+      const brief = await this._auditBrief();
+      if (!brief) return;
+      const url = URL.createObjectURL(new Blob([brief.markdown], { type: 'text/markdown' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `audit-run-${this._audit.runId}.md`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      await this._markSent(brief.picked);
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Could not download.', true);
+    }
+  },
+
+  async _markSent(picked) {
+    await Api.mutate('setAuditFindingStatus',
+      picked.map(f => ({ fingerprint: f.fingerprint, valueSig: f.valueSig })), 'sent_to_claude');
+    picked.forEach(f => { f.review = 'sent_to_claude'; });
+    this.renderAuditReport();
+  },
+
 
   async loadBackupStatus() {
     try {
