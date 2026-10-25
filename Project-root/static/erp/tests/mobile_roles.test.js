@@ -107,13 +107,15 @@ describe('the role list', () => {
 
     expect(MApp.Api.call).toHaveBeenCalledWith('getCustomRoles');
     expect(list().textContent).toContain('Store Keeper');
-    expect(list().textContent).toContain('2 of 11 tabs');
+    // Counted from the list the screen offers; that the list mirrors the
+    // server's ASSIGNABLE_TABS is proven above.
+    expect(list().textContent).toContain(`2 of ${MApp.Roles.TABS.length} tabs`);
     expect(list().textContent).toContain('2');
   });
 
   test('a role granting nothing says zero rather than looking broken', async () => {
     await open();
-    expect(list().textContent).toContain('0 of 11 tabs');
+    expect(list().textContent).toContain(`0 of ${MApp.Roles.TABS.length} tabs`);
   });
 
   test('no roles yet explains the two built-in ones', async () => {
@@ -138,7 +140,7 @@ describe('editing a role', () => {
     await open();
     MApp.Roles.openForm(ROLES[0]);
 
-    expect(document.querySelectorAll('#role-form-permissions .mb-field')).toHaveLength(11);
+    expect(document.querySelectorAll('#role-form-permissions .mb-field')).toHaveLength(MApp.Roles.TABS.length);
     expect(selected('stockTab').dataset.roleLevel).toBe('editor');
     expect(selected('itemMaster').dataset.roleLevel).toBe('viewer');
   });

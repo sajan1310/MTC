@@ -2484,6 +2484,173 @@ body.mb-selecting {
   gap: var(--mb-sp-3);
 }
 
+/* ── Inspection (MApp.Inspection) ────────────────────────────────────────
+   A row's state is carried three ways, never by colour alone: the left
+   stripe, the pressed button's own fill and label, and a worded badge
+   ("Revised", "New") for anything that needs checking again. */
+.mb-insp-card { width: 100%; text-align: left; }
+
+.mb-insp-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mb-sp-1) var(--mb-sp-3);
+  margin-top: var(--mb-sp-2);
+  font-size: 0.8125rem;
+  color: var(--mb-steel);
+}
+
+.mb-insp-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--mb-sp-2);
+  border-radius: var(--mb-radius-pill);
+  background: var(--mb-enamel-slate-bg);
+  color: var(--mb-enamel-slate-ink);
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.mb-insp-badge-new { background: var(--mb-enamel-blue-bg); color: var(--mb-enamel-blue-ink); }
+.mb-insp-badge-revised { background: var(--mb-enamel-amber-bg); color: var(--mb-enamel-amber-ink); }
+.mb-insp-badge-flagged { background: var(--mb-enamel-red-bg); color: var(--mb-enamel-red-ink); }
+.mb-insp-badge-cleared { background: var(--mb-enamel-green-bg); color: var(--mb-enamel-green-ink); }
+
+.mb-insp-head {
+  margin-bottom: var(--mb-sp-3);
+  padding-bottom: var(--mb-sp-3);
+  border-bottom: 1px solid var(--mb-steel-faint);
+}
+
+.mb-insp-banner {
+  margin-bottom: var(--mb-sp-3);
+  padding: var(--mb-sp-3);
+  border-radius: var(--mb-radius-sm);
+  background: var(--mb-enamel-blue-bg);
+  color: var(--mb-ink);
+  font-size: 0.875rem;
+}
+.mb-insp-banner-flagged { background: var(--mb-enamel-amber-bg); }
+.mb-insp-banner-cleared { background: var(--mb-enamel-green-bg); }
+
+/* "7/10 items checked" stays in view while the list scrolls under it. The
+   sheet body is padded, and a sticky top of 0 would stop the bar below
+   that padding, leaving a strip where rows show above it. */
+.mb-insp-progress {
+  position: sticky;
+  top: calc(var(--mb-sp-5) * -1);
+  z-index: 2;
+  margin-bottom: var(--mb-sp-2);
+  padding: var(--mb-sp-2) 0;
+  background: var(--mb-workshop);
+}
+.mb-insp-progress-text { margin-bottom: var(--mb-sp-1); font-size: 0.875rem; color: var(--mb-ink-soft); }
+
+.mb-insp-progress-bar {
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--mb-radius-pill);
+  background: var(--mb-steel-faint);
+}
+
+.mb-insp-progress-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--mb-enamel-green);
+  transition: width var(--mb-motion-base);
+}
+
+.mb-insp-list { display: grid; gap: var(--mb-sp-2); }
+
+.mb-insp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mb-sp-3);
+  padding: var(--mb-sp-3);
+  border-left: 4px solid transparent;
+  border-radius: var(--mb-radius-md);
+  background: var(--mb-surface);
+  box-shadow: var(--mb-shadow-card);
+}
+.mb-insp-row.is-pass { border-left-color: var(--mb-enamel-green); }
+.mb-insp-row.is-fail { border-left-color: var(--mb-enamel-red); }
+.mb-insp-row.is-changed { border-left-color: var(--mb-enamel-amber); }
+
+.mb-insp-item { flex: 1 1 auto; min-width: 0; }
+
+.mb-insp-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mb-sp-1) var(--mb-sp-2);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.mb-insp-meta { font-size: 0.8125rem; color: var(--mb-steel); overflow-wrap: anywhere; }
+
+.mb-insp-qty {
+  margin-top: 2px;
+  font-family: var(--mb-font-display);
+  font-size: 1.125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.mb-insp-was {
+  font-family: var(--mb-font-body);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--mb-enamel-amber-ink);
+}
+
+/* Pass / Fail: full tap targets, and the pressed one says so in its fill. */
+.mb-insp-toggle { display: flex; flex: none; gap: var(--mb-sp-2); }
+
+.mb-insp-btn {
+  min-width: var(--mb-tap-min);
+  min-height: var(--mb-tap-min);
+  padding: 0 var(--mb-sp-3);
+  border: 2px solid var(--mb-steel-light);
+  border-radius: var(--mb-radius-sm);
+  background: var(--mb-surface);
+  color: var(--mb-ink);
+  font-weight: 700;
+  cursor: pointer;
+}
+.mb-insp-pass[aria-pressed="true"] { border-color: var(--mb-enamel-green); background: var(--mb-enamel-green); color: #fff; }
+.mb-insp-fail[aria-pressed="true"] { border-color: var(--mb-enamel-red); background: var(--mb-enamel-red); color: #fff; }
+.mb-insp-btn:disabled { opacity: 0.55; cursor: default; }
+
+.mb-insp-removed { display: grid; gap: var(--mb-sp-1); margin-top: var(--mb-sp-4); }
+.mb-insp-remarks { margin-top: var(--mb-sp-5); }
+.mb-insp-remark-actions { display: flex; flex-wrap: wrap; gap: var(--mb-sp-2); margin-bottom: var(--mb-sp-4); }
+.mb-insp-remark-actions .mb-btn { flex: 1 1 12rem; }
+
+.mb-insp-signoff { display: grid; gap: var(--mb-sp-2); }
+.mb-insp-inspector { font-size: 0.875rem; color: var(--mb-ink-soft); }
+
+.mb-insp-question { margin: 0 0 var(--mb-sp-3); font-weight: 600; }
+.mb-insp-diff { display: grid; gap: var(--mb-sp-2); }
+
+.mb-insp-diff-row {
+  padding: var(--mb-sp-3);
+  border-radius: var(--mb-radius-sm);
+  background: var(--mb-surface);
+  box-shadow: var(--mb-shadow-card);
+  font-size: 0.9375rem;
+}
+.mb-insp-reconcile-actions { display: grid; gap: var(--mb-sp-2); }
+
+.mb-insp-done {
+  display: grid;
+  justify-items: center;
+  gap: var(--mb-sp-3);
+  padding: var(--mb-sp-8) var(--mb-sp-4);
+  text-align: center;
+}
+.mb-insp-done svg { width: 56px; height: 56px; color: var(--mb-enamel-green-ink); }
+.mb-insp-done-title { max-width: 28rem; margin: 0; font-size: 1.25rem; font-weight: 700; }
+
 /* ── Print ────────────────────────────────────────────────────────────────
    print.html's containers are the templates the desktop shell prints,
    filled by the same builders (print-templates.js). What decides how a

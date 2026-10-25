@@ -17,10 +17,11 @@ const ROLE_LABELS = {
   admin: 'Admin'
 };
 
-// The 11 sidebar tabs a custom role can be granted, and at which access
-// level -- mirrors app/erp/services/roles_service.py's ASSIGNABLE_TABS
-// exactly (dashboardTab/usersTab excluded there for the same reasons: every
-// role sees Dashboard, no custom role is ever usersTab-capable).
+// The 12 areas a custom role can be granted, and at which access level --
+// mirrors app/erp/services/roles_service.py's ASSIGNABLE_TABS exactly
+// (dashboardTab/usersTab excluded there for the same reasons: every role
+// sees Dashboard, no custom role is ever usersTab-capable). Eleven are
+// sidebar tabs; Inspection is not -- inspectors work in the phone app.
 const ASSIGNABLE_TABS = [
   ['vendorMaster', 'Vendors'],
   ['itemMaster', 'Items Master'],
@@ -31,6 +32,7 @@ const ASSIGNABLE_TABS = [
   ['productsTab', 'Products & Processes'],
   ['contractorsTab', 'Contractors'],
   ['productionTab', 'Production'],
+  ['inspectionTab', 'Inspection'],
   ['clientsTab', 'Clients'],
   ['dispatchTab', 'Dispatch']
 ];

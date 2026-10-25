@@ -448,6 +448,11 @@ App.Production = {
       const needsIssues = typeof App.Issue !== 'undefined' && !App.State.globalIssues.length;
       Promise.resolve(needsIssues ? App.Issue.loadData() : null).then(() => this.renderAllActivity());
     }
+    // Loaded fresh on every visit: what the floor did changes while the
+    // desk is looking at something else.
+    if (id === 'inspectionsSubTab' && typeof App.Inspection !== 'undefined') {
+      App.Inspection.load();
+    }
   },
 
   // Normalizes Production Log lots + Issued Stock entries into one shape

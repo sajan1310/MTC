@@ -11682,6 +11682,7 @@ MApp.Roles = {
     ['productsTab', 'Products & Processes'],
     ['contractorsTab', 'Contractors'],
     ['productionTab', 'Production'],
+    ['inspectionTab', 'Inspection'],
     ['clientsTab', 'Clients'],
     ['dispatchTab', 'Dispatch']
   ],
@@ -15470,6 +15471,615 @@ MApp.SheetGrouping = {
   },
 };
 
+// ================================================================
+// INSPECTION — a floor inspector checks a production lot's materials
+// against its live Production Sheet, flags what is wrong for an admin, and
+// clears the lot. inspection_service.py owns every rule: what the checklist
+// is, which checks still count after an admin edits the lot, and whether
+// the sheet moved under a submit. This screen draws what it is given and
+// sends one decision at a time, then takes the server's word for the
+// result -- an item's state after a tap comes back with the save.
+//
+// Clearing never changes the lot's own status (only Completed moves
+// stock). The first check moves a Pending lot to In Progress, and the
+// server says when it did.
+// ================================================================
+MApp.Inspection = {
+  SEARCH: {
+    fields: [
+      { key: 'lotNumber', weight: 10, label: 'Lot' },
+      { key: 'processName', weight: 7, label: 'Process' },
+      { key: 'outputItemName', weight: 5, label: 'Item' },
+      { key: 'date', weight: 3, label: 'Date' }
+    ]
+  },
+
+  lots: [],
+  filtered: [],
+  filter: 'all',
+  searchTerm: '',
+  data: null,
+  rowIdx: null,
+  _saving: new Set(),
+  _reconcile: null,
+
+  // ── The lot list ───────────────────────────────────────────────────
+  async open() {
+    const searchInput = document.getElementById('inspections-search');
+    if (searchInput) searchInput.value = '';
+    this.searchTerm = '';
+    MApp.SearchBox.attach('inspections-search', term => this.onSearch(term));
+    this.filter = 'all';
+    this._paintFilterChips();
+    MApp.Paging.reset('inspection');
+    MApp.Sheet.open('sheet-inspections');
+    await this.load();
+  },
+
+  close() {
+    MApp.Sheet.close('sheet-inspections');
+  },
+
+  async load() {
+    const listEl = document.getElementById('inspections-list');
+    MApp.Util.renderSkeleton(listEl, 4);
+    try {
+      const res = await MApp.Api.call('getInspectionLots');
+      if (!res || !res.success) {
+        MApp.Util.renderError(listEl, res && res.message, () => this.load());
+        return;
+      }
+      this.lots = res.data || [];
+      this._applyFilters();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.load());
+    }
+  },
+
+  onSearch(term) {
+    MApp.Paging.reset('inspection');
+    this.searchTerm = String(term || '').trim();
+    this._applyFilters();
+  },
+
+  filterBy(filter) {
+    this.filter = filter;
+    this._paintFilterChips();
+    MApp.Paging.reset('inspection');
+    this._applyFilters();
+  },
+
+  _paintFilterChips() {
+    document.querySelectorAll('#inspections-filter-bar .mb-filter-chip').forEach(chip => {
+      chip.classList.toggle('active', chip.dataset.inspFilter === this.filter);
+    });
+  },
+
+  // "To inspect" is the work list: lots still Pending or In Progress whose
+  // inspection is not cleared. "Inspected" includes lots completed since.
+  _matches(lot) {
+    const state = (lot.inspection || {}).status || '';
+    switch (this.filter) {
+      case 'flagged': return state === 'flagged';
+      case 'cleared': return state === 'cleared';
+      case 'Pending':
+      case 'In Progress': return lot.status === this.filter && state !== 'cleared';
+      default: return (lot.status === 'Pending' || lot.status === 'In Progress') && state !== 'cleared';
+    }
+  },
+
+  _applyFilters() {
+    // Flagged first, then lots being inspected, then untouched ones; the
+    // server's newest-first order holds within each.
+    const rank = { flagged: 0, in_progress: 1, '': 2, cleared: 3 };
+    const base = this.lots
+      .filter(lot => this._matches(lot))
+      .map((lot, i) => ({ lot, i, r: rank[(lot.inspection || {}).status || ''] }))
+      .sort((a, b) => (a.r - b.r) || (a.i - b.i))
+      .map(x => x.lot);
+    this.filtered = MApp.Search.run(MApp.Search.index(base, this.SEARCH), this.searchTerm);
+    this.render();
+  },
+
+  render() {
+    const listEl = document.getElementById('inspections-list');
+    if (!listEl) return;
+    if (this.filtered.length === 0) {
+      MApp.Util.renderEmpty(listEl, {
+        title: this.lots.length ? 'No lots here' : 'Nothing to inspect',
+        body: this.lots.length ? 'Try a different search or filter.' : 'Pending and In Progress lots appear here.'
+      });
+      return;
+    }
+    const page = MApp.Paging.take('inspection', this.filtered, () => this.render());
+    MApp.SearchBox.setCount('inspections-search', page.shown, page.total, page.meta);
+    const e = MApp.Util.escapeHtml;
+    listEl.innerHTML = page.rows.map(lot => {
+      return this._cardHtml(lot, e);
+    }).join('') + MApp.Paging.moreHtml(page);
+    listEl.querySelectorAll('[data-insp-lot]').forEach(btn => {
+      btn.addEventListener('click', () => this.openChecklist(Number(btn.dataset.inspLot)));
+    });
+  },
+
+  _stateBadge(lot) {
+    const insp = lot.inspection || {};
+    const s = insp.summary || {};
+    switch (insp.status) {
+      case 'flagged':
+        return '<span class="mb-insp-badge mb-insp-badge-flagged">Flagged for admin</span>';
+      case 'cleared':
+        return insp.changedSinceCleared
+          ? '<span class="mb-insp-badge mb-insp-badge-revised">Inspected · sheet changed since</span>'
+          : '<span class="mb-insp-badge mb-insp-badge-cleared">Inspected</span>';
+      case 'in_progress': {
+        const recheck = (s.revised || 0) + (s.added || 0);
+        return `<span class="mb-insp-badge">Checked ${s.checked}/${s.total}${recheck ? ` · ${recheck} to re-check` : ''}</span>`;
+      }
+      default:
+        return '<span class="mb-insp-badge mb-insp-badge-new">Not started</span>';
+    }
+  },
+
+  _cardHtml(lot, e) {
+    const updated = this._when(lot.lastUpdated);
+    const sub = [lot.processName, lot.outputItemName].filter(Boolean).map(e).join(' · ');
+    return `
+      <button type="button" class="mb-card mb-card-tappable mb-insp-card" style="border:none;" data-insp-lot="${e(lot.rowIdx)}">
+        <div class="mb-card-row">
+          <div>
+            <div class="mb-card-title">${e(lot.lotNumber)}</div>
+            <div class="mb-card-sub">${sub}</div>
+          </div>
+          <span class="mb-chip ${MApp.Util.statusChipClass(lot.status)}">${e(lot.status)}</span>
+        </div>
+        <div class="mb-insp-card-meta">
+          ${this._stateBadge(lot)}
+          <span>${e(lot.itemCount)} item${lot.itemCount === 1 ? '' : 's'}</span>
+          ${updated ? `<span>Updated ${e(updated)}</span>` : ''}
+        </div>
+      </button>`;
+  },
+
+  // "25 Oct, 14:05": read at a glance on a card.
+  _when(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  },
+
+  _isOpen(sheetId) {
+    return MApp.Sheet._stack.some(s => s.id === sheetId);
+  },
+
+  // ── The checklist ──────────────────────────────────────────────────
+  // Opening a lot changes nothing on it. Its first check does (server).
+  async openChecklist(rowIdx) {
+    this.rowIdx = rowIdx;
+    MApp.Sheet.open('sheet-inspection');
+    await this._loadChecklist();
+  },
+
+  closeChecklist() {
+    MApp.Sheet.close('sheet-inspection');
+    // Counts and badges on the list may have moved while it was open.
+    if (this._isOpen('sheet-inspections')) this.load();
+  },
+
+  async _loadChecklist() {
+    const stale = MApp.Util.openGuard(this);
+    const body = document.getElementById('inspection-body');
+    const footer = document.getElementById('inspection-footer');
+    this.data = null;
+    this._saving = new Set();
+    MApp.Util.renderSkeleton(body, 5);
+    if (footer) footer.innerHTML = '';
+    try {
+      const res = await MApp.Api.call('getInspection', this.rowIdx);
+      if (stale()) return;
+      if (!res || !res.success) {
+        MApp.Util.renderError(body, res && res.message, () => this._loadChecklist());
+        return;
+      }
+      this.data = res.data;
+      this.renderChecklist();
+    } catch (err) {
+      if (stale()) return;
+      MApp.Util.renderError(body, err && err.message, () => this._loadChecklist());
+    }
+  },
+
+  renderChecklist() {
+    const d = this.data;
+    const body = document.getElementById('inspection-body');
+    if (!d || !body) return;
+    const e = MApp.Util.escapeHtml;
+    const lot = d.lot;
+    const insp = d.inspection || {};
+    const closed = insp.status === 'cleared';
+    const title = document.getElementById('inspection-title');
+    if (title) title.textContent = `Inspect ${lot.lotNumber}`;
+
+    const facts = [lot.lotNumber, lot.date, `${MApp.Util.formatQty(lot.qty)} units`]
+      .concat(lot.colors.length ? [lot.colors.join(', ')] : []);
+    body.innerHTML = `
+      <div class="mb-insp-head">
+        <div class="mb-card-row">
+          <div>
+            <div class="mb-card-title">${e(lot.processName)}</div>
+            <div class="mb-card-sub">${e(lot.outputItemName || lot.productName || '')}</div>
+          </div>
+          <span class="mb-chip ${MApp.Util.statusChipClass(lot.status)}" id="inspection-lot-status">${e(lot.status)}</span>
+        </div>
+        <div class="mb-insp-card-meta">${facts.map(f => `<span>${e(f)}</span>`).join('')}</div>
+      </div>
+      ${this._bannerHtml(d, e)}
+      <div class="mb-insp-progress" id="inspection-progress" role="status" aria-live="polite"></div>
+      <div class="mb-insp-list" role="list">
+        ${d.items.length
+          ? d.items.map(item => this._itemHtml(item, e, closed)).join('')
+          : '<div class="mb-field-hint">This lot has nothing on its Production Sheet to inspect.</div>'}
+      </div>
+      ${d.removed.length ? this._removedHtml(d.removed, e) : ''}
+      ${closed ? this._clearedRemarksHtml(insp, e) : this._remarksHtml(d, e)}`;
+
+    body.querySelectorAll('[data-insp-row]').forEach(row => this._bindRow(row));
+    this._paintProgress();
+    this._paintFooter();
+  },
+
+  _bindRow(row) {
+    row.querySelectorAll('[data-insp-result]').forEach(btn => {
+      btn.addEventListener('click', () => this.setResult(btn.dataset.inspKey, btn.dataset.inspResult));
+    });
+  },
+
+  _bannerHtml(d, e) {
+    const insp = d.inspection || {};
+    if (insp.status === 'cleared') {
+      const changed = insp.changedSinceCleared
+        ? '<div>The Production Sheet has changed since this lot was cleared.</div>' : '';
+      return `<div class="mb-insp-banner mb-insp-banner-cleared">Cleared by ${e(insp.clearedByName)} (${e(insp.clearedByRole)}) · ${e(this._when(insp.clearedAt))}${changed}</div>`;
+    }
+    if (insp.status === 'flagged') {
+      return `<div class="mb-insp-banner mb-insp-banner-flagged">Flagged for an admin${insp.flaggedByName ? ` by ${e(insp.flaggedByName)}` : ''}. You can keep checking; the lot can be cleared once an admin sends it back.</div>`;
+    }
+    if (insp.returnedAt) {
+      const note = String(insp.reviewNote || '').trim();
+      const said = note ? `: ${e(note)}${/[.!?]$/.test(note) ? '' : '.'}` : '.';
+      return `<div class="mb-insp-banner">Sent back by an admin${said} Items that changed are marked Revised or New.</div>`;
+    }
+    return '';
+  },
+
+  _itemHtml(item, e, closed) {
+    const meta = [item.size, item.color, item.narration].filter(Boolean).map(e).join(' · ');
+    const qty = `${e(MApp.Util.formatQty(item.qty))}${item.unit ? ` ${e(item.unit)}` : ''}`;
+    const badge = item.state === 'revised'
+      ? '<span class="mb-insp-badge mb-insp-badge-revised">Revised</span>'
+      : item.state === 'new' ? '<span class="mb-insp-badge mb-insp-badge-new">New</span>' : '';
+    const pass = item.state === 'checked' && item.result === 'pass';
+    const fail = item.state === 'checked' && item.result === 'fail';
+    const off = closed || this._saving.has(item.key) ? ' disabled' : '';
+    const cls = ['mb-insp-row', pass ? 'is-pass' : '', fail ? 'is-fail' : '', badge ? 'is-changed' : ''].filter(Boolean).join(' ');
+    return `
+      <div class="${cls}" role="listitem" data-insp-row="${e(item.key)}">
+        <div class="mb-insp-item">
+          <div class="mb-insp-name">${e(item.itemName)} ${badge}</div>
+          ${meta ? `<div class="mb-insp-meta">${meta}</div>` : ''}
+          <div class="mb-insp-qty">${qty}${this._wasHtml(item, e)}</div>
+        </div>
+        <div class="mb-insp-toggle" role="group" aria-label="Result for ${e(item.itemName)}">
+          <button type="button" class="mb-insp-btn mb-insp-pass" aria-pressed="${pass}" data-insp-key="${e(item.key)}" data-insp-result="pass"${off}>Pass</button>
+          <button type="button" class="mb-insp-btn mb-insp-fail" aria-pressed="${fail}" data-insp-key="${e(item.key)}" data-insp-result="fail"${off}>Fail</button>
+        </div>
+      </div>`;
+  },
+
+  // "was 50" / spec was "Zinc": what a Revised row was when last seen.
+  _wasHtml(item, e) {
+    const prev = item.previous;
+    if (!prev) return '';
+    const parts = [];
+    if (prev.qty !== null && prev.qty !== undefined && Number(prev.qty) !== Number(item.qty)) {
+      parts.push(`was ${e(MApp.Util.formatQty(prev.qty))}`);
+    }
+    if (String(prev.narration || '').toLowerCase() !== String(item.narration || '').toLowerCase()) {
+      parts.push(`spec was "${e(prev.narration || '—')}"`);
+    }
+    return parts.length ? ` <span class="mb-insp-was">${parts.join(', ')}</span>` : '';
+  },
+
+  _removedHtml(removed, e) {
+    return `
+      <div class="mb-insp-removed">
+        <div class="mapp-section-label">Removed from the sheet since inspection began</div>
+        ${removed.map(r => {
+          const name = [r.itemName, r.size, r.color].filter(Boolean).map(e).join(' · ');
+          return `<div class="mb-insp-meta">${name} — ${e(MApp.Util.formatQty(r.qty))}</div>`;
+        }).join('')}
+      </div>`;
+  },
+
+  _remarksHtml(d, e) {
+    const insp = d.inspection || {};
+    const flagged = insp.status === 'flagged';
+    const sendBack = flagged && d.canReturn ? `
+      <div class="mb-field">
+        <label for="inspection-review-note">Note for the inspector (optional)</label>
+        <textarea id="inspection-review-note" rows="2" maxlength="1000" placeholder="What was changed on the lot"></textarea>
+      </div>
+      <button type="button" class="mb-btn mb-btn-secondary" id="inspection-return-btn" onclick="MApp.Inspection.sendBack()">Send back for re-inspection</button>` : '';
+    return `
+      <div class="mb-field mb-insp-remarks">
+        <label for="inspection-remarks">Remarks / Required lot changes</label>
+        <textarea id="inspection-remarks" rows="4" maxlength="2000" placeholder="Material discrepancies, defects, or changes the lot or its recipe needs">${e(insp.remarks || '')}</textarea>
+        <div class="mb-field-hint">Flagging asks an admin to change the lot. It does not clear it.</div>
+      </div>
+      <div class="mb-insp-remark-actions">
+        <button type="button" class="mb-btn mb-btn-secondary" id="inspection-save-remarks-btn" onclick="MApp.Inspection.saveRemarks(false)">Save remarks</button>
+        <button type="button" class="mb-btn mb-btn-secondary" id="inspection-flag-btn" onclick="MApp.Inspection.saveRemarks(true)"${flagged ? ' disabled' : ''}>Save remarks &amp; flag for admin</button>
+      </div>
+      ${sendBack}`;
+  },
+
+  _clearedRemarksHtml(insp, e) {
+    if (!insp.remarks) return '';
+    return `<div class="mb-field mb-insp-remarks"><div class="mapp-section-label">Remarks</div><div class="mb-insp-meta">${e(insp.remarks)}</div></div>`;
+  },
+
+  _paintProgress() {
+    const el = document.getElementById('inspection-progress');
+    const s = this.data && this.data.summary;
+    if (!el || !s) return;
+    const pct = s.total ? Math.round((s.checked / s.total) * 100) : 0;
+    const extra = [];
+    if (s.failed) extra.push(`${s.failed} failed`);
+    if (s.revised) extra.push(`${s.revised} revised`);
+    if (s.added) extra.push(`${s.added} new`);
+    el.innerHTML = `
+      <div class="mb-insp-progress-text"><strong>${s.checked}/${s.total}</strong> items checked${extra.length ? ` · ${extra.join(' · ')}` : ''}</div>
+      <div class="mb-insp-progress-bar" role="progressbar" aria-label="Items checked" aria-valuemin="0" aria-valuemax="${s.total}" aria-valuenow="${s.checked}"><span style="width:${pct}%"></span></div>`;
+  },
+
+  // The sign-off: who is clearing the lot, and the one primary action,
+  // unlocked only when every item has passed and no admin is needed.
+  _paintFooter() {
+    const footer = document.getElementById('inspection-footer');
+    const d = this.data;
+    if (!footer || !d) return;
+    const e = MApp.Util.escapeHtml;
+    const insp = d.inspection || {};
+    if (insp.status === 'cleared') {
+      footer.innerHTML = '<button type="button" class="mb-btn mb-btn-secondary" onclick="MApp.Inspection.closeChecklist()">Back to lots</button>';
+      return;
+    }
+    const s = d.summary || {};
+    const flagged = insp.status === 'flagged';
+    const left = (s.total || 0) - (s.passed || 0);
+    const why = flagged ? 'Waiting for an admin to send this lot back.'
+      : s.failed ? 'An item failed: flag the lot for an admin instead of clearing it.'
+        : !s.complete ? `${left} item${left === 1 ? '' : 's'} still to pass.` : '';
+    footer.innerHTML = `
+      <div class="mb-insp-inspector">Inspector: <strong>${e(d.inspector.name)}</strong> <span aria-hidden="true">|</span> Role: <strong>${e(d.inspector.roleLabel)}</strong></div>
+      ${why ? `<div class="mb-field-hint" id="inspection-why">${e(why)}</div>` : ''}
+      <button type="button" class="mb-btn mb-btn-primary" id="inspection-clear-btn" onclick="MApp.Inspection.submit()"${s.complete && !flagged ? '' : ' disabled'}${why ? ' aria-describedby="inspection-why"' : ''}>Complete Inspection &amp; Clear Lot</button>`;
+  },
+
+  _rowEl(key) {
+    return [...document.querySelectorAll('#inspection-body [data-insp-row]')].find(el => el.dataset.inspRow === key) || null;
+  },
+
+  _repaintRow(item) {
+    const el = this._rowEl(item.key);
+    if (!el) return;
+    el.insertAdjacentHTML('afterend', this._itemHtml(item, MApp.Util.escapeHtml, false));
+    const fresh = el.nextElementSibling;
+    el.remove();
+    if (fresh) this._bindRow(fresh);
+  },
+
+  // Pass or Fail one row. Tapping the result already chosen clears it.
+  async setResult(key, result) {
+    const d = this.data;
+    const item = d && d.items.find(i => i.key === key);
+    if (!item || this._saving.has(key)) return;
+    const next = item.state === 'checked' && item.result === result ? '' : result;
+    this._saving.add(key);
+    this._repaintRow(item);
+    try {
+      const res = await MApp.Api.mutate('setInspectionCheck', this.rowIdx, key, next, item.fingerprint);
+      if (!res || !res.success) {
+        MApp.Toast.error((res && res.message) || 'That check was not saved.');
+        // Most refusals mean the sheet moved; show it as it is now.
+        await this._loadChecklist();
+        return;
+      }
+      if (res.data.item) Object.assign(item, res.data.item);
+      d.summary = res.data.summary;
+      if (res.data.lotStatus && res.data.lotStatus !== d.lot.status) {
+        d.lot.status = res.data.lotStatus;
+        const chip = document.getElementById('inspection-lot-status');
+        if (chip) {
+          chip.textContent = d.lot.status;
+          chip.className = `mb-chip ${MApp.Util.statusChipClass(d.lot.status)}`;
+        }
+        if (res.message) MApp.Toast.success(res.message);
+      }
+      MApp.Haptics.light();
+    } catch (err) {
+      MApp.Toast.error((err && err.message) || 'No connection. That check was not saved.');
+    } finally {
+      this._saving.delete(key);
+      if (this.data === d) {
+        this._repaintRow(item);
+        this._paintProgress();
+        this._paintFooter();
+      }
+    }
+  },
+
+  async saveRemarks(flag) {
+    const d = this.data;
+    if (!d) return;
+    const field = document.getElementById('inspection-remarks');
+    const remarks = field ? field.value : '';
+    if (flag && !remarks.trim()) {
+      MApp.Toast.error('Write what needs to change before flagging the lot for an admin.');
+      if (field) field.focus();
+      return;
+    }
+    const btn = document.getElementById(flag ? 'inspection-flag-btn' : 'inspection-save-remarks-btn');
+    if (btn) btn.disabled = true;
+    try {
+      const res = await MApp.Api.mutate('saveInspectionRemarks', this.rowIdx, remarks, !!flag);
+      if (!res || !res.success) {
+        MApp.Toast.error((res && res.message) || 'The remarks were not saved.');
+        return;
+      }
+      d.inspection.remarks = res.data.remarks;
+      d.inspection.status = res.data.status;
+      MApp.Toast.success(res.message || 'Remarks saved.');
+      if (flag) {
+        d.inspection.flaggedByName = d.inspector.name;
+        this.renderChecklist();
+      }
+    } catch (err) {
+      MApp.Toast.error((err && err.message) || 'No connection. The remarks were not saved.');
+    } finally {
+      if (btn && btn.isConnected) btn.disabled = false;
+    }
+  },
+
+  // Admin only (the server enforces it): a flagged lot goes back to the
+  // inspector, who then sees what changed as Revised / New.
+  async sendBack() {
+    const note = (document.getElementById('inspection-review-note') || {}).value || '';
+    const btn = document.getElementById('inspection-return-btn');
+    if (btn) btn.disabled = true;
+    try {
+      const res = await MApp.Api.mutate('returnInspection', this.rowIdx, note);
+      if (!res || !res.success) {
+        MApp.Toast.error((res && res.message) || 'The lot was not sent back.');
+        return;
+      }
+      MApp.Toast.success(res.message);
+      await this._loadChecklist();
+    } catch (err) {
+      MApp.Toast.error((err && err.message) || 'No connection. The lot was not sent back.');
+    } finally {
+      if (btn && btn.isConnected) btn.disabled = false;
+    }
+  },
+
+  // ── Submit: reconcile against the live sheet, then clear ──────────
+  // The server re-reads the sheet. If it moved, nothing is written and the
+  // differences come back for the dialog below; an admin may accept them,
+  // echoing the token of exactly the list they were shown.
+  async submit(acknowledgeToken) {
+    if (!this.data) return;
+    const btn = document.getElementById(acknowledgeToken ? 'inspection-acknowledge-btn' : 'inspection-clear-btn');
+    const idle = btn ? btn.textContent : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Checking the Production Sheet…';
+    }
+    try {
+      const res = acknowledgeToken
+        ? await MApp.Api.mutate('clearInspection', this.rowIdx, acknowledgeToken)
+        : await MApp.Api.mutate('clearInspection', this.rowIdx);
+      if (!res || !res.success) {
+        MApp.Toast.error((res && res.message) || 'The lot was not cleared.');
+        this.closeReconcile();
+        await this._loadChecklist();
+        return;
+      }
+      if (res.data.cleared) {
+        this.closeReconcile();
+        this._showCleared(res.data);
+        return;
+      }
+      this._openReconcile(res.data);
+    } catch (err) {
+      MApp.Toast.error((err && err.message) || 'No connection. The lot was not cleared.');
+    } finally {
+      if (btn && btn.isConnected) {
+        btn.disabled = false;
+        btn.textContent = idle;
+      }
+    }
+  },
+
+  _openReconcile(result) {
+    this._reconcile = result;
+    const body = document.getElementById('inspection-reconcile-body');
+    const footer = document.getElementById('inspection-reconcile-footer');
+    if (!body || !footer) return;
+    const e = MApp.Util.escapeHtml;
+    body.innerHTML = `
+      ${result.changedAgain ? '<div class="mb-insp-banner mb-insp-banner-flagged">The sheet changed again while you were deciding. These are the differences now.</div>' : ''}
+      <p class="mb-insp-question">Targeted changes have been detected in the live Production Sheet. Do you confirm these changes apply to this inspected lot?</p>
+      <div class="mb-insp-diff" role="list">${(result.discrepancies || []).map(x => this._diffHtml(x, e)).join('')}</div>
+      ${result.canAcknowledge ? '' : '<p class="mb-field-hint">Only an admin can accept these changes without re-inspecting. Re-inspect the changed items, or ask an admin.</p>'}`;
+    footer.innerHTML = `
+      <button type="button" class="mb-btn mb-btn-secondary" onclick="MApp.Inspection.reinspect()">Re-inspect Modified Items</button>
+      ${result.canAcknowledge ? '<button type="button" class="mb-btn mb-btn-primary" id="inspection-acknowledge-btn" onclick="MApp.Inspection.acknowledge()">Acknowledge &amp; Proceed</button>' : ''}`;
+    if (!this._isOpen('sheet-inspection-reconcile')) MApp.Sheet.open('sheet-inspection-reconcile');
+  },
+
+  // "Spoke 12G · 26in: quantity changed from 50 to 45"
+  _diffHtml(x, e) {
+    const name = [x.itemName, x.size, x.color].filter(Boolean).map(e).join(' · ');
+    if (x.kind === 'added') {
+      return `<div class="mb-insp-diff-row" role="listitem"><span class="mb-insp-badge mb-insp-badge-new">New</span> ${name}: added, ${e(MApp.Util.formatQty(x.qty))}</div>`;
+    }
+    if (x.kind === 'removed') {
+      return `<div class="mb-insp-diff-row" role="listitem"><span class="mb-insp-badge mb-insp-badge-flagged">Removed</span> ${name}: no longer on the sheet</div>`;
+    }
+    const changes = (x.changes || []).map(c => (c.field === 'qty'
+      ? `quantity changed from ${e(MApp.Util.formatQty(c.from))} to ${e(MApp.Util.formatQty(c.to))}`
+      : `specification changed from "${e(c.from || '—')}" to "${e(c.to || '—')}"`)).join('; ');
+    return `<div class="mb-insp-diff-row" role="listitem"><span class="mb-insp-badge mb-insp-badge-revised">Changed</span> ${name}: ${changes || 'changed'}</div>`;
+  },
+
+  closeReconcile() {
+    if (this._isOpen('sheet-inspection-reconcile')) MApp.Sheet.close('sheet-inspection-reconcile');
+  },
+
+  // Back to the checklist as the sheet now stands: unchanged rows keep
+  // their ticks, changed and added ones come back unticked and badged.
+  async reinspect() {
+    this.closeReconcile();
+    await this._loadChecklist();
+  },
+
+  acknowledge() {
+    if (!this._reconcile || !this._reconcile.token) return Promise.resolve();
+    return this.submit(this._reconcile.token);
+  },
+
+  _showCleared(result) {
+    const e = MApp.Util.escapeHtml;
+    const name = (result.inspector && result.inspector.name) || (this.data && this.data.inspector.name) || '';
+    if (this.data) this.data.inspection.status = 'cleared';
+    const body = document.getElementById('inspection-body');
+    const footer = document.getElementById('inspection-footer');
+    if (body) {
+      body.innerHTML = `
+        <div class="mb-insp-done" role="status">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M8 12.5l2.5 2.5L16 9.5"/></svg>
+          <p class="mb-insp-done-title">Thank you, ${e(name)}. Your lot has been cleared for ${e(result.processName)}.</p>
+          <p class="mb-field-hint">Lot ${e(result.lotNumber)}${(result.acknowledged || []).length ? ' · Production Sheet changes accepted by an admin' : ''}</p>
+        </div>`;
+    }
+    if (footer) {
+      footer.innerHTML = '<button type="button" class="mb-btn mb-btn-primary" onclick="MApp.Inspection.closeChecklist()">Back to the lot list</button>';
+    }
+    MApp.Haptics.light();
+  }
+};
+
 MApp.ProductionSheet = {
   lot: null,
   rows: [],
@@ -18307,6 +18917,7 @@ MApp.Shortcuts = {
     { key: 'poLedger', label: 'POs', open: () => MApp.PO.openLedgerSheet() },
     { key: 'itemsLookup', label: 'Items', open: () => MApp.Items.openLookupSheet() },
     { key: 'pool', label: 'Pool', open: () => MApp.Pool.open() },
+    { key: 'inspection', label: 'Inspection', open: () => MApp.Inspection.open() },
     { key: 'vendors', label: 'Vendors', open: () => MApp.Directory.open('vendor') },
     { key: 'clients', label: 'Clients', open: () => MApp.Directory.open('client') },
     { key: 'contractors', label: 'Contractors', open: () => MApp.Directory.open('contractor') },
@@ -18400,6 +19011,7 @@ MApp.Drawer = {
   GROUPS: [
     { key: 'production', label: 'Production', open: true, items: [
       { tab: 'production', label: 'Production lots' },
+      { dest: 'inspection' },
       { dest: 'issued' }, { dest: 'wastage' },
       { dest: 'processes' }, { dest: 'recipes' }
     ] },

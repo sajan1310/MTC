@@ -462,7 +462,10 @@
 // labels appear from 1200px. styles.css is precached, so without the bump an
 // installed client keeps the header that overflows. (planning-board.js is not
 // precached; its ?v= in index.html moved to 6 for the touch-drag fix.)
-const CACHE_NAME = 'erp-shell-v91';
+// v92: Production > Inspections, where an admin reviews what floor
+// inspectors checked, flagged and cleared, and sends a flagged lot back.
+// inspection.js is new and precached; production.js opens the sub-tab.
+const CACHE_NAME = 'erp-shell-v92';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
@@ -481,6 +484,7 @@ const PRECACHE_URLS = [
   '/static/erp/process.js',
   '/static/erp/bom.js',
   '/static/erp/contractor.js',
+  '/static/erp/inspection.js',
   '/static/erp/production.js',
   '/static/erp/issue.js',
   '/static/erp/client.js',
