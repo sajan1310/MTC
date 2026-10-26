@@ -791,15 +791,13 @@ textarea:focus-visible,
 
 :root[data-density="grid"] .mb-list > .mb-card { margin-bottom: 0; }
 
-/* Things that live inside a list but are not one of its records: the
-   negative-bucket banner, "Show 50 more", an empty/error state, and the
-   panel a Stock card expands into. Each spans the full row so it stays
-   where it was written rather than becoming a sibling tile. */
-:root[data-density="grid"] .mb-list > .mb-offline-banner,
-:root[data-density="grid"] .mb-list > .mb-load-more,
-:root[data-density="grid"] .mb-list > .mb-state,
-:root[data-density="grid"] .mb-list > .mb-skel,
-:root[data-density="grid"] .mb-list > [id^="stock-expand-"] {
+/* Everything in a list that is not one of its records spans the full row,
+   so it stays where it was written rather than becoming a sibling tile:
+   the negative-bucket banner, "Show 50 more", skeletons, the panel a Stock
+   card expands into, and an empty or error state -- which several lists
+   (Production, Stock, the Pool, Returns) draw inside a plain <div>, so
+   naming the classes it might carry was not enough. A record is .mb-card. */
+:root[data-density="grid"] .mb-list > :not(.mb-card) {
   grid-column: 1 / -1;
 }
 
@@ -969,33 +967,47 @@ textarea:focus-visible,
 .mb-chip-cancelled { background: var(--mb-enamel-red); }
 .mb-chip-lowstock   { background: var(--mb-enamel-red); }
 
-select.mb-chip,
-.mb-chip-select {
-  border: none;
-  cursor: pointer;
-  outline: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  appearance: none;
+/* A lot card's status as an inline dropdown (MApp.Production
+   _statusSelectHtml): the chip's look, with a small arrow. One selector --
+   the select always carries both .mb-chip and .mb-chip-select -- and its
+   own weight (0,1,1) keeps the arrow over the .mb-chip-* colour rules'
+   background shorthand. */
+select.mb-chip-select {
   padding: 5px 24px 5px 12px;
+  border: none;
+  outline: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 8px center;
   background-size: 10px;
   vertical-align: middle;
+  cursor: pointer;
+  appearance: none;
 }
-select.mb-chip:focus-visible,
-.mb-chip-select:focus-visible {
-  outline: 2px solid var(--mb-safety, #ff7a1a);
+
+select.mb-chip-select:focus-visible {
+  outline: 2px solid var(--mb-safety);
   outline-offset: 1px;
 }
-select.mb-chip option,
-.mb-chip-select option {
-  background: var(--mb-surface, #ffffff);
-  color: var(--mb-ink, #1b2126);
+
+select.mb-chip-select option {
+  background: var(--mb-surface);
+  color: var(--mb-ink);
   font-weight: 600;
-  text-transform: none;
   letter-spacing: normal;
+  text-transform: none;
+}
+
+/* Long-press selection: a tap anywhere on a card toggles it, so the status
+   dropdown must not catch the tap and change the lot's status (MApp.Select
+   swallows clicks, but a select opens on press, before any click). */
+body.mb-selecting select.mb-chip-select { pointer-events: none; }
+
+/* iOS Safari zooms the page into any form control set under 16px, on every
+   tap; there the dropdown takes 16px text instead of the chip's 12px.
+   -webkit-touch-callout exists only in iOS's WebKit. */
+@supports (-webkit-touch-callout: none) {
+  select.mb-chip-select { font-size: max(1rem, 16px); }
 }
 
 /* ── Tappable filter chips (status-bar style pickers, e.g. PO Ledger) ── */
@@ -2563,13 +2575,9 @@ body.mb-selecting {
 
   .mb-list > .mb-card { margin-bottom: 0; }
 
-  .mb-list > .mb-offline-banner,
-  .mb-list > .mb-load-more,
-  .mb-list > .mb-state,
-  .mb-list > .mb-skel,
-  .mb-list > [id^="stock-expand-"] {
-    grid-column: 1 / -1;
-  }
+  /* Not a record (an empty state, a banner, "Show more"...): the full row,
+     as in the density grid above. */
+  .mb-list > :not(.mb-card) { grid-column: 1 / -1; }
 }
 
 /* ── Inspection (MApp.Inspection) ────────────────────────────────────────
@@ -2649,10 +2657,14 @@ body.mb-selecting {
 .mb-insp-num { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* The lot list as a table (MApp.Inspection.render on a wide screen): the
-   list element holds the header and one button per lot. */
+   list element holds the header and one button per lot. The five columns'
+   minimums, with the gaps and padding (43.25rem), fit the narrowest screen
+   that gets the table -- 46rem less the sheet's padding -- and every row
+   holds that width, so a larger font setting that outgrows it scrolls the
+   table sideways rather than cutting a column off. */
 #inspections-list.mb-insp-tabular {
   display: block;
-  overflow: hidden;
+  overflow-x: auto;
   border-radius: var(--mb-radius-md);
   background: var(--mb-surface);
   box-shadow: var(--mb-shadow-card);
@@ -2661,10 +2673,11 @@ body.mb-selecting {
 .mb-insp-lhead,
 .mb-insp-lrow {
   display: grid;
-  grid-template-columns: minmax(9rem, 1.1fr) minmax(12rem, 2fr) minmax(7rem, 0.8fr) minmax(11rem, 1.4fr) 5rem minmax(8rem, 1fr);
-  column-gap: var(--mb-sp-3);
+  grid-template-columns: minmax(8.5rem, 1fr) minmax(9rem, 2fr) 7.25rem minmax(9.5rem, 1.5fr) minmax(5.5rem, 1fr);
+  column-gap: var(--mb-sp-2);
   align-items: center;
-  padding: var(--mb-sp-3) var(--mb-sp-4);
+  min-width: 43.25rem;
+  padding: var(--mb-sp-3);
 }
 
 .mb-insp-lrow {
@@ -2686,57 +2699,48 @@ body.mb-selecting {
 
 .mb-insp-lsub { display: block; font-size: 0.8125rem; color: var(--mb-steel); }
 
-/* The checklist screen: the lot's details, the checklist, and the admin
-   review -- a panel of its own, apart from the material list (owner,
-   2026-10-26). One column on a phone, in that order. From 70rem the
-   checklist takes the main column and the details and the review sit
-   beside it, staying in view while the checklist scrolls. */
+/* The checklist screen, in the page order a phone shows it, so a screen
+   reader meets the parts as they are seen: the lot's details, the
+   checklist, and the admin review -- a panel of its own, apart from the
+   material list (owner, 2026-10-26). From 70rem the checklist takes the
+   main column, with the details and the review beside it. */
 .mb-insp-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "head" "main" "review";
   gap: var(--mb-sp-4);
 }
 
-.mb-insp-main { grid-area: main; min-width: 0; }
-.mb-insp-side { display: contents; }
-.mb-insp-side > .mb-insp-head { grid-area: head; }
-.mb-insp-side > .mb-insp-review-panel { grid-area: review; }
+.mb-insp-main { min-width: 0; }
 
 @media (min-width: 70rem) {
   .mb-insp-layout {
-    grid-template-columns: minmax(0, 1fr) 22rem;
-    grid-template-areas: "main side";
+    grid-template:
+      "main head" auto
+      "main review" 1fr / minmax(0, 1fr) 22rem;
     align-items: start;
   }
 
-  /* Held in view, and never taller than the screen: an admin's panel with
-     "Send back" can outgrow a landscape tablet, and a sticky panel taller
-     than the screen would hide its own end. It scrolls by itself instead;
-     the 2px pad keeps the cards' shadows from being clipped. */
-  .mb-insp-side {
-    position: sticky;
-    top: 0;
-    display: grid;
-    grid-area: side;
-    gap: var(--mb-sp-4);
-    max-height: calc(100dvh - var(--mb-topbar-h) - 10rem);
-    margin: -2px;
-    padding: 2px;
-    overflow-y: auto;
-  }
+  .mb-insp-main { grid-area: main; }
 
-  .mb-insp-side > .mb-insp-head,
-  .mb-insp-side > .mb-insp-review-panel {
-    grid-area: auto;
-  }
-
-  .mb-insp-side > .mb-insp-head {
+  .mb-insp-layout > .mb-insp-head {
+    grid-area: head;
     padding: var(--mb-sp-4);
     border-bottom: none;
     border-radius: var(--mb-radius-md);
     background: var(--mb-surface);
     box-shadow: var(--mb-shadow-card);
+  }
+
+  /* Held in view while the checklist scrolls, and never taller than the
+     screen: an admin's panel with "Send back" can outgrow a landscape
+     tablet, and a sticky panel taller than the screen would hide its own
+     end. It scrolls by itself instead. */
+  .mb-insp-layout > .mb-insp-review-panel {
+    position: sticky;
+    top: 0;
+    grid-area: review;
+    max-height: calc(100dvh - var(--mb-topbar-h) - 10rem);
+    overflow-y: auto;
   }
 }
 

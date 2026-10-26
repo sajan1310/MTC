@@ -218,6 +218,15 @@ describe('the checklist', () => {
     expect(footer().textContent).toContain('2 items not ticked. You can still clear the lot; you will see them first.');
   });
 
+  test('the page order is the phone\'s screen order: details, checklist, review', async () => {
+    // A screen reader reads the page, not the layout: details drawn first
+    // but placed last in the page were heard after every checklist row.
+    await openChecklist();
+    const parts = [...body().querySelector('.mb-insp-layout').children].map(el => el.className);
+    expect(parts).toEqual(['mb-insp-head', 'mb-insp-main', 'mb-insp-review-panel']);
+    expect(body().querySelector('aside')).toBeNull();
+  });
+
   test('"Needs admin review" is a panel of its own, apart from the material list', async () => {
     await openChecklist();
     const box = document.getElementById('inspection-needs-review');
@@ -387,16 +396,41 @@ describe('the lot list', () => {
 
       const list = document.getElementById('inspections-list');
       expect(list.classList.contains('mb-insp-tabular')).toBe(true);
+      // The ticked count lives in the Inspection badge, not a column of its
+      // own (it was shown twice, and that column helped push the table past
+      // a portrait tablet's width).
       expect([...list.querySelectorAll('.mb-insp-lhead span')].map(s => s.textContent))
-        .toEqual(['Lot', 'Process · Item', 'Lot status', 'Inspection', 'Ticked', 'Updated']);
+        .toEqual(['Lot', 'Process · Item', 'Lot status', 'Inspection', 'Updated']);
       const rows = [...list.querySelectorAll('.mb-insp-lrow')];
       expect(rows.map(r => r.querySelector('.mb-card-title').textContent)).toEqual(['LOT-B', 'LOT-A']);
-      expect(rows[0].textContent).toContain('2/3');
+      expect(rows[0].textContent.match(/2\/3/g)).toHaveLength(1);
       expect(list.querySelector('.mb-insp-card')).toBeNull();
 
       rows[0].click();
       await flush();
       expect(MApp.Api.call).toHaveBeenLastCalledWith('getInspection', 2);
+    } finally {
+      delete window.matchMedia;
+    }
+  });
+
+  test('turning the tablet redraws a loaded list, but never paints over a load error', async () => {
+    let onWidth = null;
+    window.matchMedia = jest.fn(() => ({ matches: false, addEventListener: (type, fn) => { onWidth = fn; } }));
+    try {
+      MApp.Api.call = jest.fn(async () => ({ success: false, message: 'Server unreachable' }));
+      await MApp.Inspection.open();
+      expect(onWidth).not.toBeNull();
+      onWidth();
+      const list = document.getElementById('inspections-list');
+      expect(list.querySelector('.mb-state-error')).not.toBeNull();
+      expect(list.textContent).toContain('Retry');
+
+      MApp.Api.call = jest.fn(async () => ({ success: true, data: [lot(1, 'LOT-A', 'Pending', 'not_started')] }));
+      await MApp.Inspection.load();
+      list.innerHTML = '';
+      onWidth();
+      expect(list.querySelectorAll('.mb-card-title')).toHaveLength(1);
     } finally {
       delete window.matchMedia;
     }
@@ -414,6 +448,21 @@ describe('on a tablet', () => {
     expect(block).toMatch(/#mapp-root \{\s*max-width: none;/);
     expect(block).toMatch(/\.mb-sheet \{\s*right: 0;\s*left: 0;\s*width: auto;\s*--mb-sheet-x: 0px;/);
     expect(block).toMatch(/\.mb-list \{\s*display: grid;/);
+    // An empty state is drawn in a plain <div>: anything that is not a
+    // record spans the row, or "No matching lots" sits in one narrow column.
+    expect(block).toMatch(/\.mb-list > :not\(\.mb-card\) \{ grid-column: 1 \/ -1; \}/);
+  });
+
+  test('the lot table fits a portrait tablet: its rows need no more than 46rem less the padding', () => {
+    // 800px wide in portrait cut 'Ticked' and 'Updated' off (2026-10-26).
+    // Rows hold one minimum width, under the 46rem (736px) at which the
+    // table starts less the sheet's 2 x 20px padding; past it they scroll.
+    const rule = STYLES.match(/\.mb-insp-lhead,\s*\.mb-insp-lrow \{([^}]*)\}/)[1];
+    const minWidth = Number(rule.match(/min-width: ([\d.]+)rem;/)[1]);
+    expect(minWidth * 16).toBeLessThanOrEqual(736 - 40);
+    const tracks = rule.match(/grid-template-columns: ([^;]+);/)[1].match(/[\d.]+rem/g).map(parseFloat);
+    expect(tracks.reduce((a, b) => a + b, 0)).toBeLessThan(minWidth);
+    expect(STYLES).toMatch(/#inspections-list\.mb-insp-tabular \{[^}]*overflow-x: auto;/);
   });
 
   test('from 46rem the checklist is a table: each row a grid of the named columns', () => {

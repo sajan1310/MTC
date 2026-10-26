@@ -208,37 +208,26 @@ describe('MApp.Master', () => {
 });
 
 describe('MApp.Production.changeStatus', () => {
+  // The status comes from the lot card's inline dropdown (16:36,
+  // 2026-10-26); the full-screen picker this once opened is gone.
   beforeEach(() => {
     mount();
-    document.body.insertAdjacentHTML('beforeend', `
-      <div class="mb-sheet" id="mapp-picker-sheet">
-        <h2 id="mapp-picker-title"></h2>
-        <div id="mapp-picker-search-wrap"><input id="mapp-picker-search"></div>
-        <div id="mapp-picker-list"></div>
-      </div>`);
     MApp.Production.load = jest.fn();
   });
 
   const LOT = { rowIdx: 42, lotNumber: 'LOT-1042', qty: 100, status: 'Pending' };
-  const pick = label => {
-    const btn = [...document.querySelectorAll('#mapp-picker-list .mb-picker-option')]
-      .find(b => b.textContent.trim().startsWith(label));
-    btn.click();
-  };
 
-  test('sends the row id, the expected qty and the new status', async () => {
+  test('sends the row id, the expected qty and the new status, then reloads', async () => {
     // expected_qty is a concurrency guard: the server refuses if the
     // record shifted since this list was drawn, which on a phone showing
     // a list loaded some time ago is a real possibility.
     Api.mutateWithId = jest.fn(async () => ({ success: true, message: 'Lot #LOT-1042 status updated to "Completed".' }));
-    const done = MApp.Production.changeStatus(LOT);
-    await Promise.resolve();
-    pick('Completed');
-    await done;
+    expect(await MApp.Production.changeStatus(LOT, 'Completed')).toBe(true);
 
     const call = Api.mutateWithId.mock.calls[0];
     expect(call[0]).toBe('updateProductionStatus');
     expect(call.slice(2)).toEqual([42, 100, 'Completed']);
+    expect(MApp.Production.load).toHaveBeenCalled();
   });
 
   test('shows the SERVER message, so a pool warning is not swallowed', async () => {
@@ -249,32 +238,16 @@ describe('MApp.Production.changeStatus', () => {
     Api.mutateWithId = jest.fn(async () => ({ success: true, message: warning }));
     const spy = jest.spyOn(MApp.Toast, 'success');
 
-    const done = MApp.Production.changeStatus(LOT);
-    await Promise.resolve();
-    pick('Completed');
-    await done;
+    await MApp.Production.changeStatus(LOT, 'Completed');
 
     expect(spy).toHaveBeenCalledWith(warning);
     spy.mockRestore();
   });
 
-  test('picking the status it already has does nothing', async () => {
+  test('the status it already has, or none at all, sends nothing', async () => {
     Api.mutateWithId = jest.fn();
-    const done = MApp.Production.changeStatus(LOT);
-    await Promise.resolve();
-    pick('Pending');
-    await done;
-
-    expect(Api.mutateWithId).not.toHaveBeenCalled();
-  });
-
-  test('dismissing the picker does nothing', async () => {
-    Api.mutateWithId = jest.fn();
-    const done = MApp.Production.changeStatus(LOT);
-    await Promise.resolve();
-    MApp.Picker.cancel();
-    await done;
-
+    expect(await MApp.Production.changeStatus(LOT, 'Pending')).toBe(false);
+    expect(await MApp.Production.changeStatus(LOT)).toBe(false);
     expect(Api.mutateWithId).not.toHaveBeenCalled();
   });
 
@@ -282,10 +255,7 @@ describe('MApp.Production.changeStatus', () => {
     Api.mutateWithId = jest.fn(async () => ({ success: false, message: 'Data mismatch: The record has been modified or shifted. Please refresh.' }));
     const spy = jest.spyOn(MApp.Toast, 'error');
 
-    const done = MApp.Production.changeStatus(LOT);
-    await Promise.resolve();
-    pick('Completed');
-    await done;
+    expect(await MApp.Production.changeStatus(LOT, 'Completed')).toBe(false);
 
     expect(spy).toHaveBeenCalledWith(expect.stringContaining('modified or shifted'));
     expect(MApp.Production.load).not.toHaveBeenCalled();

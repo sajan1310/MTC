@@ -171,7 +171,13 @@
 // and quantity in columns, and "Needs admin review" a panel of its own
 // v85: production lot status change uses an inline dropdown select on
 // tablet and mobile instead of opening the full-screen sheet picker.
-const CACHE_NAME = 'erp-mobile-shell-v85';
+// v86: the evening review of v84-v85. The inspection lot table fits a
+// portrait tablet (no Ticked column; it scrolls rather than clips), the
+// status dropdown does nothing during long-press selection and shows an
+// unrecognised status as stored, a list's empty message spans the tablet
+// grid, and the checklist's page order matches the screen. mobile.js and
+// mobile_styles.css carry all of it.
+const CACHE_NAME = 'erp-mobile-shell-v86';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

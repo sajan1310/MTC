@@ -197,11 +197,11 @@ describe('what the modes actually do', () => {
 
   test('non-record children span the full row in grid', () => {
     // A banner, "Show 50 more", an empty state or a Stock card's expanded
-    // panel becoming a sibling tile would each be its own bug.
-    ['.mb-offline-banner', '.mb-load-more', '.mb-state', '[id^="stock-expand-"]'].forEach(sel => {
-      expect(CSS).toContain(`:root[data-density="grid"] .mb-list > ${sel}`);
-    });
-    expect(CSS).toMatch(/grid-column: 1 \/ -1/);
+    // panel becoming a sibling tile would each be its own bug. Naming their
+    // classes was not enough: Production, Stock, the Pool and Returns draw
+    // their empty state inside a plain <div>. Every record is .mb-card, so
+    // everything else spans the row.
+    expect(CSS).toMatch(/:root\[data-density="grid"\] \.mb-list > :not\(\.mb-card\) \{\s*grid-column: 1 \/ -1;/);
   });
 });
 

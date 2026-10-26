@@ -57,13 +57,19 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job runs on ubuntu-24.04, not ubuntu-latest. In October 2026
+# ubuntu-latest became Ubuntu 26.04, whose postgresql-client is 18: its
+# pg_dump writes `SET transaction_timeout`, which the postgres:14 service
+# below rejects, so tests/erp/test_backup_restore.py failed on every run.
+# Move the image and the Postgres versions together -- ideally to
+# production's 17.
 jobs:
   #============================================================================
   # JOB 1: Fast Unit Tests (Quick Feedback)
   #============================================================================
   unit-tests:
     name: Unit Tests (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     
     strategy:
       fail-fast: false
@@ -112,7 +118,7 @@ jobs:
   #============================================================================
   integration-tests:
     name: Integration Tests (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     
     strategy:
       fail-fast: false
@@ -223,7 +229,7 @@ jobs:
   #============================================================================
   full-tests:
     name: Full Test Suite (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     
     strategy:
       fail-fast: false
@@ -437,7 +443,7 @@ jobs:
   #============================================================================
   test-summary:
     name: Test Summary
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [unit-tests, integration-tests, full-tests]
     if: always()
     

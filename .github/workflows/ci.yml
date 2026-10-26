@@ -32,6 +32,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job runs on ubuntu-24.04, not ubuntu-latest. In October 2026
+# ubuntu-latest became Ubuntu 26.04, whose postgresql-client is 18: its
+# pg_dump writes `SET transaction_timeout`, which the postgres:14 service
+# below rejects, so tests/erp/test_backup_restore.py failed on every run.
+# Move the image and the Postgres versions together -- ideally to
+# production's 17.
 jobs:
   #============================================================================
   # JOB 0: Service Worker Cache Invalidation
@@ -47,7 +53,7 @@ jobs:
   # (fetch-depth: 0) that lint has no reason to pay for.
   sw-cache:
     name: Service Worker Cache Bump
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout repository
@@ -82,7 +88,7 @@ jobs:
   # `npm run verify` is eslint + stylelint + jest, and this job is blocking.
   frontend:
     name: Frontend (lint + tests)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout repository
@@ -108,7 +114,7 @@ jobs:
   #============================================================================
   lint:
     name: Code Quality (Ruff Linter)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     
     steps:
       - name: Checkout repository
@@ -155,7 +161,7 @@ jobs:
   #============================================================================
   security:
     name: Security Scan (pip-audit)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     
     steps:
       - name: Checkout repository
@@ -246,7 +252,7 @@ jobs:
   #============================================================================
   build:
     name: Build Validation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [lint]  # Run after lint passes
     
     steps:
@@ -294,7 +300,7 @@ jobs:
   #============================================================================
   test:
     name: Tests (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [build]  # Run after build validation passes
     
     strategy:
