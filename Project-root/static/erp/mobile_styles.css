@@ -2486,8 +2486,43 @@ body.mb-selecting {
 
 /* ── Inspection (MApp.Inspection) ────────────────────────────────────────
    A row's state is carried three ways, never by colour alone: the left
-   stripe, the pressed button's own fill and label, and a worded badge
-   ("Revised", "New") for anything that needs checking again. */
+   stripe, the box's own tick, and a worded badge ("Revised", "New") for
+   anything that needs ticking again. */
+
+/* On a tablet the inspection sheets fill the screen instead of the 480px
+   phone frame (owner, 2026-10-26): a checklist is worked through with the
+   tablet in hand. The checklist keeps the sheets' 58rem reading width; the
+   lot list spreads into columns. */
+@media (min-width: 640px) {
+  .mb-sheet.mb-sheet-full {
+    right: 0;
+    left: 0;
+    width: auto;
+    --mb-sheet-x: 0px;
+  }
+}
+
+@media (min-width: 46rem) {
+  #sheet-inspections .mb-sheet-body {
+    padding-inline: max(var(--mb-sp-4), calc((100% - 76rem) / 2));
+  }
+
+  #inspections-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+    gap: var(--mb-sp-3);
+    align-items: start;
+  }
+
+  #inspections-list > .mb-card { margin-bottom: 0; }
+
+  #inspections-list > .mb-load-more,
+  #inspections-list > .mb-state,
+  #inspections-list > .mb-skel {
+    grid-column: 1 / -1;
+  }
+}
+
 .mb-insp-card { width: 100%; text-align: left; }
 
 .mb-insp-card-meta {
@@ -2515,6 +2550,13 @@ body.mb-selecting {
 .mb-insp-badge-revised { background: var(--mb-enamel-amber-bg); color: var(--mb-enamel-amber-ink); }
 .mb-insp-badge-flagged { background: var(--mb-enamel-red-bg); color: var(--mb-enamel-red-ink); }
 .mb-insp-badge-cleared { background: var(--mb-enamel-green-bg); color: var(--mb-enamel-green-ink); }
+
+/* The stage a lot is at (MApp.Inspection.STAGES). */
+.mb-insp-stage-not-started { background: var(--mb-enamel-slate-bg); color: var(--mb-enamel-slate-ink); }
+.mb-insp-stage-partial { background: var(--mb-enamel-amber-bg); color: var(--mb-enamel-amber-ink); }
+.mb-insp-stage-complete { background: var(--mb-enamel-blue-bg); color: var(--mb-enamel-blue-ink); }
+.mb-insp-stage-review { background: var(--mb-enamel-red-bg); color: var(--mb-enamel-red-ink); }
+.mb-insp-stage-cleared { background: var(--mb-enamel-green-bg); color: var(--mb-enamel-green-ink); }
 
 .mb-insp-head {
   margin-bottom: var(--mb-sp-3);
@@ -2562,20 +2604,30 @@ body.mb-selecting {
 
 .mb-insp-list { display: grid; gap: var(--mb-sp-2); }
 
+/* A row is the label of its box, so the whole row is the tap target. */
 .mb-insp-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--mb-sp-3);
   padding: var(--mb-sp-3);
   border-left: 4px solid transparent;
   border-radius: var(--mb-radius-md);
   background: var(--mb-surface);
   box-shadow: var(--mb-shadow-card);
+  cursor: pointer;
 }
-.mb-insp-row.is-pass { border-left-color: var(--mb-enamel-green); }
-.mb-insp-row.is-fail { border-left-color: var(--mb-enamel-red); }
+.mb-insp-row.is-ticked { border-left-color: var(--mb-enamel-green); }
 .mb-insp-row.is-changed { border-left-color: var(--mb-enamel-amber); }
+
+.mb-insp-check {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  accent-color: var(--mb-enamel-green);
+  cursor: pointer;
+}
+.mb-insp-check:disabled { cursor: progress; }
 
 .mb-insp-item { flex: 1 1 auto; min-width: 0; }
 
@@ -2587,9 +2639,10 @@ body.mb-selecting {
   font-weight: 700;
   overflow-wrap: anywhere;
 }
-.mb-insp-meta { font-size: 0.8125rem; color: var(--mb-steel); overflow-wrap: anywhere; }
+.mb-insp-meta { display: block; font-size: 0.8125rem; color: var(--mb-steel); overflow-wrap: anywhere; }
 
 .mb-insp-qty {
+  display: block;
   margin-top: 2px;
   font-family: var(--mb-font-display);
   font-size: 1.125rem;
@@ -2603,26 +2656,30 @@ body.mb-selecting {
   color: var(--mb-enamel-amber-ink);
 }
 
-/* Pass / Fail: full tap targets, and the pressed one says so in its fill. */
-.mb-insp-toggle { display: flex; flex: none; gap: var(--mb-sp-2); }
-
-.mb-insp-btn {
-  min-width: var(--mb-tap-min);
-  min-height: var(--mb-tap-min);
-  padding: 0 var(--mb-sp-3);
-  border: 2px solid var(--mb-steel-light);
-  border-radius: var(--mb-radius-sm);
-  background: var(--mb-surface);
-  color: var(--mb-ink);
-  font-weight: 700;
-  cursor: pointer;
-}
-.mb-insp-pass[aria-pressed="true"] { border-color: var(--mb-enamel-green); background: var(--mb-enamel-green); color: #fff; }
-.mb-insp-fail[aria-pressed="true"] { border-color: var(--mb-enamel-red); background: var(--mb-enamel-red); color: #fff; }
-.mb-insp-btn:disabled { opacity: 0.55; cursor: default; }
-
 .mb-insp-removed { display: grid; gap: var(--mb-sp-1); margin-top: var(--mb-sp-4); }
 .mb-insp-remarks { margin-top: var(--mb-sp-5); }
+
+/* "Needs admin review": one box for the lot, its whole card the tap target,
+   amber once ticked so the request reads from across the room. */
+.mb-insp-review {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--mb-sp-3);
+  margin-bottom: var(--mb-sp-3);
+  padding: var(--mb-sp-3);
+  border: 2px solid var(--mb-steel-faint);
+  border-radius: var(--mb-radius-md);
+  background: var(--mb-surface);
+  cursor: pointer;
+}
+
+.mb-insp-review:has(.mb-insp-check:checked) {
+  border-color: var(--mb-enamel-amber);
+  background: var(--mb-enamel-amber-bg);
+}
+.mb-insp-review .mb-insp-check { accent-color: var(--mb-enamel-amber); }
+.mb-insp-review-title { display: block; font-weight: 700; }
+.mb-insp-review .mb-field-hint { display: block; }
 .mb-insp-remark-actions { display: flex; flex-wrap: wrap; gap: var(--mb-sp-2); margin-bottom: var(--mb-sp-4); }
 .mb-insp-remark-actions .mb-btn { flex: 1 1 12rem; }
 
@@ -2631,6 +2688,7 @@ body.mb-selecting {
 
 .mb-insp-question { margin: 0 0 var(--mb-sp-3); font-weight: 600; }
 .mb-insp-diff { display: grid; gap: var(--mb-sp-2); }
+.mb-insp-diff + .mb-insp-question { margin-top: var(--mb-sp-5); }
 
 .mb-insp-diff-row {
   padding: var(--mb-sp-3);

@@ -15472,19 +15472,31 @@ MApp.SheetGrouping = {
 };
 
 // ================================================================
-// INSPECTION — a floor inspector checks a production lot's materials
-// against its live Production Sheet, flags what is wrong for an admin, and
+// INSPECTION — a floor inspector goes through a production lot's
+// checklist (its live Production Sheet), ticking each item that is
+// accounted for, ticks "Needs admin review" when something is wrong, and
 // clears the lot. inspection_service.py owns every rule: what the checklist
-// is, which checks still count after an admin edits the lot, and whether
-// the sheet moved under a submit. This screen draws what it is given and
-// sends one decision at a time, then takes the server's word for the
-// result -- an item's state after a tap comes back with the save.
+// is, which ticks still count after an admin edits the lot, who may clear
+// what, and whether the sheet moved under a submit. This screen draws what
+// it is given and sends one decision at a time, then takes the server's
+// word for the result -- an item's state after a tap comes back with the
+// save.
 //
 // Clearing never changes the lot's own status (only Completed moves
-// stock). The first check moves a Pending lot to In Progress, and the
+// stock). The first tick moves a Pending lot to In Progress, and the
 // server says when it did.
 // ================================================================
 MApp.Inspection = {
+  // Where a lot stands, as inspection_service.stage() names it. `rank`
+  // orders the work list: what waits on an admin first.
+  STAGES: {
+    needs_review: { label: 'Needs review', cls: 'mb-insp-stage-review', rank: 0 },
+    complete: { label: 'All checked', cls: 'mb-insp-stage-complete', rank: 1 },
+    partial: { label: 'Partially checked', cls: 'mb-insp-stage-partial', rank: 2 },
+    not_started: { label: 'Not started', cls: 'mb-insp-stage-not-started', rank: 3 },
+    cleared: { label: 'Inspected', cls: 'mb-insp-stage-cleared', rank: 4 }
+  },
+
   SEARCH: {
     fields: [
       { key: 'lotNumber', weight: 10, label: 'Lot' },
@@ -15555,26 +15567,28 @@ MApp.Inspection = {
     });
   },
 
+  _stage(insp) {
+    const stage = (insp || {}).stage;
+    return this.STAGES[stage] ? stage : 'not_started';
+  },
+
   // "To inspect" is the work list: lots still Pending or In Progress whose
-  // inspection is not cleared. "Inspected" includes lots completed since.
+  // inspection is not cleared. Every other chip is one stage; "Inspected"
+  // includes lots completed since.
   _matches(lot) {
-    const state = (lot.inspection || {}).status || '';
-    switch (this.filter) {
-      case 'flagged': return state === 'flagged';
-      case 'cleared': return state === 'cleared';
-      case 'Pending':
-      case 'In Progress': return lot.status === this.filter && state !== 'cleared';
-      default: return (lot.status === 'Pending' || lot.status === 'In Progress') && state !== 'cleared';
+    const stage = this._stage(lot.inspection);
+    if (this.filter === 'all') {
+      return (lot.status === 'Pending' || lot.status === 'In Progress') && stage !== 'cleared';
     }
+    return stage === this.filter;
   },
 
   _applyFilters() {
-    // Flagged first, then lots being inspected, then untouched ones; the
-    // server's newest-first order holds within each.
-    const rank = { flagged: 0, in_progress: 1, '': 2, cleared: 3 };
+    // Needs review first, then lots ready to clear, then partly checked,
+    // then untouched ones; the server's newest-first order holds within each.
     const base = this.lots
       .filter(lot => this._matches(lot))
-      .map((lot, i) => ({ lot, i, r: rank[(lot.inspection || {}).status || ''] }))
+      .map((lot, i) => ({ lot, i, r: this.STAGES[this._stage(lot.inspection)].rank }))
       .sort((a, b) => (a.r - b.r) || (a.i - b.i))
       .map(x => x.lot);
     this.filtered = MApp.Search.run(MApp.Search.index(base, this.SEARCH), this.searchTerm);
@@ -15602,23 +15616,19 @@ MApp.Inspection = {
     });
   },
 
+  // "Partially checked 3/5", "Needs review 2/5": the stage, with the count
+  // wherever it is not already implied.
   _stateBadge(lot) {
     const insp = lot.inspection || {};
     const s = insp.summary || {};
-    switch (insp.status) {
-      case 'flagged':
-        return '<span class="mb-insp-badge mb-insp-badge-flagged">Flagged for admin</span>';
-      case 'cleared':
-        return insp.changedSinceCleared
-          ? '<span class="mb-insp-badge mb-insp-badge-revised">Inspected · sheet changed since</span>'
-          : '<span class="mb-insp-badge mb-insp-badge-cleared">Inspected</span>';
-      case 'in_progress': {
-        const recheck = (s.revised || 0) + (s.added || 0);
-        return `<span class="mb-insp-badge">Checked ${s.checked}/${s.total}${recheck ? ` · ${recheck} to re-check` : ''}</span>`;
-      }
-      default:
-        return '<span class="mb-insp-badge mb-insp-badge-new">Not started</span>';
+    const stage = this._stage(insp);
+    const { label, cls } = this.STAGES[stage];
+    if (stage === 'cleared') {
+      return `<span class="mb-insp-badge ${cls}">${label}${insp.changedSinceCleared ? ' · sheet changed since' : ''}</span>`;
     }
+    const recheck = (s.revised || 0) + (s.added || 0);
+    const count = stage === 'partial' || stage === 'needs_review' ? ` ${s.checked}/${s.total}` : '';
+    return `<span class="mb-insp-badge ${cls}">${label}${count}${recheck ? ` · ${recheck} to re-check` : ''}</span>`;
   },
 
   _cardHtml(lot, e) {
@@ -15725,14 +15735,15 @@ MApp.Inspection = {
       ${closed ? this._clearedRemarksHtml(insp, e) : this._remarksHtml(d, e)}`;
 
     body.querySelectorAll('[data-insp-row]').forEach(row => this._bindRow(row));
+    const review = document.getElementById('inspection-needs-review');
+    if (review) review.addEventListener('change', () => this.saveReview());
     this._paintProgress();
     this._paintFooter();
   },
 
   _bindRow(row) {
-    row.querySelectorAll('[data-insp-result]').forEach(btn => {
-      btn.addEventListener('click', () => this.setResult(btn.dataset.inspKey, btn.dataset.inspResult));
-    });
+    const box = row.querySelector('[data-insp-key]');
+    if (box) box.addEventListener('change', () => this.toggle(box.dataset.inspKey));
   },
 
   _bannerHtml(d, e) {
@@ -15743,7 +15754,10 @@ MApp.Inspection = {
       return `<div class="mb-insp-banner mb-insp-banner-cleared">Cleared by ${e(insp.clearedByName)} (${e(insp.clearedByRole)}) · ${e(this._when(insp.clearedAt))}${changed}</div>`;
     }
     if (insp.status === 'flagged') {
-      return `<div class="mb-insp-banner mb-insp-banner-flagged">Flagged for an admin${insp.flaggedByName ? ` by ${e(insp.flaggedByName)}` : ''}. You can keep checking; the lot can be cleared once an admin sends it back.</div>`;
+      const by = insp.flaggedByName ? ` by ${e(insp.flaggedByName)}` : '';
+      return d.canReturn
+        ? `<div class="mb-insp-banner mb-insp-banner-flagged">Needs admin review${by}. Read the remarks, then clear the lot or send it back.</div>`
+        : `<div class="mb-insp-banner mb-insp-banner-flagged">Needs admin review${by}. You can keep ticking; an admin reviews the lot and can clear it.</div>`;
     }
     if (insp.returnedAt) {
       const note = String(insp.reviewNote || '').trim();
@@ -15753,28 +15767,26 @@ MApp.Inspection = {
     return '';
   },
 
+  // One checklist row. The whole row is the box's label, so a tap anywhere
+  // on it ticks the item.
   _itemHtml(item, e, closed) {
     const meta = [item.size, item.color, item.narration].filter(Boolean).map(e).join(' · ');
     const qty = `${e(MApp.Util.formatQty(item.qty))}${item.unit ? ` ${e(item.unit)}` : ''}`;
     const badge = item.state === 'revised'
       ? '<span class="mb-insp-badge mb-insp-badge-revised">Revised</span>'
       : item.state === 'new' ? '<span class="mb-insp-badge mb-insp-badge-new">New</span>' : '';
-    const pass = item.state === 'checked' && item.result === 'pass';
-    const fail = item.state === 'checked' && item.result === 'fail';
+    const ticked = item.state === 'checked';
     const off = closed || this._saving.has(item.key) ? ' disabled' : '';
-    const cls = ['mb-insp-row', pass ? 'is-pass' : '', fail ? 'is-fail' : '', badge ? 'is-changed' : ''].filter(Boolean).join(' ');
+    const cls = ['mb-insp-row', ticked ? 'is-ticked' : '', badge ? 'is-changed' : ''].filter(Boolean).join(' ');
     return `
-      <div class="${cls}" role="listitem" data-insp-row="${e(item.key)}">
-        <div class="mb-insp-item">
-          <div class="mb-insp-name">${e(item.itemName)} ${badge}</div>
-          ${meta ? `<div class="mb-insp-meta">${meta}</div>` : ''}
-          <div class="mb-insp-qty">${qty}${this._wasHtml(item, e)}</div>
-        </div>
-        <div class="mb-insp-toggle" role="group" aria-label="Result for ${e(item.itemName)}">
-          <button type="button" class="mb-insp-btn mb-insp-pass" aria-pressed="${pass}" data-insp-key="${e(item.key)}" data-insp-result="pass"${off}>Pass</button>
-          <button type="button" class="mb-insp-btn mb-insp-fail" aria-pressed="${fail}" data-insp-key="${e(item.key)}" data-insp-result="fail"${off}>Fail</button>
-        </div>
-      </div>`;
+      <label class="${cls}" role="listitem" data-insp-row="${e(item.key)}">
+        <input type="checkbox" class="mb-insp-check" data-insp-key="${e(item.key)}"${ticked ? ' checked' : ''}${off}>
+        <span class="mb-insp-item">
+          <span class="mb-insp-name">${e(item.itemName)} ${badge}</span>
+          ${meta ? `<span class="mb-insp-meta">${meta}</span>` : ''}
+          <span class="mb-insp-qty">${qty}${this._wasHtml(item, e)}</span>
+        </span>
+      </label>`;
   },
 
   // "was 50" / spec was "Zinc": what a Revised row was when last seen.
@@ -15802,6 +15814,8 @@ MApp.Inspection = {
       </div>`;
   },
 
+  // "Needs admin review" and the remarks it is about. Ticking the box saves
+  // at once (saveReview); the remarks say what the admin should look at.
   _remarksHtml(d, e) {
     const insp = d.inspection || {};
     const flagged = insp.status === 'flagged';
@@ -15812,14 +15826,21 @@ MApp.Inspection = {
       </div>
       <button type="button" class="mb-btn mb-btn-secondary" id="inspection-return-btn" onclick="MApp.Inspection.sendBack()">Send back for re-inspection</button>` : '';
     return `
-      <div class="mb-field mb-insp-remarks">
-        <label for="inspection-remarks">Remarks / Required lot changes</label>
-        <textarea id="inspection-remarks" rows="4" maxlength="2000" placeholder="Material discrepancies, defects, or changes the lot or its recipe needs">${e(insp.remarks || '')}</textarea>
-        <div class="mb-field-hint">Flagging asks an admin to change the lot. It does not clear it.</div>
-      </div>
-      <div class="mb-insp-remark-actions">
-        <button type="button" class="mb-btn mb-btn-secondary" id="inspection-save-remarks-btn" onclick="MApp.Inspection.saveRemarks(false)">Save remarks</button>
-        <button type="button" class="mb-btn mb-btn-secondary" id="inspection-flag-btn" onclick="MApp.Inspection.saveRemarks(true)"${flagged ? ' disabled' : ''}>Save remarks &amp; flag for admin</button>
+      <div class="mb-insp-remarks">
+        <label class="mb-insp-review">
+          <input type="checkbox" class="mb-insp-check" id="inspection-needs-review"${flagged ? ' checked' : ''}>
+          <span>
+            <span class="mb-insp-review-title">Needs admin review</span>
+            <span class="mb-field-hint">Something is wrong or missing. An admin reviews the lot and can clear it.</span>
+          </span>
+        </label>
+        <div class="mb-field">
+          <label for="inspection-remarks">Remarks</label>
+          <textarea id="inspection-remarks" rows="4" maxlength="2000" placeholder="What is wrong or missing, for the admin">${e(insp.remarks || '')}</textarea>
+        </div>
+        <div class="mb-insp-remark-actions">
+          <button type="button" class="mb-btn mb-btn-secondary" id="inspection-save-remarks-btn" onclick="MApp.Inspection.saveReview()">Save remarks</button>
+        </div>
       </div>
       ${sendBack}`;
   },
@@ -15834,17 +15855,17 @@ MApp.Inspection = {
     const s = this.data && this.data.summary;
     if (!el || !s) return;
     const pct = s.total ? Math.round((s.checked / s.total) * 100) : 0;
-    const extra = [];
-    if (s.failed) extra.push(`${s.failed} failed`);
+    const extra = [this.STAGES[this._stage(this.data.inspection)].label];
     if (s.revised) extra.push(`${s.revised} revised`);
     if (s.added) extra.push(`${s.added} new`);
     el.innerHTML = `
-      <div class="mb-insp-progress-text"><strong>${s.checked}/${s.total}</strong> items checked${extra.length ? ` · ${extra.join(' · ')}` : ''}</div>
-      <div class="mb-insp-progress-bar" role="progressbar" aria-label="Items checked" aria-valuemin="0" aria-valuemax="${s.total}" aria-valuenow="${s.checked}"><span style="width:${pct}%"></span></div>`;
+      <div class="mb-insp-progress-text"><strong>${s.checked}/${s.total}</strong> items ticked · ${extra.join(' · ')}</div>
+      <div class="mb-insp-progress-bar" role="progressbar" aria-label="Items ticked" aria-valuemin="0" aria-valuemax="${s.total}" aria-valuenow="${s.checked}"><span style="width:${pct}%"></span></div>`;
   },
 
-  // The sign-off: who is clearing the lot, and the one primary action,
-  // unlocked only when every item has passed and no admin is needed.
+  // The sign-off: who is clearing the lot, and the one primary action. An
+  // inspector clears a lot once every item is ticked and nobody asked for a
+  // review; an admin clears any open lot, after seeing what is not ticked.
   _paintFooter() {
     const footer = document.getElementById('inspection-footer');
     const d = this.data;
@@ -15856,15 +15877,24 @@ MApp.Inspection = {
       return;
     }
     const s = d.summary || {};
-    const flagged = insp.status === 'flagged';
-    const left = (s.total || 0) - (s.passed || 0);
-    const why = flagged ? 'Waiting for an admin to send this lot back.'
-      : s.failed ? 'An item failed: flag the lot for an admin instead of clearing it.'
-        : !s.complete ? `${left} item${left === 1 ? '' : 's'} still to pass.` : '';
+    const review = insp.status === 'flagged';
+    const left = (s.total || 0) - (s.checked || 0);
+    const items = `${left} item${left === 1 ? '' : 's'}`;
+    let why;
+    let ready;
+    if (d.canAcknowledge) {
+      why = review ? 'Needs your review: read the remarks, then clear the lot or send it back.'
+        : !s.complete ? `${items} not ticked. You can still clear the lot; you will see them first.` : '';
+      ready = (s.total || 0) > 0;
+    } else {
+      why = review ? 'Waiting for an admin to review this lot.'
+        : !s.complete ? `${items} still to tick.` : '';
+      ready = s.complete && !review;
+    }
     footer.innerHTML = `
       <div class="mb-insp-inspector">Inspector: <strong>${e(d.inspector.name)}</strong> <span aria-hidden="true">|</span> Role: <strong>${e(d.inspector.roleLabel)}</strong></div>
       ${why ? `<div class="mb-field-hint" id="inspection-why">${e(why)}</div>` : ''}
-      <button type="button" class="mb-btn mb-btn-primary" id="inspection-clear-btn" onclick="MApp.Inspection.submit()"${s.complete && !flagged ? '' : ' disabled'}${why ? ' aria-describedby="inspection-why"' : ''}>Complete Inspection &amp; Clear Lot</button>`;
+      <button type="button" class="mb-btn mb-btn-primary" id="inspection-clear-btn" onclick="MApp.Inspection.submit()"${ready ? '' : ' disabled'}${why ? ' aria-describedby="inspection-why"' : ''}>Complete Inspection &amp; Clear Lot</button>`;
   },
 
   _rowEl(key) {
@@ -15880,24 +15910,27 @@ MApp.Inspection = {
     if (fresh) this._bindRow(fresh);
   },
 
-  // Pass or Fail one row. Tapping the result already chosen clears it.
-  async setResult(key, result) {
+  // Tick or untick one item. The box shows the tap at once and is held
+  // until the save answers; the row is then redrawn from what was saved.
+  async toggle(key) {
     const d = this.data;
     const item = d && d.items.find(i => i.key === key);
     if (!item || this._saving.has(key)) return;
-    const next = item.state === 'checked' && item.result === result ? '' : result;
+    const next = item.state === 'checked' ? '' : 'checked';
     this._saving.add(key);
-    this._repaintRow(item);
+    const box = this._rowEl(key)?.querySelector('[data-insp-key]');
+    if (box) box.disabled = true;
     try {
       const res = await MApp.Api.mutate('setInspectionCheck', this.rowIdx, key, next, item.fingerprint);
       if (!res || !res.success) {
-        MApp.Toast.error((res && res.message) || 'That check was not saved.');
+        MApp.Toast.error((res && res.message) || 'That tick was not saved.');
         // Most refusals mean the sheet moved; show it as it is now.
         await this._loadChecklist();
         return;
       }
       if (res.data.item) Object.assign(item, res.data.item);
       d.summary = res.data.summary;
+      if (res.data.stage) d.inspection.stage = res.data.stage;
       if (res.data.lotStatus && res.data.lotStatus !== d.lot.status) {
         d.lot.status = res.data.lotStatus;
         const chip = document.getElementById('inspection-lot-status');
@@ -15909,7 +15942,7 @@ MApp.Inspection = {
       }
       MApp.Haptics.light();
     } catch (err) {
-      MApp.Toast.error((err && err.message) || 'No connection. That check was not saved.');
+      MApp.Toast.error((err && err.message) || 'No connection. That tick was not saved.');
     } finally {
       this._saving.delete(key);
       if (this.data === d) {
@@ -15920,34 +15953,47 @@ MApp.Inspection = {
     }
   },
 
-  async saveRemarks(flag) {
+  // Saves "Needs admin review" and the remarks together: the box saves the
+  // moment it changes, "Save remarks" whenever the text does. Asking for a
+  // review needs remarks saying what the admin should look at.
+  async saveReview() {
     const d = this.data;
     if (!d) return;
+    const box = document.getElementById('inspection-needs-review');
     const field = document.getElementById('inspection-remarks');
+    const saved = d.inspection.status === 'flagged';
+    const needsReview = box ? box.checked : saved;
     const remarks = field ? field.value : '';
-    if (flag && !remarks.trim()) {
-      MApp.Toast.error('Write what needs to change before flagging the lot for an admin.');
+    if (needsReview && !remarks.trim()) {
+      if (box) box.checked = saved;
+      MApp.Toast.error('Write what the admin should look at, then tick Needs admin review.');
       if (field) field.focus();
       return;
     }
-    const btn = document.getElementById(flag ? 'inspection-flag-btn' : 'inspection-save-remarks-btn');
+    const btn = document.getElementById('inspection-save-remarks-btn');
+    if (box) box.disabled = true;
     if (btn) btn.disabled = true;
     try {
-      const res = await MApp.Api.mutate('saveInspectionRemarks', this.rowIdx, remarks, !!flag);
+      const res = await MApp.Api.mutate('setInspectionReview', this.rowIdx, needsReview, remarks);
       if (!res || !res.success) {
-        MApp.Toast.error((res && res.message) || 'The remarks were not saved.');
+        MApp.Toast.error((res && res.message) || 'Not saved.');
+        if (box) box.checked = saved;
         return;
       }
-      d.inspection.remarks = res.data.remarks;
-      d.inspection.status = res.data.status;
-      MApp.Toast.success(res.message || 'Remarks saved.');
-      if (flag) {
-        d.inspection.flaggedByName = d.inspector.name;
-        this.renderChecklist();
-      }
+      Object.assign(d.inspection, {
+        status: res.data.status, remarks: res.data.remarks,
+        stage: res.data.stage, flaggedByName: res.data.flaggedByName
+      });
+      if (res.data.summary) d.summary = res.data.summary;
+      MApp.Toast.success(res.message || 'Saved.');
+      // The banner, the footer and an admin's "Send back" all follow the box.
+      const nowFlagged = d.inspection.status === 'flagged';
+      if (nowFlagged !== saved) this.renderChecklist();
     } catch (err) {
-      MApp.Toast.error((err && err.message) || 'No connection. The remarks were not saved.');
+      MApp.Toast.error((err && err.message) || 'No connection. Not saved.');
+      if (box) box.checked = saved;
     } finally {
+      if (box && box.isConnected) box.disabled = false;
       if (btn && btn.isConnected) btn.disabled = false;
     }
   },
@@ -16011,19 +16057,31 @@ MApp.Inspection = {
     }
   },
 
+  // What clearing would accept, in two parts: the sheet's changes since the
+  // lot was ticked, and -- for an admin -- the items nobody ticked.
   _openReconcile(result) {
     this._reconcile = result;
     const body = document.getElementById('inspection-reconcile-body');
     const footer = document.getElementById('inspection-reconcile-footer');
     if (!body || !footer) return;
     const e = MApp.Util.escapeHtml;
+    const all = result.discrepancies || [];
+    const changes = all.filter(x => x.kind !== 'unchecked');
+    const unticked = all.filter(x => x.kind === 'unchecked');
+    const n = unticked.length;
+    const title = document.getElementById('inspection-reconcile-title');
+    if (title) title.textContent = changes.length ? 'Production Sheet changed' : 'Items not ticked';
     body.innerHTML = `
-      ${result.changedAgain ? '<div class="mb-insp-banner mb-insp-banner-flagged">The sheet changed again while you were deciding. These are the differences now.</div>' : ''}
-      <p class="mb-insp-question">Targeted changes have been detected in the live Production Sheet. Do you confirm these changes apply to this inspected lot?</p>
-      <div class="mb-insp-diff" role="list">${(result.discrepancies || []).map(x => this._diffHtml(x, e)).join('')}</div>
-      ${result.canAcknowledge ? '' : '<p class="mb-field-hint">Only an admin can accept these changes without re-inspecting. Re-inspect the changed items, or ask an admin.</p>'}`;
+      ${result.changedAgain ? '<div class="mb-insp-banner mb-insp-banner-flagged">The list changed while you were deciding. This is how it stands now.</div>' : ''}
+      ${changes.length ? `
+        <p class="mb-insp-question">Targeted changes have been detected in the live Production Sheet. Do you confirm these changes apply to this inspected lot?</p>
+        <div class="mb-insp-diff" role="list">${changes.map(x => this._diffHtml(x, e)).join('')}</div>` : ''}
+      ${n ? `
+        <p class="mb-insp-question">${n} item${n === 1 ? ' is' : 's are'} not ticked. Clear the lot without ${n === 1 ? 'it' : 'them'}?</p>
+        <div class="mb-insp-diff" role="list">${unticked.map(x => this._diffHtml(x, e)).join('')}</div>` : ''}
+      ${result.canAcknowledge ? '' : '<p class="mb-field-hint">Only an admin can accept these changes without re-inspecting. Re-inspect the changed items, or tick Needs admin review.</p>'}`;
     footer.innerHTML = `
-      <button type="button" class="mb-btn mb-btn-secondary" onclick="MApp.Inspection.reinspect()">Re-inspect Modified Items</button>
+      <button type="button" class="mb-btn mb-btn-secondary" onclick="MApp.Inspection.reinspect()">${changes.length ? 'Re-inspect Modified Items' : 'Back to the checklist'}</button>
       ${result.canAcknowledge ? '<button type="button" class="mb-btn mb-btn-primary" id="inspection-acknowledge-btn" onclick="MApp.Inspection.acknowledge()">Acknowledge &amp; Proceed</button>' : ''}`;
     if (!this._isOpen('sheet-inspection-reconcile')) MApp.Sheet.open('sheet-inspection-reconcile');
   },
@@ -16031,6 +16089,9 @@ MApp.Inspection = {
   // "Spoke 12G · 26in: quantity changed from 50 to 45"
   _diffHtml(x, e) {
     const name = [x.itemName, x.size, x.color].filter(Boolean).map(e).join(' · ');
+    if (x.kind === 'unchecked') {
+      return `<div class="mb-insp-diff-row" role="listitem"><span class="mb-insp-badge">Not ticked</span> ${name}: ${e(MApp.Util.formatQty(x.qty))}${x.unit ? ` ${e(x.unit)}` : ''}</div>`;
+    }
     if (x.kind === 'added') {
       return `<div class="mb-insp-diff-row" role="listitem"><span class="mb-insp-badge mb-insp-badge-new">New</span> ${name}: added, ${e(MApp.Util.formatQty(x.qty))}</div>`;
     }
@@ -16063,6 +16124,11 @@ MApp.Inspection = {
     const e = MApp.Util.escapeHtml;
     const name = (result.inspector && result.inspector.name) || (this.data && this.data.inspector.name) || '';
     if (this.data) this.data.inspection.status = 'cleared';
+    const accepted = result.acknowledged || [];
+    const unticked = accepted.filter(x => x.kind === 'unchecked').length;
+    const notes = [];
+    if (accepted.length > unticked) notes.push('Production Sheet changes accepted by an admin');
+    if (unticked) notes.push(`${unticked} item${unticked === 1 ? '' : 's'} cleared by an admin without a tick`);
     const body = document.getElementById('inspection-body');
     const footer = document.getElementById('inspection-footer');
     if (body) {
@@ -16070,7 +16136,7 @@ MApp.Inspection = {
         <div class="mb-insp-done" role="status">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M8 12.5l2.5 2.5L16 9.5"/></svg>
           <p class="mb-insp-done-title">Thank you, ${e(name)}. Your lot has been cleared for ${e(result.processName)}.</p>
-          <p class="mb-field-hint">Lot ${e(result.lotNumber)}${(result.acknowledged || []).length ? ' · Production Sheet changes accepted by an admin' : ''}</p>
+          <p class="mb-field-hint">Lot ${e(result.lotNumber)}${notes.map(note => ` · ${e(note)}`).join('')}</p>
         </div>`;
     }
     if (footer) {

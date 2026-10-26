@@ -1,6 +1,6 @@
-"""Inspection: a floor inspector checks a production lot's materials against
-its live Production Sheet, flags anything wrong for an admin, and signs the
-lot off.
+"""Inspection: a floor inspector goes through a production lot's checklist --
+its live Production Sheet -- ticking each item that is accounted for, asks
+an admin to review the lot when something is wrong, and signs the lot off.
 
 What this module may touch
 --------------------------
@@ -34,14 +34,27 @@ saved sheet, so this always follows the lot. Each row carries:
                specification (narration). Change either and a check made
                against the old values stops counting.
 
+Ticks, review, and the stage a lot is at (owner, 2026-10-26)
+------------------------------------------------------------
+A tick says the item is there as the sheet says. The first version had
+Pass / Fail per item instead (25-26 Oct 2026): a tick is stored as "pass",
+and a "fail" left over from it reads as not ticked. "Needs admin review" is
+one box on the lot, ticked with remarks saying what to look at (status
+"flagged"). Both apps show the lot at one stage (stage()):
+
+  Not started        nothing ticked
+  Partially checked  some items ticked
+  All checked        every item ticked: all accounted for
+  Needs review       the review box is ticked
+  Inspected          cleared
+
 State retention (merge_checklist)
 ---------------------------------
 A check stores the fingerprint it was made against and a snapshot of the
 row. Merging the stored checks with the live sheet gives every row one
 state:
 
-  checked   a check exists and its fingerprint matches: stays ticked, with
-            its pass/fail result.
+  checked   a check exists and its fingerprint matches: stays ticked.
   revised   a check exists but the fingerprint has moved, or there is no
             check and the row differs from the baseline: unticked, badged
             "Revised", with the previous values so the screen can say
@@ -55,16 +68,19 @@ come back separately as `removed`. Stale checks are never deleted on read:
 they are the evidence behind "Revised" and its before/after. Re-checking a
 row overwrites its check with the current fingerprint.
 
-Reconciliation (clearInspection)
---------------------------------
-Submit re-reads the live sheet inside its own transaction and merges again.
-If every row is checked, passed and unchanged, the lot clears. Otherwise
-nothing is written, and the differences come back as data (success=True,
-cleared=False) for the client's reconciliation dialog. Only an admin may
-accept them without re-inspecting. The client echoes the token of the exact
-list it showed, and the server clears only if a fresh list produces the
-same token: a sheet that changed again while the dialog was open is
-refused, not accepted unseen.
+Clearing and reconciliation (clearInspection)
+---------------------------------------------
+Anyone who can inspect clears a lot that is All checked, unchanged since it
+was checked, and not waiting for a review. An admin may clear any open lot,
+one that needs review or is only partially checked included. Submit
+re-reads the live sheet inside its own transaction and merges again.
+Whatever the clearer would be accepting -- sheet changes, and for an admin
+the items nobody ticked -- comes back first as data (success=True,
+cleared=False) for the client's dialog, and nothing is written. Only an
+admin may accept it. The client echoes the token of the exact list it
+showed, and the server clears only if a fresh list produces the same token:
+a list that changed again while the dialog was open is shown again, not
+accepted unseen. What the admin accepted is kept with the clearance.
 """
 
 from __future__ import annotations
@@ -92,7 +108,16 @@ STATUS_IN_PROGRESS = "in_progress"
 STATUS_FLAGGED = "flagged"
 STATUS_CLEARED = "cleared"
 
-RESULTS = ("pass", "fail")
+# How a tick is stored: "pass", the value Pass / Fail used for the same thing,
+# so ticks made before the checklist replaced it still count. A "fail" left
+# from then reads as not ticked (_load_checks).
+CHECKED = "pass"
+
+STAGE_NOT_STARTED = "not_started"
+STAGE_PARTIAL = "partial"
+STAGE_COMPLETE = "complete"
+STAGE_NEEDS_REVIEW = "needs_review"
+STAGE_CLEARED = "cleared"
 
 # The lot statuses an inspector works through. Lots outside these still
 # appear in getInspectionLots when they already have an inspection, so an
@@ -236,19 +261,33 @@ def merge_checklist(live_rows, checks, baseline) -> tuple[list[dict], list[dict]
 
 
 def summarize(items, removed=()) -> dict:
-    checked = [i for i in items if i["state"] == "checked"]
-    passed = sum(1 for i in checked if i["result"] == "pass")
+    checked = sum(1 for i in items if i["state"] == "checked")
     return {
         "total": len(items),
-        "checked": len(checked),
-        "passed": passed,
-        "failed": len(checked) - passed,
+        "checked": checked,
+        # Pass / Fail's counts, for a phone still on that screen until it
+        # reloads: every tick is a pass now, and nothing fails.
+        "passed": checked,
+        "failed": 0,
         "revised": sum(1 for i in items if i["state"] == "revised"),
         "added": sum(1 for i in items if i["state"] == "new"),
         "removed": len(removed),
-        # Everything on the sheet checked, passed and unchanged.
-        "complete": bool(items) and passed == len(items),
+        # Every item on the sheet ticked and unchanged: all accounted for.
+        "complete": bool(items) and checked == len(items),
     }
+
+
+def stage(status, summary) -> str:
+    """The one word both apps show for where a lot's inspection stands."""
+    if status == STATUS_CLEARED:
+        return STAGE_CLEARED
+    if status == STATUS_FLAGGED:
+        return STAGE_NEEDS_REVIEW
+    if summary.get("complete"):
+        return STAGE_COMPLETE
+    if summary.get("checked"):
+        return STAGE_PARTIAL
+    return STAGE_NOT_STARTED
 
 
 def _row_label(row: dict) -> dict:
@@ -368,12 +407,14 @@ def _load_inspection(cur, production_id, *, for_update=False) -> dict | None:
 
 
 def _load_checks(cur, inspection_id) -> dict[str, dict]:
+    """The lot's ticks. A "fail" from the retired Pass / Fail screen is left
+    out, so its item reads as not ticked."""
     if inspection_id is None:
         return {}
     cur.execute(
         "SELECT item_key, result, fingerprint, snapshot FROM erp.lot_inspection_checks "
-        "WHERE inspection_id = %s",
-        (inspection_id,),
+        "WHERE inspection_id = %s AND result = %s",
+        (inspection_id, CHECKED),
     )
     return {r["item_key"]: r for r in cur.fetchall()}
 
@@ -480,7 +521,7 @@ def _refuse_if_closed(lot, inspection) -> None:
 @rpc_method("getInspectionLots")
 def get_inspection_lots():
     """Lots waiting for inspection (Pending / In Progress) and every lot that
-    already has an inspection, each with its checklist counts."""
+    already has an inspection, each with its checklist counts and stage."""
     with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
         _conn,
         cur,
@@ -503,8 +544,8 @@ def get_inspection_lots():
         if inspections:
             cur.execute(
                 "SELECT inspection_id, item_key, result, fingerprint, snapshot "
-                "FROM erp.lot_inspection_checks WHERE inspection_id = ANY(%s)",
-                ([r["id"] for r in inspections.values()],),
+                "FROM erp.lot_inspection_checks WHERE inspection_id = ANY(%s) AND result = %s",
+                ([r["id"] for r in inspections.values()], CHECKED),
             )
             for r in cur.fetchall():
                 checks_by_inspection.setdefault(r["inspection_id"], {})[
@@ -529,11 +570,13 @@ def get_inspection_lots():
             )
             if s
         ]
+        summary = summarize(items, removed)
+        payload = _inspection_payload(inspection, rows)
         header.update(
             itemCount=len(rows),
             lastUpdated=_iso(max(stamps)) if stamps else "",
             inspection=dict(
-                _inspection_payload(inspection, rows), summary=summarize(items, removed)
+                payload, summary=summary, stage=stage(payload["status"], summary)
             ),
         )
         out.append(header)
@@ -556,15 +599,19 @@ def get_inspection(row_idx):
         )
         header = _lot_header(lot, _process_name(cur, lot["process_id"]))
         identity = _identity(cur)
+    summary = summarize(items, removed)
+    payload = _inspection_payload(inspection, rows)
     return build_response(
         True,
         {
             "lot": header,
-            "inspection": _inspection_payload(inspection, rows),
+            "inspection": dict(payload, stage=stage(payload["status"], summary)),
             "items": items,
             "removed": removed,
-            "summary": summarize(items, removed),
+            "summary": summary,
             "inspector": identity,
+            # An admin accepts what was not ticked or changed, clears a lot
+            # that needs review, and sends one back.
             "canAcknowledge": _is_admin(),
             "canReturn": _is_admin(),
         },
@@ -574,9 +621,10 @@ def get_inspection(row_idx):
 @rpc_method("setInspectionCheck", mutation=True)
 @database.transactional
 def set_inspection_check(conn, cur, row_idx, item_key, result, item_fingerprint):
-    """Tick, fail or untick one sheet row. `item_fingerprint` is the row as
-    the inspector's screen showed it: when the sheet has moved since, the
-    write is refused so nothing is vouched for that was never seen."""
+    """Tick or untick one sheet row: `result` "checked" (or "pass", which a
+    phone on the old screen sends) ticks it, "" unticks it. `item_fingerprint`
+    is the row as the inspector's screen showed it: when the sheet has moved
+    since, the write is refused so nothing is vouched for that was never seen."""
     lot = _load_lot(cur, row_idx, for_update=True)
     rows = sheet_rows(lot["custom_components"], lot["components_consumed"])
     row = next((r for r in rows if r["key"] == _text(item_key)), None)
@@ -590,7 +638,13 @@ def set_inspection_check(conn, cur, row_idx, item_key, result, item_fingerprint)
         )
 
     result = _text(result).lower()
-    if result and result not in RESULTS:
+    if result == "fail":
+        raise ValueError(
+            "Pass and Fail were replaced by a checklist. Reload the app to get it."
+        )
+    if result == "checked":
+        result = CHECKED
+    if result and result != CHECKED:
         raise ValueError(f'Invalid result "{result}".')
 
     inspection = _start_inspection(cur, lot, rows)
@@ -650,6 +704,7 @@ def set_inspection_check(conn, cur, row_idx, item_key, result, item_fingerprint)
     # The row as the merge now sees it, so the client never guesses what an
     # untick turns a row back into (pending, or still revised).
     merged = next((i for i in items if i["key"] == row["key"]), None)
+    summary = summarize(items, removed)
     return build_response(
         True,
         {
@@ -657,7 +712,8 @@ def set_inspection_check(conn, cur, row_idx, item_key, result, item_fingerprint)
             "result": result or None,
             "item": merged,
             "lotStatus": lot_status,
-            "summary": summarize(items, removed),
+            "summary": summary,
+            "stage": stage(inspection["status"], summary),
         },
         message,
     )
@@ -667,7 +723,9 @@ def set_inspection_check(conn, cur, row_idx, item_key, result, item_fingerprint)
 @database.transactional
 def save_inspection_remarks(conn, cur, row_idx, remarks, flag_for_admin=False):
     """Save the inspector's remarks; with flag_for_admin, also ask an admin
-    to change the lot. Flagging does not complete anything."""
+    to review the lot. What the Pass / Fail screen calls: a phone still on it
+    until it reloads keeps working. The checklist screen calls
+    setInspectionReview, which can also take a request back."""
     lot = _load_lot(cur, row_idx, for_update=True)
     remarks = _text(remarks)[:MAX_REMARKS]
     if flag_for_admin and not remarks:
@@ -707,6 +765,73 @@ def save_inspection_remarks(conn, cur, row_idx, remarks, flag_for_admin=False):
     return build_response(True, {"status": status, "remarks": remarks}, message)
 
 
+@rpc_method("setInspectionReview", mutation=True)
+@database.transactional
+def set_inspection_review(conn, cur, row_idx, needs_review, remarks=""):
+    """Tick or untick "Needs admin review", saving the remarks with it.
+
+    Ticking asks an admin to look at the lot, and needs remarks saying what
+    to look at; the admin can then clear the lot however much of it is
+    ticked, or send it back. Unticking takes the request back. The checklist
+    is left as it is either way."""
+    lot = _load_lot(cur, row_idx, for_update=True)
+    remarks = _text(remarks)[:MAX_REMARKS]
+    needs_review = bool(needs_review)
+    if needs_review and not remarks:
+        raise ValueError(
+            "Write what the admin should look at before asking for a review."
+        )
+
+    rows = sheet_rows(lot["custom_components"], lot["components_consumed"])
+    inspection = _start_inspection(cur, lot, rows)
+    _refuse_if_closed(lot, inspection)
+
+    user_id = get_current_user_id()
+    was_flagged = inspection["status"] == STATUS_FLAGGED
+    flagged_by_name = inspection["flagged_by_name"] or ""
+    if needs_review and not was_flagged:
+        flagged_by_name = _identity(cur)["name"]
+        cur.execute(
+            "UPDATE erp.lot_inspections SET remarks = %s, status = %s, flagged_at = NOW(), "
+            "flagged_by = %s, flagged_by_name = %s, updated_by = %s WHERE id = %s",
+            (
+                remarks,
+                STATUS_FLAGGED,
+                user_id,
+                flagged_by_name,
+                user_id,
+                inspection["id"],
+            ),
+        )
+        status = STATUS_FLAGGED
+        message = f"Saved. Lot #{lot['lot_number']} is waiting for an admin's review."
+    else:
+        withdrawn = was_flagged and not needs_review
+        status = STATUS_IN_PROGRESS if withdrawn else inspection["status"]
+        cur.execute(
+            "UPDATE erp.lot_inspections SET remarks = %s, status = %s, updated_by = %s "
+            "WHERE id = %s",
+            (remarks, status, user_id, inspection["id"]),
+        )
+        message = "Review request taken back." if withdrawn else "Remarks saved."
+
+    items, removed = merge_checklist(
+        rows, _load_checks(cur, inspection["id"]), inspection["baseline"]
+    )
+    summary = summarize(items, removed)
+    return build_response(
+        True,
+        {
+            "status": status,
+            "remarks": remarks,
+            "flaggedByName": flagged_by_name,
+            "summary": summary,
+            "stage": stage(status, summary),
+        },
+        message,
+    )
+
+
 @rpc_method("returnInspection", mutation=True, roles=frozenset({"admin"}))
 @database.transactional
 def return_inspection(conn, cur, row_idx, note=""):
@@ -740,18 +865,23 @@ def return_inspection(conn, cur, row_idx, note=""):
 def clear_inspection(conn, cur, row_idx, acknowledge_token=None):
     """Reconcile against the live Production Sheet, then sign the lot off.
 
-    Returns {cleared: True, ...} on success. When the sheet differs from what
-    was inspected, returns {cleared: False, discrepancies, token} and writes
-    nothing; an admin may call again with that token to accept them.
+    Anyone who can inspect clears a lot whose every item is ticked, when the
+    sheet still matches what was ticked and nobody asked for a review. An
+    admin clears any open lot. Whatever the clearer would be accepting --
+    sheet changes, and for an admin the items nobody ticked -- comes back
+    first as {cleared: False, discrepancies, token} and nothing is written;
+    an admin calls again with that token to accept exactly that list.
+    Returns {cleared: True, ...} on success.
     """
     lot = _load_lot(cur, row_idx, for_update=True)
     inspection = _load_inspection(cur, lot["id"], for_update=True)
     if inspection is None:
         raise ValueError("Check this lot's items before clearing it.")
     _refuse_if_closed(lot, inspection)
-    if inspection["status"] == STATUS_FLAGGED:
+    admin = _is_admin()
+    if inspection["status"] == STATUS_FLAGGED and not admin:
         raise ValueError(
-            "This lot is waiting for an admin. It can be cleared once it is sent back."
+            "This lot is waiting for an admin's review. An admin can clear it."
         )
 
     rows = sheet_rows(lot["custom_components"], lot["components_consumed"])
@@ -761,49 +891,54 @@ def clear_inspection(conn, cur, row_idx, acknowledge_token=None):
         rows, _load_checks(cur, inspection["id"]), inspection["baseline"]
     )
 
+    # What clearing now would accept. Revised and new rows are already in
+    # the sheet's differences; the rest of the unticked ones only an admin
+    # may clear without.
+    pending = discrepancies(items, removed)
+    unticked = [i for i in items if i["state"] == "pending"]
+    if admin:
+        pending += [
+            dict(
+                _row_label(i), kind="unchecked", qty=i["qty"], narration=i["narration"]
+            )
+            for i in unticked
+        ]
+    elif unticked and not pending:
+        raise ValueError(
+            f"Check every item before clearing the lot ({len(unticked)} left), "
+            "or tick Needs admin review."
+        )
+
     acknowledged = None
-    diff = discrepancies(items, removed)
-    if diff:
-        token = discrepancy_token(diff)
+    if pending:
+        token = discrepancy_token(pending)
         if not acknowledge_token or _text(acknowledge_token) != token:
-            if acknowledge_token and not _is_admin():
+            if acknowledge_token and not admin:
                 raise ValueError(
                     "Only an admin can accept Production Sheet changes without re-inspecting."
                 )
+            if acknowledge_token:
+                message = "The list changed while you were deciding. Review it again."
+            elif any(p["kind"] != "unchecked" for p in pending):
+                message = "The live Production Sheet differs from what was checked."
+            else:
+                message = f"{len(pending)} item(s) not ticked."
             return build_response(
                 True,
                 {
                     "cleared": False,
-                    "discrepancies": diff,
+                    "discrepancies": pending,
                     "token": token,
                     "changedAgain": bool(acknowledge_token),
-                    "canAcknowledge": _is_admin(),
+                    "canAcknowledge": admin,
                 },
-                "The sheet changed again. Review the new differences."
-                if acknowledge_token
-                else "The live Production Sheet differs from what was inspected.",
+                message,
             )
-        if not _is_admin():
+        if not admin:
             raise ValueError(
                 "Only an admin can accept Production Sheet changes without re-inspecting."
             )
-        acknowledged = diff
-
-    # With or without an acknowledgement, every row must have been looked at
-    # and none may have failed. Acknowledged changes count as accepted.
-    accepted = {"revised", "new"} if acknowledged else set()
-    failed = [i for i in items if i["state"] == "checked" and i["result"] != "pass"]
-    unchecked = [
-        i for i in items if i["state"] not in accepted and i["state"] != "checked"
-    ]
-    if failed:
-        raise ValueError(
-            f"{len(failed)} item(s) failed inspection. Flag the lot for an admin instead of clearing it."
-        )
-    if unchecked:
-        raise ValueError(
-            f"Check every item before clearing the lot ({len(unchecked)} left)."
-        )
+        acknowledged = pending
 
     identity = _identity(cur)
     cur.execute(

@@ -5092,3 +5092,14 @@
 .tab-content-wrapper:focus {
   outline: none;
 }
+
+/* Production > Inspections: the checklist dialog is full screen below
+   1400px (modal-fullscreen-xxl-down), a tablet in either orientation.
+   .modal-xl's width and margins above are !important, so without this they
+   keep a strip of the page showing beside the checklist. */
+@media (max-width: 1399.98px) {
+  #inspectionDetailModal .modal-dialog {
+    max-width: none !important;
+    margin: 0 !important;
+  }
+}
