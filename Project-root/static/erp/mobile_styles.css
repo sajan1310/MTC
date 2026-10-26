@@ -2035,6 +2035,9 @@ body.mb-selecting {
   background: var(--mb-surface);
   padding: 0 var(--mb-sp-4);
   color: var(--mb-ink);
+  /* A textarea's own default is monospace; every field reads in the app's
+     face instead. */
+  font-family: inherit;
 }
 
 .mb-field textarea {
@@ -2484,15 +2487,73 @@ body.mb-selecting {
   gap: var(--mb-sp-3);
 }
 
+/* ── Tablet: the whole screen ─────────────────────────────────────────────
+   A tablet is a working screen of its own, not a phone in a picture frame
+   (owner, 2026-10-26: "tablet UI doesn't cover the entire screen, it
+   appears like mobile UI"). 600px on BOTH sides is the test: a phone turned
+   sideways is as wide but far shorter, and keeps the 480px frame above.
+   Here the app fills the glass, every card list takes as many columns as
+   fit, and sheets fill it too while their forms keep a readable measure.
+   .mapp-content's and .mb-sheet-body's own padding shorthand comes after
+   the 46rem measure above and wins over it, so these say it with more
+   weight. The density setting's own grid still wins over the list rule. */
+@media (min-width: 600px) and (min-height: 600px) {
+  #mapp-root {
+    max-width: none;
+    box-shadow: none;
+  }
+
+  .mapp-content { padding-inline: var(--mb-sp-5); }
+  .mapp-content > .mb-fab { right: var(--mb-sp-5); }
+
+  .mb-select-bar {
+    right: 0;
+    left: 0;
+    width: auto;
+    transform: none;
+  }
+
+  .mb-sheet {
+    right: 0;
+    left: 0;
+    width: auto;
+    --mb-sheet-x: 0px;
+  }
+
+  .mb-sheet > .mb-sheet-body,
+  .mb-sheet > .mb-sheet-footer {
+    padding-inline: max(var(--mb-sp-5), calc((100% - 52rem) / 2));
+  }
+
+  .mb-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+    gap: var(--mb-sp-3);
+    align-items: start;
+  }
+
+  .mb-list > .mb-card { margin-bottom: 0; }
+
+  .mb-list > .mb-offline-banner,
+  .mb-list > .mb-load-more,
+  .mb-list > .mb-state,
+  .mb-list > .mb-skel,
+  .mb-list > [id^="stock-expand-"] {
+    grid-column: 1 / -1;
+  }
+}
+
 /* ── Inspection (MApp.Inspection) ────────────────────────────────────────
    A row's state is carried three ways, never by colour alone: the left
    stripe, the box's own tick, and a worded badge ("Revised", "New") for
-   anything that needs ticking again. */
+   anything that needs ticking again.
 
-/* On a tablet the inspection sheets fill the screen instead of the 480px
-   phone frame (owner, 2026-10-26): a checklist is worked through with the
-   tablet in hand. The checklist keeps the sheets' 58rem reading width; the
-   lot list spreads into columns. */
+   From 46rem -- a tablet either way up, or a phone turned sideways -- both
+   screens are tables (owner, 2026-10-26: "use tabular format"): the lot
+   list one row per lot, the checklist one row per item, with item, size,
+   colour, specification and quantity each in a column of its own. The
+   inspection sheets fill the screen even where the app keeps its phone
+   frame, and take a wider measure than a form. */
 @media (min-width: 640px) {
   .mb-sheet.mb-sheet-full {
     right: 0;
@@ -2503,23 +2564,10 @@ body.mb-selecting {
 }
 
 @media (min-width: 46rem) {
-  #sheet-inspections .mb-sheet-body {
-    padding-inline: max(var(--mb-sp-4), calc((100% - 76rem) / 2));
-  }
-
-  #inspections-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
-    gap: var(--mb-sp-3);
-    align-items: start;
-  }
-
-  #inspections-list > .mb-card { margin-bottom: 0; }
-
-  #inspections-list > .mb-load-more,
-  #inspections-list > .mb-state,
-  #inspections-list > .mb-skel {
-    grid-column: 1 / -1;
+  #sheet-inspections .mb-sheet-body,
+  #sheet-inspection .mb-sheet-body,
+  #sheet-inspection .mb-sheet-footer {
+    padding-inline: max(var(--mb-sp-5), calc((100% - 90rem) / 2));
   }
 }
 
@@ -2558,8 +2606,112 @@ body.mb-selecting {
 .mb-insp-stage-review { background: var(--mb-enamel-red-bg); color: var(--mb-enamel-red-ink); }
 .mb-insp-stage-cleared { background: var(--mb-enamel-green-bg); color: var(--mb-enamel-green-ink); }
 
+/* Column names, for both tables. */
+.mb-insp-lhead,
+.mb-insp-thead {
+  background: var(--mb-steel-faint);
+  color: var(--mb-ink-soft);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mb-insp-num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* The lot list as a table (MApp.Inspection.render on a wide screen): the
+   list element holds the header and one button per lot. */
+#inspections-list.mb-insp-tabular {
+  display: block;
+  overflow: hidden;
+  border-radius: var(--mb-radius-md);
+  background: var(--mb-surface);
+  box-shadow: var(--mb-shadow-card);
+}
+
+.mb-insp-lhead,
+.mb-insp-lrow {
+  display: grid;
+  grid-template-columns: minmax(9rem, 1.1fr) minmax(12rem, 2fr) minmax(7rem, 0.8fr) minmax(11rem, 1.4fr) 5rem minmax(8rem, 1fr);
+  column-gap: var(--mb-sp-3);
+  align-items: center;
+  padding: var(--mb-sp-3) var(--mb-sp-4);
+}
+
+.mb-insp-lrow {
+  width: 100%;
+  min-height: var(--mb-tap-min);
+  border: none;
+  border-top: 1px solid var(--mb-steel-faint);
+  background: none;
+  color: var(--mb-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mb-insp-lrow:hover,
+.mb-insp-lrow:focus-visible {
+  background: var(--mb-workshop);
+}
+
+.mb-insp-lsub { display: block; font-size: 0.8125rem; color: var(--mb-steel); }
+
+/* The checklist screen: the lot's details, the checklist, and the admin
+   review -- a panel of its own, apart from the material list (owner,
+   2026-10-26). One column on a phone, in that order. From 70rem the
+   checklist takes the main column and the details and the review sit
+   beside it, staying in view while the checklist scrolls. */
+.mb-insp-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "head" "main" "review";
+  gap: var(--mb-sp-4);
+}
+
+.mb-insp-main { grid-area: main; min-width: 0; }
+.mb-insp-side { display: contents; }
+.mb-insp-side > .mb-insp-head { grid-area: head; }
+.mb-insp-side > .mb-insp-review-panel { grid-area: review; }
+
+@media (min-width: 70rem) {
+  .mb-insp-layout {
+    grid-template-columns: minmax(0, 1fr) 22rem;
+    grid-template-areas: "main side";
+    align-items: start;
+  }
+
+  /* Held in view, and never taller than the screen: an admin's panel with
+     "Send back" can outgrow a landscape tablet, and a sticky panel taller
+     than the screen would hide its own end. It scrolls by itself instead;
+     the 2px pad keeps the cards' shadows from being clipped. */
+  .mb-insp-side {
+    position: sticky;
+    top: 0;
+    display: grid;
+    grid-area: side;
+    gap: var(--mb-sp-4);
+    max-height: calc(100dvh - var(--mb-topbar-h) - 10rem);
+    margin: -2px;
+    padding: 2px;
+    overflow-y: auto;
+  }
+
+  .mb-insp-side > .mb-insp-head,
+  .mb-insp-side > .mb-insp-review-panel {
+    grid-area: auto;
+  }
+
+  .mb-insp-side > .mb-insp-head {
+    padding: var(--mb-sp-4);
+    border-bottom: none;
+    border-radius: var(--mb-radius-md);
+    background: var(--mb-surface);
+    box-shadow: var(--mb-shadow-card);
+  }
+}
+
 .mb-insp-head {
-  margin-bottom: var(--mb-sp-3);
   padding-bottom: var(--mb-sp-3);
   border-bottom: 1px solid var(--mb-steel-faint);
 }
@@ -2575,7 +2727,7 @@ body.mb-selecting {
 .mb-insp-banner-flagged { background: var(--mb-enamel-amber-bg); }
 .mb-insp-banner-cleared { background: var(--mb-enamel-green-bg); }
 
-/* "7/10 items checked" stays in view while the list scrolls under it. The
+/* "7/10 items ticked" stays in view while the list scrolls under it. The
    sheet body is padded, and a sticky top of 0 would stop the bar below
    that padding, leaving a strip where rows show above it. */
 .mb-insp-progress {
@@ -2656,35 +2808,102 @@ body.mb-selecting {
   color: var(--mb-enamel-amber-ink);
 }
 
-.mb-insp-removed { display: grid; gap: var(--mb-sp-1); margin-top: var(--mb-sp-4); }
-.mb-insp-remarks { margin-top: var(--mb-sp-5); }
+/* The checklist's table: on a phone the column names and the per-column
+   cells are hidden and size · colour · specification run as one line under
+   the name; from 46rem every row lays its cells out under the names. */
+.mb-insp-thead,
+.mb-insp-cell {
+  display: none;
+}
 
-/* "Needs admin review": one box for the lot, its whole card the tap target,
-   amber once ticked so the request reads from across the room. */
+@media (min-width: 46rem) {
+  .mb-insp-list {
+    --mb-insp-cols: 2.25rem minmax(11rem, 2.4fr) minmax(4.5rem, 0.8fr) minmax(5rem, 1fr) minmax(7rem, 1.8fr) minmax(7rem, 1fr);
+
+    gap: 0;
+    overflow: hidden;
+    border-radius: var(--mb-radius-md);
+    background: var(--mb-surface);
+    box-shadow: var(--mb-shadow-card);
+  }
+
+  .mb-insp-thead,
+  .mb-insp-list .mb-insp-row {
+    display: grid;
+    grid-template-columns: var(--mb-insp-cols);
+    column-gap: var(--mb-sp-3);
+    align-items: center;
+  }
+
+  /* The header has no 4px state stripe; pad for it so the columns line up. */
+  .mb-insp-thead { padding: var(--mb-sp-2) var(--mb-sp-3) var(--mb-sp-2) calc(var(--mb-sp-3) + 4px); }
+
+  .mb-insp-list .mb-insp-row {
+    min-height: var(--mb-tap-min);
+    padding: var(--mb-sp-2) var(--mb-sp-3);
+    border-top: 1px solid var(--mb-steel-faint);
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .mb-insp-row .mb-insp-item { display: contents; }
+  .mb-insp-row .mb-insp-meta { display: none; }
+  .mb-insp-row .mb-insp-cell { display: block; overflow-wrap: anywhere; }
+  .mb-insp-row .mb-insp-qty { margin-top: 0; text-align: right; }
+  .mb-insp-row .mb-insp-was { display: block; }
+}
+
+.mb-insp-removed { display: grid; gap: var(--mb-sp-1); margin-top: var(--mb-sp-4); }
+
+/* The admin review panel: its own heading and an amber rule across the top
+   so it never reads as one more row of the checklist, and amber all over
+   once the box is ticked, so the request reads from across the room. */
+.mb-insp-review-panel {
+  padding: var(--mb-sp-4);
+  border-top: 4px solid var(--mb-enamel-amber);
+  border-radius: var(--mb-radius-md);
+  background: var(--mb-surface);
+  box-shadow: var(--mb-shadow-card);
+}
+
+.mb-insp-review-panel:has(#inspection-needs-review:checked) {
+  background: var(--mb-enamel-amber-bg);
+}
+
+.mb-insp-review-panel > .mapp-section-label { margin: 0 0 var(--mb-sp-3); }
+
 .mb-insp-review {
   display: flex;
   align-items: flex-start;
   gap: var(--mb-sp-3);
   margin-bottom: var(--mb-sp-3);
-  padding: var(--mb-sp-3);
-  border: 2px solid var(--mb-steel-faint);
-  border-radius: var(--mb-radius-md);
-  background: var(--mb-surface);
   cursor: pointer;
-}
-
-.mb-insp-review:has(.mb-insp-check:checked) {
-  border-color: var(--mb-enamel-amber);
-  background: var(--mb-enamel-amber-bg);
 }
 .mb-insp-review .mb-insp-check { accent-color: var(--mb-enamel-amber); }
 .mb-insp-review-title { display: block; font-weight: 700; }
 .mb-insp-review .mb-field-hint { display: block; }
-.mb-insp-remark-actions { display: flex; flex-wrap: wrap; gap: var(--mb-sp-2); margin-bottom: var(--mb-sp-4); }
+.mb-insp-remark-actions { display: flex; flex-wrap: wrap; gap: var(--mb-sp-2); margin-bottom: var(--mb-sp-3); }
 .mb-insp-remark-actions .mb-btn { flex: 1 1 12rem; }
 
+/* The sign-off: one column on a phone; from 46rem the inspector on the
+   left and the button on the right, at a button's width. */
 .mb-insp-signoff { display: grid; gap: var(--mb-sp-2); }
 .mb-insp-inspector { font-size: 0.875rem; color: var(--mb-ink-soft); }
+
+@media (min-width: 46rem) {
+  .mb-insp-signoff {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: var(--mb-sp-5);
+  }
+
+  .mb-insp-signoff > .mb-btn {
+    grid-row: 1 / span 2;
+    grid-column: 2;
+    width: auto;
+    min-width: 20rem;
+  }
+}
 
 .mb-insp-question { margin: 0 0 var(--mb-sp-3); font-weight: 600; }
 .mb-insp-diff { display: grid; gap: var(--mb-sp-2); }

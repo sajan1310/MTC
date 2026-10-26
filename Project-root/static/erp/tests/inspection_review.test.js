@@ -212,6 +212,17 @@ describe('one lot', () => {
     expect(body().textContent).toContain('Spokes are 13G, not 12G');
   });
 
+  test('"Needs admin review" is a panel of its own, apart from the material table', async () => {
+    stubApi({ detail: openLot() });
+    await App.Inspection.openDetail(9);
+    const box = document.getElementById('inspectionNeedsReview');
+    expect(box.closest('table')).toBeNull();
+    const panel = box.closest('section.insp-review');
+    expect(panel.querySelector('h6').textContent).toBe('Admin review');
+    expect(panel.contains(document.getElementById('inspectionRemarks'))).toBe(true);
+    expect(body().querySelector('.insp-layout > .insp-list table')).not.toBeNull();
+  });
+
   test('item names render as text in the checklist', async () => {
     stubApi({ detail: openLot({ items: [sheetRow('k1', PAYLOAD)] }) });
     await App.Inspection.openDetail(9);

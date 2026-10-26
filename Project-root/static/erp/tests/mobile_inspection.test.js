@@ -217,6 +217,27 @@ describe('the checklist', () => {
     expect(clearBtn().disabled).toBe(false);
     expect(footer().textContent).toContain('2 items not ticked. You can still clear the lot; you will see them first.');
   });
+
+  test('"Needs admin review" is a panel of its own, apart from the material list', async () => {
+    await openChecklist();
+    const box = document.getElementById('inspection-needs-review');
+    expect(box.closest('.mb-insp-list')).toBeNull();
+    const panel = box.closest('.mb-insp-review-panel');
+    expect(panel).not.toBeNull();
+    expect(panel.querySelector('h3').textContent).toBe('Admin review');
+    expect(panel.contains(document.getElementById('inspection-remarks'))).toBe(true);
+  });
+
+  test('every item carries its size, colour and specification as cells, under named columns', async () => {
+    const data = checklist();
+    data.data.items[1] = item('tape', 'Rim Tape', 60, { state: 'checked', result: 'pass', color: 'Red', narration: 'Cloth' });
+    await openChecklist(data);
+    const head = [...body().querySelectorAll('.mb-insp-thead span')].map(s => s.textContent);
+    expect(head).toEqual(['', 'Item', 'Size', 'Colour', 'Specification', 'Qty']);
+    const tape = [...body().querySelectorAll('[data-insp-row]')].find(r => r.dataset.inspRow === 'tape');
+    expect([...tape.querySelectorAll('.mb-insp-cell')].map(c => c.textContent)).toEqual(['26in', 'Red', 'Cloth']);
+    expect(tape.querySelector('.mb-insp-meta').textContent).toBe('26in · Red · Cloth'); // the phone's one line
+  });
 });
 
 describe('submitting', () => {
@@ -355,9 +376,52 @@ describe('the lot list', () => {
     expect(titles()).toEqual(['LOT-C']);
     expect(document.querySelectorAll('#inspections-filter-bar [data-insp-filter]')).toHaveLength(6);
   });
+
+  test('on a wide screen the list is a table, one row per lot, and a row opens its checklist', async () => {
+    window.matchMedia = jest.fn(() => ({ matches: true, addEventListener: jest.fn() }));
+    try {
+      MApp.Api.call = jest.fn(async name => (name === 'getInspectionLots'
+        ? { success: true, data: [lot(1, 'LOT-A', 'Pending', 'not_started'), lot(2, 'LOT-B', 'In Progress', 'partial', { total: 3, checked: 2 })] }
+        : checklist()));
+      await MApp.Inspection.open();
+
+      const list = document.getElementById('inspections-list');
+      expect(list.classList.contains('mb-insp-tabular')).toBe(true);
+      expect([...list.querySelectorAll('.mb-insp-lhead span')].map(s => s.textContent))
+        .toEqual(['Lot', 'Process · Item', 'Lot status', 'Inspection', 'Ticked', 'Updated']);
+      const rows = [...list.querySelectorAll('.mb-insp-lrow')];
+      expect(rows.map(r => r.querySelector('.mb-card-title').textContent)).toEqual(['LOT-B', 'LOT-A']);
+      expect(rows[0].textContent).toContain('2/3');
+      expect(list.querySelector('.mb-insp-card')).toBeNull();
+
+      rows[0].click();
+      await flush();
+      expect(MApp.Api.call).toHaveBeenLastCalledWith('getInspection', 2);
+    } finally {
+      delete window.matchMedia;
+    }
+  });
 });
 
 describe('on a tablet', () => {
+  // The owner, 2026-10-26: "tablet UI doesn't cover the entire screen, it
+  // appears like mobile UI". 600px on both sides keeps a sideways phone
+  // (wide but short) in its frame.
+  test('the whole app fills a tablet, not only inspection, and card lists take columns', () => {
+    const at = STYLES.indexOf('@media (min-width: 600px) and (min-height: 600px) {');
+    expect(at).toBeGreaterThan(STYLES.indexOf('--mb-sheet-x: -50%;')); // after the frame it undoes
+    const block = STYLES.slice(at, STYLES.indexOf('\n}', at));
+    expect(block).toMatch(/#mapp-root \{\s*max-width: none;/);
+    expect(block).toMatch(/\.mb-sheet \{\s*right: 0;\s*left: 0;\s*width: auto;\s*--mb-sheet-x: 0px;/);
+    expect(block).toMatch(/\.mb-list \{\s*display: grid;/);
+  });
+
+  test('from 46rem the checklist is a table: each row a grid of the named columns', () => {
+    expect(STYLES).toMatch(/\.mb-insp-thead,\s*\.mb-insp-list \.mb-insp-row \{\s*display: grid;\s*grid-template-columns: var\(--mb-insp-cols\);/);
+    expect(STYLES).toMatch(/\.mb-insp-row \.mb-insp-item \{ display: contents; \}/);
+    expect(STYLES).toMatch(/\.mb-insp-row \.mb-insp-cell \{ display: block;/);
+  });
+
   test('the three inspection sheets fill the screen instead of the 480px phone frame', () => {
     for (const id of ['sheet-inspections', 'sheet-inspection', 'sheet-inspection-reconcile']) {
       expect(sheet(id)).toMatch(/class="mb-sheet mb-sheet-full"/);

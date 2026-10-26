@@ -282,23 +282,30 @@ App.Inspection = {
       ? `<div class="small text-muted mb-2"><strong>Removed from the sheet since inspection began:</strong> ${d.removed.map(r => escapeHtml([r.itemName, r.size, r.color].filter(Boolean).join(' · '))).join(', ')}</div>`
       : '';
     const remarks = closed
-      ? `<div class="mb-0"><div class="text-muted small fw-bold">Remarks</div><div class="text-break" style="white-space: pre-wrap;">${escapeHtml(insp.remarks || '—')}</div></div>`
+      ? `<section class="insp-review border rounded-3 p-3" aria-labelledby="inspectionReviewHeading"><h6 id="inspectionReviewHeading" class="text-uppercase small fw-bold text-muted mb-2">Remarks</h6><div class="text-break" style="white-space: pre-wrap;">${escapeHtml(insp.remarks || '—')}</div></section>`
       : this._reviewHtml(d);
 
+    // Three parts (styles.css .insp-layout): the lot's details, the
+    // checklist, and the admin review -- a panel of its own, apart from the
+    // material list. Stacked below 1200px; beside the checklist above it.
     body.innerHTML = `
       ${banners.join('')}
-      <div class="row g-2 mb-3">
-        ${facts.map(([k, v]) => `<div class="col-6 col-md-4"><div class="text-muted small fw-bold">${escapeHtml(k)}</div><div>${v}</div></div>`).join('')}
-      </div>
-      <div id="inspectionProgress" class="mb-2" role="status" aria-live="polite"></div>
-      <div class="table-responsive">
-        <table class="table table-sm table-bordered align-middle mb-2">
-          <thead class="table-light"><tr><th class="text-center" style="width: 4.5rem;">Ticked</th><th>Item</th><th>Size</th><th>Colour</th><th>Specification</th><th class="text-end">Qty</th></tr></thead>
-          <tbody>${d.items.length ? d.items.map(item => this._itemRow(item, closed)).join('') : '<tr><td colspan="6" class="text-center text-muted">Nothing on the Production Sheet to inspect.</td></tr>'}</tbody>
-        </table>
-      </div>
-      ${removed}
-      ${remarks}`;
+      <div class="insp-layout">
+        <div class="insp-facts border rounded-3 p-3">
+          ${facts.map(([k, v]) => `<div><div class="text-muted small fw-bold">${escapeHtml(k)}</div><div>${v}</div></div>`).join('')}
+        </div>
+        <div class="insp-list">
+          <div id="inspectionProgress" class="mb-2" role="status" aria-live="polite"></div>
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered align-middle mb-2">
+              <thead class="table-light"><tr><th class="text-center" style="width: 4.5rem;">Ticked</th><th>Item</th><th>Size</th><th>Colour</th><th>Specification</th><th class="text-end">Qty</th></tr></thead>
+              <tbody>${d.items.length ? d.items.map(item => this._itemRow(item, closed)).join('') : '<tr><td colspan="6" class="text-center text-muted">Nothing on the Production Sheet to inspect.</td></tr>'}</tbody>
+            </table>
+          </div>
+          ${removed}
+        </div>
+        ${remarks}
+      </div>`;
     this._paintProgress();
     this._paintActions();
   },
@@ -318,7 +325,8 @@ App.Inspection = {
         <button type="button" class="btn btn-outline-dark fw-bold" id="inspectionReturnBtn" onclick="App.Inspection.sendBack()">Send back for re-inspection</button>
       </div>` : '';
     return `
-      <div class="border rounded-3 p-3 mt-3${flagged ? ' border-warning bg-warning-subtle' : ''}">
+      <section class="insp-review insp-review-open border rounded-3 p-3${flagged ? ' bg-warning-subtle' : ''}" aria-labelledby="inspectionReviewHeading">
+        <h6 id="inspectionReviewHeading" class="text-uppercase small fw-bold text-muted mb-2">Admin review</h6>
         <label class="d-flex align-items-start gap-2 mb-2" style="cursor: pointer;">
           <input class="form-check-input fs-4 m-0 p-0 flex-shrink-0" type="checkbox" id="inspectionNeedsReview"${flagged ? ' checked' : ''}>
           <span>
@@ -330,7 +338,7 @@ App.Inspection = {
         <textarea id="inspectionRemarks" class="form-control mb-2" rows="3" maxlength="2000" placeholder="What is wrong or missing, for the admin">${escapeHtml(insp.remarks || '')}</textarea>
         <button type="button" class="btn btn-sm btn-outline-dark fw-bold" id="inspectionSaveRemarksBtn" onclick="App.Inspection.saveReview()">Save remarks</button>
         ${sendBack}
-      </div>`;
+      </section>`;
   },
 
   _paintProgress() {

@@ -15523,6 +15523,7 @@ MApp.Inspection = {
     MApp.SearchBox.attach('inspections-search', term => this.onSearch(term));
     this.filter = 'all';
     this._paintFilterChips();
+    this._watchWidth();
     MApp.Paging.reset('inspection');
     MApp.Sheet.open('sheet-inspections');
     await this.load();
@@ -15595,9 +15596,14 @@ MApp.Inspection = {
     this.render();
   },
 
+  // Cards on a phone; on a wider screen a table, one row per lot, the list
+  // element itself holding the table (owner, 2026-10-26: "use tabular
+  // format").
   render() {
     const listEl = document.getElementById('inspections-list');
     if (!listEl) return;
+    const wide = this._wide();
+    listEl.classList.toggle('mb-insp-tabular', wide && this.filtered.length > 0);
     if (this.filtered.length === 0) {
       MApp.Util.renderEmpty(listEl, {
         title: this.lots.length ? 'No lots here' : 'Nothing to inspect',
@@ -15608,12 +15614,53 @@ MApp.Inspection = {
     const page = MApp.Paging.take('inspection', this.filtered, () => this.render());
     MApp.SearchBox.setCount('inspections-search', page.shown, page.total, page.meta);
     const e = MApp.Util.escapeHtml;
-    listEl.innerHTML = page.rows.map(lot => {
-      return this._cardHtml(lot, e);
+    listEl.innerHTML = (wide ? this._tableHeadHtml() : '') + page.rows.map(lot => {
+      return wide ? this._rowHtml(lot, e) : this._cardHtml(lot, e);
     }).join('') + MApp.Paging.moreHtml(page);
     listEl.querySelectorAll('[data-insp-lot]').forEach(btn => {
       btn.addEventListener('click', () => this.openChecklist(Number(btn.dataset.inspLot)));
     });
+  },
+
+  // The width from which the inspection screens are tables: the same 46rem
+  // as the checklist's table in mobile_styles.css.
+  WIDE: '(min-width: 46rem)',
+
+  _wide() {
+    return typeof window.matchMedia === 'function' && window.matchMedia(this.WIDE).matches;
+  },
+
+  // Redraws the lot list when the screen crosses that width -- a tablet
+  // turned between portrait and landscape -- so the layout always fits.
+  _watchWidth() {
+    if (this._widthQuery || typeof window.matchMedia !== 'function') return;
+    this._widthQuery = window.matchMedia(this.WIDE);
+    if (typeof this._widthQuery.addEventListener !== 'function') return;
+    this._widthQuery.addEventListener('change', () => {
+      if (this._isOpen('sheet-inspections')) this.render();
+    });
+  },
+
+  _tableHeadHtml() {
+    return `
+      <div class="mb-insp-lhead" aria-hidden="true">
+        <span>Lot</span><span>Process · Item</span><span>Lot status</span><span>Inspection</span><span class="mb-insp-num">Ticked</span><span>Updated</span>
+      </div>`;
+  },
+
+  // One lot as a row of the table: the whole row opens its checklist.
+  _rowHtml(lot, e) {
+    const s = (lot.inspection || {}).summary || {};
+    const total = s.total !== undefined ? s.total : lot.itemCount;
+    return `
+      <button type="button" class="mb-insp-lrow" data-insp-lot="${e(lot.rowIdx)}">
+        <span><span class="mb-card-title">${e(lot.lotNumber)}</span><span class="mb-insp-lsub">${e(lot.date)}</span></span>
+        <span>${e(lot.processName)}<span class="mb-insp-lsub">${e(lot.outputItemName || lot.productName || '')}</span></span>
+        <span><span class="mb-chip ${MApp.Util.statusChipClass(lot.status)}">${e(lot.status)}</span></span>
+        <span>${this._stateBadge(lot)}</span>
+        <span class="mb-insp-num">${e(s.checked || 0)}/${e(total)}</span>
+        <span class="mb-insp-lsub">${e(this._when(lot.lastUpdated))}</span>
+      </button>`;
   },
 
   // "Partially checked 3/5", "Needs review 2/5": the stage, with the count
@@ -15711,28 +15758,38 @@ MApp.Inspection = {
     const title = document.getElementById('inspection-title');
     if (title) title.textContent = `Inspect ${lot.lotNumber}`;
 
+    // Three parts (mobile_styles.css .mb-insp-layout): the lot's details,
+    // the checklist, and the admin review, which is a panel of its own and
+    // never a row of the material list. One column on a phone; on a wide
+    // screen the details and the review sit beside the checklist.
     const facts = [lot.lotNumber, lot.date, `${MApp.Util.formatQty(lot.qty)} units`]
       .concat(lot.colors.length ? [lot.colors.join(', ')] : []);
     body.innerHTML = `
-      <div class="mb-insp-head">
-        <div class="mb-card-row">
-          <div>
-            <div class="mb-card-title">${e(lot.processName)}</div>
-            <div class="mb-card-sub">${e(lot.outputItemName || lot.productName || '')}</div>
+      <div class="mb-insp-layout">
+        <div class="mb-insp-main">
+          ${this._bannerHtml(d, e)}
+          <div class="mb-insp-progress" id="inspection-progress" role="status" aria-live="polite"></div>
+          <div class="mb-insp-list" role="list">
+            ${d.items.length
+              ? this._itemHeadHtml() + d.items.map(item => this._itemHtml(item, e, closed)).join('')
+              : '<div class="mb-field-hint">This lot has nothing on its Production Sheet to inspect.</div>'}
           </div>
-          <span class="mb-chip ${MApp.Util.statusChipClass(lot.status)}" id="inspection-lot-status">${e(lot.status)}</span>
+          ${d.removed.length ? this._removedHtml(d.removed, e) : ''}
         </div>
-        <div class="mb-insp-card-meta">${facts.map(f => `<span>${e(f)}</span>`).join('')}</div>
-      </div>
-      ${this._bannerHtml(d, e)}
-      <div class="mb-insp-progress" id="inspection-progress" role="status" aria-live="polite"></div>
-      <div class="mb-insp-list" role="list">
-        ${d.items.length
-          ? d.items.map(item => this._itemHtml(item, e, closed)).join('')
-          : '<div class="mb-field-hint">This lot has nothing on its Production Sheet to inspect.</div>'}
-      </div>
-      ${d.removed.length ? this._removedHtml(d.removed, e) : ''}
-      ${closed ? this._clearedRemarksHtml(insp, e) : this._remarksHtml(d, e)}`;
+        <aside class="mb-insp-side">
+          <div class="mb-insp-head">
+            <div class="mb-card-row">
+              <div>
+                <div class="mb-card-title">${e(lot.processName)}</div>
+                <div class="mb-card-sub">${e(lot.outputItemName || lot.productName || '')}</div>
+              </div>
+              <span class="mb-chip ${MApp.Util.statusChipClass(lot.status)}" id="inspection-lot-status">${e(lot.status)}</span>
+            </div>
+            <div class="mb-insp-card-meta">${facts.map(f => `<span>${e(f)}</span>`).join('')}</div>
+          </div>
+          ${closed ? this._clearedRemarksHtml(insp, e) : this._remarksHtml(d, e)}
+        </aside>
+      </div>`;
 
     body.querySelectorAll('[data-insp-row]').forEach(row => this._bindRow(row));
     const review = document.getElementById('inspection-needs-review');
@@ -15767,8 +15824,19 @@ MApp.Inspection = {
     return '';
   },
 
+  // The checklist table's column names. Shown from 46rem, where every row
+  // lays its cells out under them; a phone hides it.
+  _itemHeadHtml() {
+    return `
+      <div class="mb-insp-thead" aria-hidden="true">
+        <span></span><span>Item</span><span>Size</span><span>Colour</span><span>Specification</span><span class="mb-insp-num">Qty</span>
+      </div>`;
+  },
+
   // One checklist row. The whole row is the box's label, so a tap anywhere
-  // on it ticks the item.
+  // on it ticks the item. A phone shows size, colour and specification as
+  // one line under the name (.mb-insp-meta); a wider screen shows each in
+  // its own column (.mb-insp-cell) instead.
   _itemHtml(item, e, closed) {
     const meta = [item.size, item.color, item.narration].filter(Boolean).map(e).join(' · ');
     const qty = `${e(MApp.Util.formatQty(item.qty))}${item.unit ? ` ${e(item.unit)}` : ''}`;
@@ -15784,6 +15852,9 @@ MApp.Inspection = {
         <span class="mb-insp-item">
           <span class="mb-insp-name">${e(item.itemName)} ${badge}</span>
           ${meta ? `<span class="mb-insp-meta">${meta}</span>` : ''}
+          <span class="mb-insp-cell">${e(item.size)}</span>
+          <span class="mb-insp-cell">${e(item.color)}</span>
+          <span class="mb-insp-cell">${e(item.narration)}</span>
           <span class="mb-insp-qty">${qty}${this._wasHtml(item, e)}</span>
         </span>
       </label>`;
@@ -15814,8 +15885,9 @@ MApp.Inspection = {
       </div>`;
   },
 
-  // "Needs admin review" and the remarks it is about. Ticking the box saves
-  // at once (saveReview); the remarks say what the admin should look at.
+  // The admin review panel: "Needs admin review" and the remarks it is
+  // about, apart from the material list. Ticking the box saves at once
+  // (saveReview); the remarks say what the admin should look at.
   _remarksHtml(d, e) {
     const insp = d.inspection || {};
     const flagged = insp.status === 'flagged';
@@ -15826,7 +15898,8 @@ MApp.Inspection = {
       </div>
       <button type="button" class="mb-btn mb-btn-secondary" id="inspection-return-btn" onclick="MApp.Inspection.sendBack()">Send back for re-inspection</button>` : '';
     return `
-      <div class="mb-insp-remarks">
+      <section class="mb-insp-review-panel" aria-labelledby="inspection-review-heading">
+        <h3 class="mapp-section-label" id="inspection-review-heading">Admin review</h3>
         <label class="mb-insp-review">
           <input type="checkbox" class="mb-insp-check" id="inspection-needs-review"${flagged ? ' checked' : ''}>
           <span>
@@ -15841,13 +15914,17 @@ MApp.Inspection = {
         <div class="mb-insp-remark-actions">
           <button type="button" class="mb-btn mb-btn-secondary" id="inspection-save-remarks-btn" onclick="MApp.Inspection.saveReview()">Save remarks</button>
         </div>
-      </div>
-      ${sendBack}`;
+        ${sendBack}
+      </section>`;
   },
 
   _clearedRemarksHtml(insp, e) {
     if (!insp.remarks) return '';
-    return `<div class="mb-field mb-insp-remarks"><div class="mapp-section-label">Remarks</div><div class="mb-insp-meta">${e(insp.remarks)}</div></div>`;
+    return `
+      <section class="mb-insp-review-panel" aria-labelledby="inspection-review-heading">
+        <h3 class="mapp-section-label" id="inspection-review-heading">Remarks</h3>
+        <div class="mb-insp-meta">${e(insp.remarks)}</div>
+      </section>`;
   },
 
   _paintProgress() {
