@@ -21,10 +21,10 @@ const path = require('path');
 
 const CSS = fs.readFileSync(path.join(__dirname, '..', 'mobile_styles.css'), 'utf8');
 
-function loadAsGlobal(relPath, exportName) {
+function loadAsGlobal(relPath, exportName, extra = '') {
   const code = fs
     .readFileSync(path.join(__dirname, '..', relPath), 'utf8')
-    .replace(new RegExp(`^const ${exportName} = `, 'm'), `global.${exportName} = `);
+    .replace(new RegExp(`^const ${exportName} = `, 'm'), `global.${exportName} = `) + extra;
   // eslint-disable-next-line no-eval
   eval(code);
 }
@@ -44,7 +44,9 @@ function mount() {
     <div id="mapp-sheet-backdrop"></div>
     <div id="production-list"></div>
     <div class="mb-toast-stack" id="mapp-toast-stack"></div>`;
-  loadAsGlobal('api.js', 'Api');
+  // PO_STATUS is a top-level const in api.js, global in the browser:
+  // statusChipClass reaches it for any status that is not a lot's own.
+  loadAsGlobal('api.js', 'Api', '\nglobal.PO_STATUS = PO_STATUS;');
   loadAsGlobal('mobile.js', 'MApp');
   MApp.Sheet._stack = [];
   // render() reads its rows through MApp.Search over `entries`, which is
@@ -176,5 +178,51 @@ describe('it survives a narrow card', () => {
 
     expect(document.querySelector('.mapp-lot-date').textContent).toBe('—');
     expect(actions()).toHaveLength(3);
+  });
+});
+
+// The inline status dropdown (16:36, 2026-10-26), as reviewed that evening.
+describe('the status dropdown', () => {
+  beforeEach(mount);
+
+  const select = () => document.querySelector('.mapp-lot-meta select[data-lot-action="status"]');
+  const show = lots => {
+    MApp.Production.entries = MApp.Search.index(lots, MApp.Production.SEARCH);
+    MApp.Production.render();
+  };
+
+  test('during long-press selection it changes nothing -- a tap there toggles the card', () => {
+    MApp.Production.changeStatus = jest.fn();
+    MApp.Select._state = { key: 'production', selected: new Set() };
+    select().value = 'Completed';
+    select().dispatchEvent(new Event('change'));
+
+    expect(MApp.Production.changeStatus).not.toHaveBeenCalled();
+    expect(select().value).toBe('Pending');
+    expect(CSS).toMatch(/body\.mb-selecting select\.mb-chip-select \{ pointer-events: none; \}/);
+  });
+
+  test('a status stored in another case still shows, and colours, as itself', () => {
+    show([{ ...LOTS[0], status: ' completed' }]);
+    expect(select().value).toBe('Completed');
+    expect(select().classList.contains('mb-chip-completed')).toBe(true);
+  });
+
+  test('a status the four do not name shows as stored, and a refused change puts it back', async () => {
+    show([{ ...LOTS[0], status: 'On hold' }]);
+    expect(select().value).toBe('On hold');
+    expect(select().selectedOptions[0].disabled).toBe(true);
+
+    MApp.Production.changeStatus = jest.fn(async () => false);
+    select().value = 'Completed';
+    select().dispatchEvent(new Event('change'));
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(MApp.Production.changeStatus).toHaveBeenCalledWith(expect.objectContaining({ status: 'On hold' }), 'Completed');
+    expect(select().value).toBe('On hold');
+  });
+
+  test('on iOS it takes 16px text, so Safari does not zoom the page on every tap', () => {
+    expect(CSS).toMatch(/@supports \(-webkit-touch-callout: none\) \{\s*select\.mb-chip-select \{ font-size: max\(1rem, 16px\); \}/);
   });
 });

@@ -5659,9 +5659,7 @@ MApp.Production = {
                  since when. -->
             <div class="mapp-lot-footer mb-mt-2">
               <div class="mapp-lot-meta">
-                <select class="mb-chip mb-chip-select ${MApp.Util.statusChipClass(l.status)}" data-lot-action="status" data-lot-index="${i}" aria-label="Status for lot ${MApp.Util.escapeHtml(l.lotNumber)}">
-                  ${this.STATUS_OPTIONS.map(s => `<option value="${s}" ${(s === (l.status || 'Pending')) ? 'selected' : ''}>${s}</option>`).join('')}
-                </select>
+                ${this._statusSelectHtml(l, i)}
                 <span class="mapp-lot-date">${MApp.Util.escapeHtml(MApp.Util.formatDateDisplay(l.dateRaw) || '—')}</span>
               </div>
               <div class="mapp-lot-actions">
@@ -5679,23 +5677,25 @@ MApp.Production = {
           </div>`;
       }).join('') + MApp.Paging.moreHtml(page);
 
+      // A saved change reloads the list (changeStatus), which redraws the
+      // select in its new colour; a refused one puts back what it showed.
       listEl.querySelectorAll('select[data-lot-action="status"]').forEach(sel => {
         sel.addEventListener('change', async () => {
           const lot = shown[Number(sel.dataset.lotIndex)];
-          if (!lot) return;
-          const prev = lot.status || 'Pending';
-          const next = sel.value;
-          if (prev === next) return;
+          const prev = sel.dataset.shown;
+          // Long-press selection: a tap on a card means "toggle this lot",
+          // never "change its status" (the CSS also keeps the tap off the
+          // select while selecting).
+          if (!lot || MApp.Select.isActive(this.SELECT.key)) {
+            sel.value = prev;
+            return;
+          }
+          if (sel.value === prev) return;
           sel.disabled = true;
           try {
-            const ok = await this.changeStatus(lot, next);
-            if (!ok) {
-              sel.value = prev;
-            } else {
-              sel.className = `mb-chip mb-chip-select ${MApp.Util.statusChipClass(next)}`;
-            }
+            if (!(await this.changeStatus(lot, sel.value))) sel.value = prev;
           } finally {
-            sel.disabled = false;
+            if (sel.isConnected) sel.disabled = false;
           }
         });
       });
@@ -5708,8 +5708,7 @@ MApp.Production = {
           // wrong lot is not a bug worth leaving to that coincidence.
           const lot = shown[Number(btn.dataset.lotIndex)];
           if (!lot) return;
-          if (btn.dataset.lotAction === 'status') this.changeStatus(lot);
-          else if (btn.dataset.lotAction === 'edit') this.openEditSheet(lot);
+          if (btn.dataset.lotAction === 'edit') this.openEditSheet(lot);
           else if (btn.dataset.lotAction === 'sheet') MApp.ProductionSheet.open(lot);
           else this.deleteLot(lot);
         });
@@ -5792,6 +5791,27 @@ MApp.Production = {
 
   STATUS_OPTIONS: ['Pending', 'In Progress', 'Completed', 'Cancelled'],
 
+  // The STATUS_OPTIONS entry a stored status means, matched the way the
+  // server compares statuses -- trimmed, in any case -- with a blank one
+  // read as Pending. null for anything else, such as a value an import left.
+  _statusOption(status) {
+    const s = String(status || '').trim().toLowerCase() || 'pending';
+    return this.STATUS_OPTIONS.find(o => o.toLowerCase() === s) || null;
+  },
+
+  // A lot card's status, as an inline dropdown. A stored status that is not
+  // one of the four still shows as itself (a disabled first option) rather
+  // than silently as "Pending", and data-shown keeps what the select showed,
+  // so a refused change can put exactly that back.
+  _statusSelectHtml(lot, i) {
+    const e = MApp.Util.escapeHtml;
+    const current = this._statusOption(lot.status);
+    const shown = current || String(lot.status).trim();
+    const options = (current ? '' : `<option value="${e(shown)}" selected disabled>${e(shown)}</option>`)
+      + this.STATUS_OPTIONS.map(s => `<option value="${s}"${s === current ? ' selected' : ''}>${s}</option>`).join('');
+    return `<select class="mb-chip mb-chip-select ${MApp.Util.statusChipClass(shown)}" data-lot-action="status" data-lot-index="${i}" data-shown="${e(shown)}" aria-label="Status for lot ${e(lot.lotNumber)}">${options}</select>`;
+  },
+
   // Marking a lot done at the machine. Previously this meant opening the
   // full edit sheet -- process cascade, colour checklist and all -- to
   // change one field, which is why it is the single most obvious phone
@@ -5810,18 +5830,10 @@ MApp.Production = {
   //   server refuses the update if the record has been modified or
   //   shifted since this list was drawn, which on a phone showing a list
   //   loaded some time ago is a real possibility rather than a formality.
-  async changeStatus(lot, targetStatus) {
-    let newStatus = targetStatus;
-    if (!newStatus) {
-      const picked = await MApp.Picker.open({
-        title: `Lot ${lot.lotNumber}`,
-        items: this.STATUS_OPTIONS.map(s => ({ value: s, label: s })),
-        selectedValue: lot.status || 'Pending',
-        searchable: false
-      });
-      if (!picked || picked.value === lot.status) return false;
-      newStatus = picked.value;
-    }
+  //
+  // The status comes from the card's dropdown (_statusSelectHtml). Resolves
+  // true once the server has saved it, false for anything else.
+  async changeStatus(lot, newStatus) {
     if (!newStatus || newStatus === lot.status) return false;
 
     try {
@@ -15563,8 +15575,12 @@ MApp.Inspection = {
     MApp.Sheet.close('sheet-inspections');
   },
 
+  // _listReady says the list on screen is drawn from this.lots: not the
+  // skeleton, not an error with its Retry -- which a redraw must not paint
+  // over (_watchWidth).
   async load() {
     const listEl = document.getElementById('inspections-list');
+    this._listReady = false;
     MApp.Util.renderSkeleton(listEl, 4);
     try {
       const res = await MApp.Api.call('getInspectionLots');
@@ -15573,6 +15589,7 @@ MApp.Inspection = {
         return;
       }
       this.lots = res.data || [];
+      this._listReady = true;
       this._applyFilters();
     } catch (err) {
       MApp.Util.renderError(listEl, err && err.message, () => this.load());
@@ -15667,28 +15684,27 @@ MApp.Inspection = {
     this._widthQuery = window.matchMedia(this.WIDE);
     if (typeof this._widthQuery.addEventListener !== 'function') return;
     this._widthQuery.addEventListener('change', () => {
-      if (this._isOpen('sheet-inspections')) this.render();
+      if (this._isOpen('sheet-inspections') && this._listReady) this.render();
     });
   },
 
+  // The table's columns. The ticked count is in the Inspection badge
+  // ("Partially checked 2/5"), so it takes no column of its own.
   _tableHeadHtml() {
     return `
       <div class="mb-insp-lhead" aria-hidden="true">
-        <span>Lot</span><span>Process · Item</span><span>Lot status</span><span>Inspection</span><span class="mb-insp-num">Ticked</span><span>Updated</span>
+        <span>Lot</span><span>Process · Item</span><span>Lot status</span><span>Inspection</span><span>Updated</span>
       </div>`;
   },
 
   // One lot as a row of the table: the whole row opens its checklist.
   _rowHtml(lot, e) {
-    const s = (lot.inspection || {}).summary || {};
-    const total = s.total !== undefined ? s.total : lot.itemCount;
     return `
       <button type="button" class="mb-insp-lrow" data-insp-lot="${e(lot.rowIdx)}">
         <span><span class="mb-card-title">${e(lot.lotNumber)}</span><span class="mb-insp-lsub">${e(lot.date)}</span></span>
         <span>${e(lot.processName)}<span class="mb-insp-lsub">${e(lot.outputItemName || lot.productName || '')}</span></span>
         <span><span class="mb-chip ${MApp.Util.statusChipClass(lot.status)}">${e(lot.status)}</span></span>
         <span>${this._stateBadge(lot)}</span>
-        <span class="mb-insp-num">${e(s.checked || 0)}/${e(total)}</span>
         <span class="mb-insp-lsub">${e(this._when(lot.lastUpdated))}</span>
       </button>`;
   },
@@ -15788,14 +15804,25 @@ MApp.Inspection = {
     const title = document.getElementById('inspection-title');
     if (title) title.textContent = `Inspect ${lot.lotNumber}`;
 
-    // Three parts (mobile_styles.css .mb-insp-layout): the lot's details,
-    // the checklist, and the admin review, which is a panel of its own and
-    // never a row of the material list. One column on a phone; on a wide
-    // screen the details and the review sit beside the checklist.
+    // Three parts, in this order in the page as on a phone's screen, so a
+    // screen reader meets them as they are seen (mobile_styles.css
+    // .mb-insp-layout): the lot's details, the checklist, and the admin
+    // review -- a panel of its own, never a row of the material list. On a
+    // wide screen the details and the review move beside the checklist.
     const facts = [lot.lotNumber, lot.date, `${MApp.Util.formatQty(lot.qty)} units`]
       .concat(lot.colors.length ? [lot.colors.join(', ')] : []);
     body.innerHTML = `
       <div class="mb-insp-layout">
+        <div class="mb-insp-head">
+          <div class="mb-card-row">
+            <div>
+              <div class="mb-card-title">${e(lot.processName)}</div>
+              <div class="mb-card-sub">${e(lot.outputItemName || lot.productName || '')}</div>
+            </div>
+            <span class="mb-chip ${MApp.Util.statusChipClass(lot.status)}" id="inspection-lot-status">${e(lot.status)}</span>
+          </div>
+          <div class="mb-insp-card-meta">${facts.map(f => `<span>${e(f)}</span>`).join('')}</div>
+        </div>
         <div class="mb-insp-main">
           ${this._bannerHtml(d, e)}
           <div class="mb-insp-progress" id="inspection-progress" role="status" aria-live="polite"></div>
@@ -15806,19 +15833,7 @@ MApp.Inspection = {
           </div>
           ${d.removed.length ? this._removedHtml(d.removed, e) : ''}
         </div>
-        <aside class="mb-insp-side">
-          <div class="mb-insp-head">
-            <div class="mb-card-row">
-              <div>
-                <div class="mb-card-title">${e(lot.processName)}</div>
-                <div class="mb-card-sub">${e(lot.outputItemName || lot.productName || '')}</div>
-              </div>
-              <span class="mb-chip ${MApp.Util.statusChipClass(lot.status)}" id="inspection-lot-status">${e(lot.status)}</span>
-            </div>
-            <div class="mb-insp-card-meta">${facts.map(f => `<span>${e(f)}</span>`).join('')}</div>
-          </div>
-          ${closed ? this._clearedRemarksHtml(insp, e) : this._remarksHtml(d, e)}
-        </aside>
+        ${closed ? this._clearedRemarksHtml(insp, e) : this._remarksHtml(d, e)}
       </div>`;
 
     body.querySelectorAll('[data-insp-row]').forEach(row => this._bindRow(row));
