@@ -96,16 +96,30 @@ beforeEach(() => {
 });
 
 describe('the review list', () => {
-  test('flagged lots lead, and "Needs attention" leaves out untouched and cleared ones', async () => {
+  test('every lot shows by default, flagged first; "Needs attention" leaves out untouched and cleared ones', async () => {
     stubApi({ lots: [lot(1, 'LOT-A', 'in_progress'), lot(2, 'LOT-B', 'flagged'), lot(3, 'LOT-C', 'cleared'), lot(4, 'LOT-D', '')] });
     await App.Inspection.load();
 
     const lots = () => [...document.querySelectorAll('#inspectionsTableBody strong')].map(s => s.textContent);
     expect(calls[0]).toEqual(['getInspectionLots']);
-    expect(lots()).toEqual(['LOT-B', 'LOT-A']);
-
-    App.Inspection.setFilter('all');
     expect(lots()).toEqual(['LOT-B', 'LOT-A', 'LOT-D', 'LOT-C']);
+
+    App.Inspection.setFilter('attention');
+    expect(lots()).toEqual(['LOT-B', 'LOT-A']);
+  });
+
+  // On the first day no lot had been started, so the old default ("Needs
+  // attention") showed an empty list and the admin concluded the module
+  // was missing. Lots waiting to be inspected must show without a filter.
+  test('lots nobody has started show without touching the filter, and an empty list says why', async () => {
+    document.getElementById('inspectionsEmptyState').innerHTML = '<p id="inspectionsEmptyText"></p>';
+    stubApi({ lots: [lot(1, 'LOT-A', ''), lot(2, 'LOT-B', '')] });
+    await App.Inspection.load();
+    expect(document.querySelectorAll('#inspectionsTableBody tr')).toHaveLength(2);
+
+    App.Inspection.setFilter('flagged');
+    expect(document.getElementById('inspectionsEmptyState').style.display).toBe('block');
+    expect(document.getElementById('inspectionsEmptyText').textContent).toBe('No lot is waiting on an admin.');
   });
 
   test('an inspector\'s remarks render as text', async () => {

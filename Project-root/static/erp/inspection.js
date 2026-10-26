@@ -24,9 +24,20 @@ const INSPECTION_LOT_STATUS = {
 // Flagged first: those are waiting on an admin.
 const INSPECTION_RANK = { flagged: 0, in_progress: 1, '': 2, cleared: 3 };
 
+// What an empty list means depends on the filter. "All" is the default:
+// "Needs attention" stays empty until an inspector starts a lot, which on
+// the first day read as "there is no inspection module".
+const INSPECTION_EMPTY = {
+  all: 'No lot is Pending or In Progress, and none has been inspected yet.',
+  attention: 'Nothing is being inspected or waiting on an admin. Lots appear here once an inspector starts checking them in the phone app.',
+  flagged: 'No lot is waiting on an admin.',
+  notStarted: 'Every Pending or In Progress lot has an inspection under way.',
+  cleared: 'No lot has been inspected yet.'
+};
+
 App.Inspection = {
   _lots: [],
-  _filter: 'attention',
+  _filter: 'all',
   _search: '',
   _current: null,
   _seq: 0,
@@ -51,7 +62,7 @@ App.Inspection = {
   },
 
   setFilter(value) {
-    this._filter = value || 'attention';
+    this._filter = value || 'all';
     this.render();
   },
 
@@ -108,6 +119,8 @@ App.Inspection = {
     const rows = this._visible();
     if (!rows.length) {
       tbody.innerHTML = '';
+      const text = document.getElementById('inspectionsEmptyText');
+      if (text) text.textContent = INSPECTION_EMPTY[this._filter] || INSPECTION_EMPTY.all;
       if (empty) empty.style.display = 'block';
       return;
     }
