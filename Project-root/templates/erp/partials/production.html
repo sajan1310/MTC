@@ -278,9 +278,11 @@
     </div>
   </div>
 
-  <!-- INSPECTIONS SUB-TAB. Review only: inspectors check and clear lots in
-       the phone app; an admin reads the result here and sends a flagged lot
-       back after changing it. App.Inspection (inspection.js). -->
+  <!-- INSPECTIONS SUB-TAB. Every lot waiting for inspection or inspected.
+       "Inspect" opens the checklist: items are ticked, a review asked for
+       and the lot cleared here exactly as in the phone app; an admin also
+       clears a partly ticked lot, or sends one back. App.Inspection
+       (inspection.js). -->
   <div id="inspectionsSubTab" class="production-sub-tab" style="display:none;">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
       <div class="d-flex flex-wrap gap-2 align-items-center flex-grow-1" style="max-width: 900px;">
@@ -290,9 +292,10 @@
         <select id="inspectionsFilter" class="form-select w-auto" aria-label="Which inspections to show"
           onchange="App.Inspection.setFilter(this.value)">
           <option value="all" selected>All</option>
-          <option value="attention">Needs attention</option>
-          <option value="flagged">Flagged for admin</option>
-          <option value="notStarted">Not started</option>
+          <option value="needs_review">Needs review</option>
+          <option value="partial">Partially checked</option>
+          <option value="complete">All checked</option>
+          <option value="not_started">Not started</option>
           <option value="cleared">Inspected</option>
         </select>
       </div>
@@ -329,8 +332,10 @@
 </div>
 
 <!-- Inspection detail: the checklist as the inspector left it, read-only. -->
+<!-- Full screen below 1400px: a tablet in either orientation, and most
+     laptops. A checklist is worked through, not glanced at. -->
 <div class="modal fade" id="inspectionDetailModal" tabindex="-1" aria-hidden="true" aria-labelledby="inspectionDetailTitle">
-  <div class="modal-dialog modal-xl modal-dialog-scrollable modal-fullscreen-sm-down">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable modal-fullscreen-xxl-down">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title fw-bold" id="inspectionDetailTitle" style="font-family: 'Outfit', sans-serif;">Inspection</h5>

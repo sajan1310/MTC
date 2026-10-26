@@ -3,12 +3,13 @@
  *
  * The server decides every rule (inspection_service.py, tested in
  * tests/erp/test_inspection.py). What this file holds is the screen's side
- * of the contract: opening a lot sends nothing, each tap sends one
- * decision and then shows the row the server returns, the clear button
- * stays locked until every item has passed, a changed sheet at submit
- * opens the reconciliation dialog with the exact differences, only an
- * admin is offered "Acknowledge & Proceed", and a cleared lot thanks the
- * inspector by name for the process.
+ * of the contract: opening a lot sends nothing, each tick sends one
+ * decision and then shows the row the server returns, "Needs admin review"
+ * saves with its remarks, an inspector's clear button stays locked until
+ * every item is ticked while an admin's does not, the dialog before
+ * clearing lists exactly what would be accepted, only an admin is offered
+ * "Acknowledge & Proceed", and a cleared lot thanks the inspector by name
+ * for the process. On a tablet the inspection sheets fill the screen.
  */
 
 'use strict';
@@ -19,6 +20,7 @@ const path = require('path');
 const VIEWS_HTML = fs.readFileSync(
   path.join(__dirname, '..', '..', '..', 'templates', 'erp', 'partials', 'mobile_views.html'), 'utf8'
 );
+const STYLES = fs.readFileSync(path.join(__dirname, '..', 'mobile_styles.css'), 'utf8');
 
 function loadAsGlobal(relPath, exportName) {
   const code = fs
@@ -71,7 +73,7 @@ function checklist(overrides = {}) {
     success: true,
     data: {
       lot: { ...LOT },
-      inspection: { status: 'in_progress', remarks: '' },
+      inspection: { status: 'in_progress', remarks: '', stage: 'partial' },
       items: [
         item('spoke', 'Spoke 12G', 45, { state: 'revised', previous: { qty: 50, narration: '' } }),
         item('tape', 'Rim Tape', 60, { state: 'checked', result: 'pass' }),
@@ -90,6 +92,8 @@ function checklist(overrides = {}) {
 const body = () => document.getElementById('inspection-body');
 const footer = () => document.getElementById('inspection-footer');
 const clearBtn = () => document.getElementById('inspection-clear-btn');
+const rowBox = key => [...body().querySelectorAll('[data-insp-row]')]
+  .find(r => r.dataset.inspRow === key).querySelector('.mb-insp-check');
 
 async function openChecklist(response = checklist()) {
   MApp.Api.call = jest.fn(async () => response);
@@ -106,27 +110,28 @@ describe('the checklist', () => {
     expect(MApp.Api.mutate).not.toHaveBeenCalled();
     expect(body().textContent).toContain('Powder Coating');
     expect(body().textContent).toContain('1/3');
+    expect(document.getElementById('inspection-progress').textContent).toContain('Partially checked');
   });
 
-  test('changed and added rows come back unticked, badged, with what they were', async () => {
+  test('every item is a box to tick; changed and added ones come back unticked, badged, with what they were', async () => {
     await openChecklist();
     const rows = [...body().querySelectorAll('[data-insp-row]')];
     const spoke = rows.find(r => r.dataset.inspRow === 'spoke');
     const cap = rows.find(r => r.dataset.inspRow === 'cap');
-    const tape = rows.find(r => r.dataset.inspRow === 'tape');
 
+    expect(body().querySelector('[data-insp-result]')).toBeNull(); // no Pass / Fail
     expect(spoke.textContent).toContain('Revised');
     expect(spoke.textContent).toContain('was 50');
-    expect(spoke.querySelector('.mb-insp-pass').getAttribute('aria-pressed')).toBe('false');
+    expect(rowBox('spoke').checked).toBe(false);
     expect(cap.textContent).toContain('New');
-    expect(tape.querySelector('.mb-insp-pass').getAttribute('aria-pressed')).toBe('true');
+    expect(rowBox('tape').checked).toBe(true);
   });
 
-  test('the sign-off names the inspector and stays locked until everything passed', async () => {
+  test("an inspector's sign-off names them and stays locked until every item is ticked", async () => {
     await openChecklist();
     expect(footer().textContent.replace(/\s+/g, ' ')).toContain('Inspector: Alex Doe | Role: Quality Lead');
     expect(clearBtn().disabled).toBe(true);
-    expect(footer().textContent).toContain('2 items still to pass.');
+    expect(footer().textContent).toContain('2 items still to tick.');
 
     const done = checklist();
     done.data.items = done.data.items.map(i => ({ ...i, state: 'checked', result: 'pass', previous: null }));
@@ -135,53 +140,82 @@ describe('the checklist', () => {
     expect(clearBtn().disabled).toBe(false);
   });
 
-  test('a flagged lot cannot be cleared, and says why', async () => {
-    const flagged = checklist();
-    flagged.data.inspection = { status: 'flagged', remarks: 'Spokes are 13G', flaggedByName: 'Alex Doe' };
-    flagged.data.summary.complete = true;
-    await openChecklist(flagged);
+  test('a lot that needs review waits for an admin, and says so', async () => {
+    const review = checklist();
+    review.data.inspection = { status: 'flagged', stage: 'needs_review', remarks: 'Spokes are 13G', flaggedByName: 'Alex Doe' };
+    review.data.summary.complete = true;
+    await openChecklist(review);
     expect(clearBtn().disabled).toBe(true);
-    expect(footer().textContent).toContain('Waiting for an admin');
+    expect(footer().textContent).toContain('Waiting for an admin to review this lot.');
+    expect(document.getElementById('inspection-needs-review').checked).toBe(true);
   });
 
-  test('a tap sends one decision and shows the row the server returns', async () => {
+  test('a tick sends one decision and shows the row the server returns', async () => {
     await openChecklist();
     MApp.Api.mutate = jest.fn(async () => ({
       success: true,
       message: 'Lot #LOT-PNT005-0011 is now In Progress.',
       data: {
-        key: 'cap', result: 'pass', lotStatus: 'In Progress',
+        key: 'cap', result: 'pass', lotStatus: 'In Progress', stage: 'partial',
         item: item('cap', 'Valve Cap', 60, { state: 'checked', result: 'pass' }),
         summary: { total: 3, checked: 2, passed: 2, failed: 0, revised: 1, added: 0, removed: 0, complete: false }
       }
     }));
 
-    body().querySelector('[data-insp-key="cap"][data-insp-result="pass"]').click();
+    rowBox('cap').click();
     await flush();
     await flush();
 
-    expect(MApp.Api.mutate).toHaveBeenCalledWith('setInspectionCheck', 7, 'cap', 'pass', '60|');
+    expect(MApp.Api.mutate).toHaveBeenCalledWith('setInspectionCheck', 7, 'cap', 'checked', '60|');
     expect(document.getElementById('inspection-lot-status').textContent).toBe('In Progress');
     expect(body().textContent).toContain('2/3');
-    const cap = [...body().querySelectorAll('[data-insp-row]')].find(r => r.dataset.inspRow === 'cap');
-    expect(cap.querySelector('.mb-insp-pass').getAttribute('aria-pressed')).toBe('true');
+    expect(rowBox('cap').checked).toBe(true);
+    expect(rowBox('cap').disabled).toBe(false);
   });
 
-  test('tapping the chosen result again clears it', async () => {
+  test('ticking a ticked item unticks it', async () => {
     await openChecklist();
     MApp.Api.mutate = jest.fn(async () => ({
       success: true, message: '',
-      data: { key: 'tape', result: null, lotStatus: 'Pending', item: item('tape', 'Rim Tape', 60),
+      data: { key: 'tape', result: null, lotStatus: 'Pending', stage: 'not_started', item: item('tape', 'Rim Tape', 60),
         summary: { total: 3, checked: 0, passed: 0, failed: 0, revised: 1, added: 1, removed: 0, complete: false } }
     }));
-    await MApp.Inspection.setResult('tape', 'pass');
+    await MApp.Inspection.toggle('tape');
     expect(MApp.Api.mutate).toHaveBeenCalledWith('setInspectionCheck', 7, 'tape', '', '60|');
+    expect(rowBox('tape').checked).toBe(false);
   });
 
-  test('flagging needs remarks before it asks the server', async () => {
+  test('asking for a review needs remarks first, and the box does not stay ticked without them', async () => {
     await openChecklist();
-    await MApp.Inspection.saveRemarks(true);
+    const box = document.getElementById('inspection-needs-review');
+    box.click();
+    await flush();
     expect(MApp.Api.mutate).not.toHaveBeenCalled();
+    expect(box.checked).toBe(false);
+  });
+
+  test('ticking Needs admin review saves it with the remarks, and the lot then waits for an admin', async () => {
+    await openChecklist();
+    MApp.Api.mutate = jest.fn(async () => ({
+      success: true, message: 'Saved. Lot #LOT-PNT005-0011 is waiting for an admin\'s review.',
+      data: { status: 'flagged', remarks: 'Spokes are 13G', stage: 'needs_review', flaggedByName: 'Alex Doe',
+        summary: checklist().data.summary }
+    }));
+    document.getElementById('inspection-remarks').value = 'Spokes are 13G';
+    document.getElementById('inspection-needs-review').click();
+    await flush();
+    await flush();
+
+    expect(MApp.Api.mutate).toHaveBeenCalledWith('setInspectionReview', 7, true, 'Spokes are 13G');
+    expect(body().textContent).toContain('Needs admin review by Alex Doe');
+    expect(document.getElementById('inspection-needs-review').checked).toBe(true);
+    expect(footer().textContent).toContain('Waiting for an admin to review this lot.');
+  });
+
+  test('an admin may clear a partly ticked lot: the button is open, and says what is left', async () => {
+    await openChecklist(checklist({ canAcknowledge: true, canReturn: true }));
+    expect(clearBtn().disabled).toBe(false);
+    expect(footer().textContent).toContain('2 items not ticked. You can still clear the lot; you will see them first.');
   });
 });
 
@@ -190,7 +224,7 @@ describe('submitting', () => {
 
   const changed = canAcknowledge => ({
     success: true,
-    message: 'The live Production Sheet differs from what was inspected.',
+    message: 'The live Production Sheet differs from what was checked.',
     data: {
       cleared: false, token: 't1', changedAgain: false, canAcknowledge,
       discrepancies: [{
@@ -200,7 +234,7 @@ describe('submitting', () => {
     }
   });
 
-  test('a changed sheet opens the reconciliation dialog with the exact differences', async () => {
+  test('a changed sheet opens the dialog with the exact differences', async () => {
     await openChecklist();
     MApp.Api.mutate = jest.fn(async () => changed(false));
     await MApp.Inspection.submit();
@@ -208,9 +242,43 @@ describe('submitting', () => {
     const dialog = document.getElementById('inspection-reconcile-body').textContent;
     expect(dialog).toContain('Spoke 12G · 26in: quantity changed from 50 to 45');
     expect(dialog).toContain('Targeted changes have been detected in the live Production Sheet. Do you confirm these changes apply to this inspected lot?');
+    expect(document.getElementById('inspection-reconcile-title').textContent).toBe('Production Sheet changed');
     const actions = document.getElementById('inspection-reconcile-footer').textContent;
     expect(actions).toContain('Re-inspect Modified Items');
     expect(actions).not.toContain('Acknowledge');
+  });
+
+  test('an admin clearing a partly ticked lot first sees exactly what is not ticked', async () => {
+    await openChecklist(checklist({ canAcknowledge: true }));
+    MApp.Api.mutate = jest.fn()
+      .mockResolvedValueOnce({
+        success: true, message: '2 item(s) not ticked.',
+        data: {
+          cleared: false, token: 't2', changedAgain: false, canAcknowledge: true,
+          discrepancies: [
+            { kind: 'unchecked', key: 'spoke', itemName: 'Spoke 12G', size: '26in', color: '', unit: 'Pcs', qty: 45 },
+            { kind: 'unchecked', key: 'cap', itemName: 'Valve Cap', size: '26in', color: '', unit: 'Pcs', qty: 60 }
+          ]
+        }
+      })
+      .mockResolvedValueOnce({
+        success: true, message: '',
+        data: { cleared: true, lotNumber: LOT.lotNumber, processName: 'Powder Coating', inspector: INSPECTOR,
+          acknowledged: [{ kind: 'unchecked' }, { kind: 'unchecked' }] }
+      });
+
+    await MApp.Inspection.submit();
+    const dialog = document.getElementById('inspection-reconcile-body').textContent;
+    expect(document.getElementById('inspection-reconcile-title').textContent).toBe('Items not ticked');
+    expect(dialog).toContain('2 items are not ticked. Clear the lot without them?');
+    expect(dialog).toContain('Spoke 12G · 26in: 45 Pcs');
+    const actions = document.getElementById('inspection-reconcile-footer').textContent;
+    expect(actions).toContain('Back to the checklist');
+    expect(actions).toContain('Acknowledge & Proceed');
+
+    await MApp.Inspection.acknowledge();
+    expect(MApp.Api.mutate).toHaveBeenLastCalledWith('clearInspection', 7, 't2');
+    expect(body().textContent).toContain('2 items cleared by an admin without a tick');
   });
 
   test('an admin may acknowledge, sending back the token of the list they saw', async () => {
@@ -256,25 +324,48 @@ describe('submitting', () => {
 describe('the lot list', () => {
   beforeEach(mount);
 
-  const lot = (rowIdx, lotNumber, status, inspection) => ({
+  const lot = (rowIdx, lotNumber, status, stage, summary = { total: 3, checked: 0 }) => ({
     ...LOT, rowIdx, lotNumber, status, itemCount: 3, lastUpdated: '',
-    inspection: { summary: { total: 3, checked: 0 }, ...inspection }
+    inspection: { stage, summary }
   });
 
-  test('flagged lots lead the work list, and cleared ones wait under Inspected', async () => {
+  test('lots needing review lead the work list; each stage has its own chip', async () => {
     MApp.Api.call = jest.fn(async () => ({
       success: true,
       data: [
-        lot(1, 'LOT-A', 'Pending', { status: '' }),
-        lot(2, 'LOT-B', 'In Progress', { status: 'flagged' }),
-        lot(3, 'LOT-C', 'In Progress', { status: 'cleared' })
+        lot(1, 'LOT-A', 'Pending', 'not_started'),
+        lot(2, 'LOT-B', 'In Progress', 'needs_review', { total: 3, checked: 1 }),
+        lot(3, 'LOT-C', 'In Progress', 'cleared', { total: 3, checked: 3 }),
+        lot(4, 'LOT-D', 'In Progress', 'partial', { total: 3, checked: 2 }),
+        lot(5, 'LOT-E', 'In Progress', 'complete', { total: 3, checked: 3 })
       ]
     }));
     await MApp.Inspection.open();
 
     const titles = () => [...document.querySelectorAll('#inspections-list .mb-card-title')].map(t => t.textContent);
-    expect(titles()).toEqual(['LOT-B', 'LOT-A']);
+    expect(titles()).toEqual(['LOT-B', 'LOT-E', 'LOT-D', 'LOT-A']);
+    const list = document.getElementById('inspections-list').textContent;
+    expect(list).toContain('Needs review 1/3');
+    expect(list).toContain('Partially checked 2/3');
+    expect(list).toContain('All checked');
+
+    MApp.Inspection.filterBy('partial');
+    expect(titles()).toEqual(['LOT-D']);
     MApp.Inspection.filterBy('cleared');
     expect(titles()).toEqual(['LOT-C']);
+    expect(document.querySelectorAll('#inspections-filter-bar [data-insp-filter]')).toHaveLength(6);
+  });
+});
+
+describe('on a tablet', () => {
+  test('the three inspection sheets fill the screen instead of the 480px phone frame', () => {
+    for (const id of ['sheet-inspections', 'sheet-inspection', 'sheet-inspection-reconcile']) {
+      expect(sheet(id)).toMatch(/class="mb-sheet mb-sheet-full"/);
+    }
+    // Inside the 640px block, after the rule that frames every sheet at 480px.
+    const frame = STYLES.indexOf('--mb-sheet-x: -50%;');
+    const full = STYLES.search(/@media \(min-width: 640px\) \{\s*\.mb-sheet\.mb-sheet-full \{[^}]*left: 0;[^}]*width: auto;[^}]*--mb-sheet-x: 0px;/);
+    expect(frame).toBeGreaterThan(-1);
+    expect(full).toBeGreaterThan(frame);
   });
 });

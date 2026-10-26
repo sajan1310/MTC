@@ -1157,8 +1157,10 @@
      SHEET — INSPECTION LOTS (drawer > Production > Inspection)
      Lots waiting for inspection, and lots already inspected. A card opens
      the checklist below. See MApp.Inspection and inspection_service.py.
+     The three inspection sheets are mb-sheet-full: on a tablet they fill
+     the screen instead of the 480px phone frame.
      ═══════════════════════════════════════════════════════════════════ -->
-<div class="mb-sheet" id="sheet-inspections" role="dialog" aria-modal="true" aria-labelledby="inspections-title">
+<div class="mb-sheet mb-sheet-full" id="sheet-inspections" role="dialog" aria-modal="true" aria-labelledby="inspections-title">
   <div class="mb-sheet-header">
     <h2 id="inspections-title">Inspection</h2>
     <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Inspection.close()">
@@ -1172,9 +1174,10 @@
     </div>
     <div class="mb-filter-chip-row" id="inspections-filter-bar">
       <button type="button" class="mb-filter-chip active" data-insp-filter="all" onclick="MApp.Inspection.filterBy('all')">To inspect</button>
-      <button type="button" class="mb-filter-chip" data-insp-filter="Pending" onclick="MApp.Inspection.filterBy('Pending')">Pending</button>
-      <button type="button" class="mb-filter-chip" data-insp-filter="In Progress" onclick="MApp.Inspection.filterBy('In Progress')">In Progress</button>
-      <button type="button" class="mb-filter-chip" data-insp-filter="flagged" onclick="MApp.Inspection.filterBy('flagged')">Flagged</button>
+      <button type="button" class="mb-filter-chip" data-insp-filter="needs_review" onclick="MApp.Inspection.filterBy('needs_review')">Needs review</button>
+      <button type="button" class="mb-filter-chip" data-insp-filter="partial" onclick="MApp.Inspection.filterBy('partial')">Partially checked</button>
+      <button type="button" class="mb-filter-chip" data-insp-filter="complete" onclick="MApp.Inspection.filterBy('complete')">All checked</button>
+      <button type="button" class="mb-filter-chip" data-insp-filter="not_started" onclick="MApp.Inspection.filterBy('not_started')">Not started</button>
       <button type="button" class="mb-filter-chip" data-insp-filter="cleared" onclick="MApp.Inspection.filterBy('cleared')">Inspected</button>
     </div>
     <div class="mb-list" id="inspections-list"></div>
@@ -1186,7 +1189,7 @@
      Body rendered by MApp.Inspection.renderChecklist(); the footer holds
      the sign-off line and the one primary action.
      ═══════════════════════════════════════════════════════════════════ -->
-<div class="mb-sheet" id="sheet-inspection" role="dialog" aria-modal="true" aria-labelledby="inspection-title">
+<div class="mb-sheet mb-sheet-full" id="sheet-inspection" role="dialog" aria-modal="true" aria-labelledby="inspection-title">
   <div class="mb-sheet-header">
     <h2 id="inspection-title">Inspect lot</h2>
     <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Inspection.closeChecklist()">
@@ -1198,9 +1201,11 @@
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
-     SHEET — PRODUCTION SHEET CHANGED (reconciliation at submit)
+     SHEET — BEFORE CLEARING (reconciliation at submit): the sheet's changes
+     since the lot was ticked, and for an admin the items nobody ticked.
+     The title follows what it lists.
      ═══════════════════════════════════════════════════════════════════ -->
-<div class="mb-sheet" id="sheet-inspection-reconcile" role="dialog" aria-modal="true" aria-labelledby="inspection-reconcile-title">
+<div class="mb-sheet mb-sheet-full" id="sheet-inspection-reconcile" role="dialog" aria-modal="true" aria-labelledby="inspection-reconcile-title">
   <div class="mb-sheet-header">
     <h2 id="inspection-reconcile-title">Production Sheet changed</h2>
     <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Inspection.closeReconcile()">

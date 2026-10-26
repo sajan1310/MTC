@@ -473,7 +473,13 @@
 // which stays empty until an inspector starts a lot -- on the first day an
 // admin read that as the module missing. The filter's default lives in
 // inspection.js, which is precached.
-const CACHE_NAME = 'erp-shell-v94';
+// v95: a lot is inspected on the desktop too, with the phone's checklist --
+// a box per item, "Needs admin review" with remarks, Clear with the
+// Production Sheet reconciliation, an admin clearing a partly ticked lot --
+// and the list filters by stage (Partially checked, All checked, Needs
+// review...). All of it is in inspection.js, which is precached; the
+// dialog is full screen below 1400px, a tablet in either orientation.
+const CACHE_NAME = 'erp-shell-v95';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
