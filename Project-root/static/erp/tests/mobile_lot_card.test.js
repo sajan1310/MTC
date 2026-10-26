@@ -69,6 +69,25 @@ describe('the card is balanced', () => {
     expect(meta.textContent).toContain('12 Sep');
   });
 
+  test('status is an inline select dropdown with all status options', () => {
+    const select = document.querySelector('.mapp-lot-meta select[data-lot-action="status"]');
+    expect(select).not.toBeNull();
+    expect(select.classList.contains('mb-chip')).toBe(true);
+    expect(select.classList.contains('mb-chip-select')).toBe(true);
+    const options = [...select.options].map(o => o.value);
+    expect(options).toEqual(['Pending', 'In Progress', 'Completed', 'Cancelled']);
+    expect(select.value).toBe('Pending');
+  });
+
+  test('changing status select calls changeStatus directly without opening picker', async () => {
+    MApp.Production.changeStatus = jest.fn();
+    const select = document.querySelector('.mapp-lot-meta select[data-lot-action="status"]');
+    select.value = 'In Progress';
+    select.dispatchEvent(new Event('change'));
+
+    expect(MApp.Production.changeStatus).toHaveBeenCalledWith(LOTS[0], 'In Progress');
+  });
+
   test('the date is no longer stacked under the process name', () => {
     // That stacking is what left everything hugging the left edge.
     const left = card().querySelector('.mb-card-row > div');

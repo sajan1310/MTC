@@ -969,6 +969,35 @@ textarea:focus-visible,
 .mb-chip-cancelled { background: var(--mb-enamel-red); }
 .mb-chip-lowstock   { background: var(--mb-enamel-red); }
 
+select.mb-chip,
+.mb-chip-select {
+  border: none;
+  cursor: pointer;
+  outline: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  padding: 5px 24px 5px 12px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 10px;
+  vertical-align: middle;
+}
+select.mb-chip:focus-visible,
+.mb-chip-select:focus-visible {
+  outline: 2px solid var(--mb-safety, #ff7a1a);
+  outline-offset: 1px;
+}
+select.mb-chip option,
+.mb-chip-select option {
+  background: var(--mb-surface, #ffffff);
+  color: var(--mb-ink, #1b2126);
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 /* ── Tappable filter chips (status-bar style pickers, e.g. PO Ledger) ── */
 /* ── Home charts ─────────────────────────────────────────────────────
    Inline SVG and plain divs, no charting library: this app self-hosts

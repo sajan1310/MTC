@@ -345,39 +345,47 @@ App.Production = {
     }
   },
 
-  // The COMPLETE inline style for a Production Log row's status pill --
-  // a compact coloured button (not a native <select>, which on tablets
-  // triggers the OS picker and feels like navigating away). The Bootstrap
-  // dropdown menu stays inline in the DOM.
-  STATUS_SELECT_BASE_STYLE: 'font-size:0.75rem;padding:0.2rem 0.5rem;border:none;border-radius:0.25rem;cursor:pointer;white-space:nowrap;',
+  // The COMPLETE inline style for a Production Log row's status <select> --
+  // its presentation (compact font, native arrow suppressed so the coloured
+  // pill reads as a badge) plus the status colour.
+  //
+  // rowHtml and updateStatus must both use this. updateStatus used to
+  // rewrite the attribute with statusStyleFor's colours ALONE, silently
+  // dropping the presentation half: changing a lot's status inline made
+  // that one row's control jump back to a full-size native dropdown, and it
+  // stayed that way until the next full table render.
+  STATUS_SELECT_BASE_STYLE: 'font-size:0.75rem;appearance:none;-webkit-appearance:none;-moz-appearance:none;background-image:none;padding-right:0.5rem;',
 
   statusSelectStyle(status) {
     return this.STATUS_SELECT_BASE_STYLE + this.statusStyleFor(status);
   },
 
   // Changes a lot's status directly from its table row, without opening
-  // the Edit Lot modal. Called by the custom dropdown menu items.
-  async updateStatus(triggerBtn, newStatus) {
-    const idx = Number(triggerBtn.dataset.rowIdx);
+  // the Edit Lot modal.
+  async updateStatus(selectEl) {
+    const idx = Number(selectEl.dataset.rowIdx);
     const p = App.State.globalProduction[idx];
     if (!p) return;
 
+    const newStatus = selectEl.value;
     const previousStatus = p.status;
     if (newStatus === previousStatus) return;
 
-    triggerBtn.disabled = true;
+    selectEl.disabled = true;
     try {
       const res = await Api.mutate('updateProductionStatus', p.rowIdx, p.qty, newStatus);
       App.Utils.showToast(res.message, !res.success);
       if (res.success) {
         p.status = newStatus;
-        triggerBtn.setAttribute('style', this.statusSelectStyle(newStatus));
-        triggerBtn.textContent = newStatus;
+        selectEl.setAttribute('style', this.statusSelectStyle(newStatus));
+      } else {
+        selectEl.value = previousStatus;
       }
     } catch (err) {
+      selectEl.value = previousStatus;
       App.Utils.showToast(err.message || 'Failed to update status', true);
     } finally {
-      triggerBtn.disabled = false;
+      selectEl.disabled = false;
     }
   },
 
@@ -1262,8 +1270,8 @@ App.Production = {
     const process = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
     const processLabel = process ? process.processName : (p.processId || 'Uncategorized');
 
-    const statusMenuItems = this.STATUS_OPTIONS
-      .map(s => `<li><button type="button" class="dropdown-item fw-bold${s === p.status ? ' active' : ''}" onclick="App.Production.updateStatus(this.closest('.dropdown').querySelector('[data-row-idx]'), '${s}')">${s}</button></li>`)
+    const statusOptions = this.STATUS_OPTIONS
+      .map(s => `<option value="${s}" ${s === p.status ? 'selected' : ''}>${s}</option>`)
       .join('');
 
     const colorBadges = (p.colorBreakdown && p.colorBreakdown.length > 0)
@@ -1280,10 +1288,7 @@ App.Production = {
     <td>${escapeHtml(App.Utils.formatNameCase(p.assignedBy) || '-')}</td>
     <td>${escapeHtml(App.Utils.formatNameCase(p.assignedTo) || '-')}${p.contractorPayable ? `<br><span class="badge bg-light text-dark border">${formatCurrency(p.contractorPayable)}</span>` : ''}${p.extraChargeType ? `<br><span class="badge" style="background-color:#ffc107;color:#000;" title="Extra charge included in Total Payable above">${escapeHtml(p.extraChargeType)}</span>` : ''}</td>
     <td class="text-center">
-      <div class="dropdown">
-        <button type="button" class="btn btn-sm fw-bold shadow-sm dropdown-toggle" style="${this.statusSelectStyle(p.status)}" data-row-idx="${idx}" data-bs-toggle="dropdown" aria-expanded="false" title="Change status directly without opening Edit Lot">${escapeHtml(p.status || 'Pending')}</button>
-        <ul class="dropdown-menu dropdown-menu-end shadow">${statusMenuItems}</ul>
-      </div>
+      <select class="form-select form-select-sm fw-bold border-0 shadow-sm" style="${this.statusSelectStyle(p.status)}" data-row-idx="${idx}" onchange="App.Production.updateStatus(this)" title="Change status directly without opening Edit Lot">${statusOptions}</select>
     </td>
     <td>
       <button class="btn btn-sm btn-outline-dark btn-action w-100 mb-1" onclick="App.Production.viewProductionSheet('${idx}')">Production Sheet</button>

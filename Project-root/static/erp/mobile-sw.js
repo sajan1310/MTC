@@ -169,8 +169,9 @@
 // readable width. Inspection is a table from 46rem: the lot list one row
 // per lot, the checklist one row per item with size, colour, specification
 // and quantity in columns, and "Needs admin review" a panel of its own
-// beside it. mobile.js and mobile_styles.css carry all of it.
-const CACHE_NAME = 'erp-mobile-shell-v84';
+// v85: production lot status change uses an inline dropdown select on
+// tablet and mobile instead of opening the full-screen sheet picker.
+const CACHE_NAME = 'erp-mobile-shell-v85';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

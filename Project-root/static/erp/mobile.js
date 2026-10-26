@@ -5659,7 +5659,9 @@ MApp.Production = {
                  since when. -->
             <div class="mapp-lot-footer mb-mt-2">
               <div class="mapp-lot-meta">
-                <button type="button" class="mb-chip ${MApp.Util.statusChipClass(l.status)}" style="border:none;cursor:pointer;" data-lot-action="status" data-lot-index="${i}">${MApp.Util.escapeHtml(l.status || 'Pending')} ▾</button>
+                <select class="mb-chip mb-chip-select ${MApp.Util.statusChipClass(l.status)}" data-lot-action="status" data-lot-index="${i}" aria-label="Status for lot ${MApp.Util.escapeHtml(l.lotNumber)}">
+                  ${this.STATUS_OPTIONS.map(s => `<option value="${s}" ${(s === (l.status || 'Pending')) ? 'selected' : ''}>${s}</option>`).join('')}
+                </select>
                 <span class="mapp-lot-date">${MApp.Util.escapeHtml(MApp.Util.formatDateDisplay(l.dateRaw) || '—')}</span>
               </div>
               <div class="mapp-lot-actions">
@@ -5677,7 +5679,28 @@ MApp.Production = {
           </div>`;
       }).join('') + MApp.Paging.moreHtml(page);
 
-      listEl.querySelectorAll('[data-lot-action]').forEach(btn => {
+      listEl.querySelectorAll('select[data-lot-action="status"]').forEach(sel => {
+        sel.addEventListener('change', async () => {
+          const lot = shown[Number(sel.dataset.lotIndex)];
+          if (!lot) return;
+          const prev = lot.status || 'Pending';
+          const next = sel.value;
+          if (prev === next) return;
+          sel.disabled = true;
+          try {
+            const ok = await this.changeStatus(lot, next);
+            if (!ok) {
+              sel.value = prev;
+            } else {
+              sel.className = `mb-chip mb-chip-select ${MApp.Util.statusChipClass(next)}`;
+            }
+          } finally {
+            sel.disabled = false;
+          }
+        });
+      });
+
+      listEl.querySelectorAll('button[data-lot-action]').forEach(btn => {
         btn.addEventListener('click', () => {
           // Index into the array the rows were rendered FROM. It happened
           // to be safe to index `lots` while mapping `shown` only because
@@ -5787,28 +5810,35 @@ MApp.Production = {
   //   server refuses the update if the record has been modified or
   //   shifted since this list was drawn, which on a phone showing a list
   //   loaded some time ago is a real possibility rather than a formality.
-  async changeStatus(lot) {
-    const picked = await MApp.Picker.open({
-      title: `Lot ${lot.lotNumber}`,
-      items: this.STATUS_OPTIONS.map(s => ({ value: s, label: s })),
-      selectedValue: lot.status || 'Pending',
-      searchable: false
-    });
-    if (!picked || picked.value === lot.status) return;
+  async changeStatus(lot, targetStatus) {
+    let newStatus = targetStatus;
+    if (!newStatus) {
+      const picked = await MApp.Picker.open({
+        title: `Lot ${lot.lotNumber}`,
+        items: this.STATUS_OPTIONS.map(s => ({ value: s, label: s })),
+        selectedValue: lot.status || 'Pending',
+        searchable: false
+      });
+      if (!picked || picked.value === lot.status) return false;
+      newStatus = picked.value;
+    }
+    if (!newStatus || newStatus === lot.status) return false;
 
     try {
       const res = await Api.mutateWithId(
-        'updateProductionStatus', Api.newMutationId(), lot.rowIdx, lot.qty, picked.value
+        'updateProductionStatus', Api.newMutationId(), lot.rowIdx, lot.qty, newStatus
       );
       if (!res || !res.success) {
         MApp.Toast.error((res && res.message) || 'Could not update the status.');
-        return;
+        return false;
       }
       // The server's own message, warning and all.
-      MApp.Toast.success(res.message || `Status set to ${picked.value}.`);
+      MApp.Toast.success(res.message || `Status set to ${newStatus}.`);
       this.load();
+      return true;
     } catch (err) {
       MApp.Toast.error(err.message || 'Could not reach the server. Please try again.');
+      return false;
     }
   },
 
