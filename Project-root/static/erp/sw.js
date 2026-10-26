@@ -469,7 +469,11 @@
 // button is in the server-rendered page, but what it calls lives in
 // dashboard.js, which is precached -- without the bump an installed client
 // shows the button and has nothing behind it.
-const CACHE_NAME = 'erp-shell-v93';
+// v94: Production > Inspections opens on "All" instead of "Needs attention",
+// which stays empty until an inspector starts a lot -- on the first day an
+// admin read that as the module missing. The filter's default lives in
+// inspection.js, which is precached.
+const CACHE_NAME = 'erp-shell-v94';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

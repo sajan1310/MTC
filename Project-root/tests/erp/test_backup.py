@@ -318,5 +318,70 @@ def test_backup_tables_list_covers_every_erp_table(app):
     )
 
 
+def test_no_backup_tab_lands_in_one_of_the_apps_sheets():
+    """Regression test for 2026-10-25. On the production server the backup
+    and the GAS mirror share one spreadsheet, and _ensure_sheet_tab finds tabs
+    ignoring case -- so erp.vendors, erp.contractors, erp.clients, erp.stock
+    and erp.production were written into the Apps Script app's own Vendors,
+    Contractors, Clients, Stock and Production sheets, and every run replaced
+    their heading rows with database column names.
+    """
+    import yaml
+
+    backup_mod = backup_service._migration_module()
+    mapping_path = os.path.join(
+        os.path.dirname(backup_mod.__file__), "gas_sheet_mapping.yaml"
+    )
+    with open(mapping_path, encoding="utf-8") as f:
+        app_sheets = {s["sheet_name"].lower() for s in yaml.safe_load(f)["sheets"]}
+
+    tabs = [backup_mod.tab_name_for(t).lower() for t in backup_mod.TABLES]
+    clashes = sorted(set(tabs) & app_sheets)
+    assert not clashes, f"backup tab(s) named like the app's sheets: {clashes}"
+    assert len(set(tabs)) == len(tabs), "two tables would share one tab"
+
+
+def test_only_a_clashing_table_gets_the_prefix():
+    backup_mod = backup_service._migration_module()
+    assert backup_mod.tab_name_for("erp.vendors") == "db_vendors"
+    assert backup_mod.tab_name_for("erp.production") == "db_production"
+    # The other tables keep the tabs they have always had in the spreadsheet.
+    assert backup_mod.tab_name_for("erp.items") == "items"
+    assert backup_mod.tab_name_for("erp.lot_inspections") == "lot_inspections"
+
+
+def test_restored_headings_fit_the_mirrors_columns():
+    """restore_gas_sheet_headings.py puts back the five heading rows the old
+    backup overwrote. Each must be exactly as wide as the mirror writes that
+    sheet, or the headings sit over the wrong columns."""
+    import importlib.util
+
+    import yaml
+
+    folder = os.path.dirname(backup_service._migration_module().__file__)
+    spec = importlib.util.spec_from_file_location(
+        "restore_gas_sheet_headings",
+        os.path.join(folder, "restore_gas_sheet_headings.py"),
+    )
+    restore = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(restore)
+    with open(os.path.join(folder, "gas_sheet_mapping.yaml"), encoding="utf-8") as f:
+        widths = {
+            s["sheet_name"]: max(c.get("col", 0) for c in s["columns"])
+            for s in yaml.safe_load(f)["sheets"]
+            if s.get("columns")
+        }
+
+    assert set(restore.HEADINGS) == {
+        "Vendors",
+        "Contractors",
+        "Clients",
+        "Stock",
+        "Production",
+    }
+    for sheet, heading in restore.HEADINGS.items():
+        assert len(heading) == widths[sheet], sheet
+
+
 if __name__ == "__main__":
     unittest.main()

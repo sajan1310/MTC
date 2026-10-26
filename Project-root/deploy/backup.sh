@@ -64,11 +64,11 @@ BACKUP_DIR="$(sed -n 's/^BACKUP_DIR=//p' "$ENV_FILE" | head -1)"
 # directory — the same one mtc.service sets.
 cd "$PROJECT_DIR"
 
-sudo -u "$APP_USER" env \
-    DATABASE_URL="$DATABASE_URL" \
-    BACKUP_DIR="$BACKUP_DIR" \
-    MTC_BACKUP_QUIET="$QUIET" \
-    "$VENV_DIR/bin/python" - <<'PYSNAP'
+# runuser, not sudo, with the values in the environment, not on the command
+# line: sudo writes both to the journal (readable by group adm), and
+# DATABASE_URL carries the database password. Same reasoning as deploy.sh.
+DATABASE_URL="$DATABASE_URL" BACKUP_DIR="$BACKUP_DIR" MTC_BACKUP_QUIET="$QUIET" \
+    runuser -u "$APP_USER" -- "$VENV_DIR/bin/python" - <<'PYSNAP'
 import os
 import sys
 import time
