@@ -170,7 +170,14 @@ DATABASE_URL="$(sed -n 's/^DATABASE_URL=//p' "$ENV_FILE" | head -1)"
 # (admin@mtc.local and demo@example.com, both role 'admin') -- which meant
 # deleting those accounts did not keep them deleted. See
 # migrations/legacy/README.md.
-sudo -u "$APP_USER" env DATABASE_URL="$DATABASE_URL" \
+#
+# runuser, not sudo, with the URL in the environment, not on the command
+# line. sudo writes to the journal (readable by group adm) every command line
+# it runs and every variable it is told to keep. This used to be
+# `sudo -u mtc env DATABASE_URL=postgresql://mtc:<password>@...`, so each
+# deploy logged the database password, and `sudo --preserve-env=` logs it
+# too (as ENV=...). runuser logs neither; it needs root, which this script has.
+DATABASE_URL="$DATABASE_URL" runuser -u "$APP_USER" -- \
     "$VENV_DIR/bin/python" "$PROJECT_DIR/migrations/erp/runner.py" \
     || fail "Migrations failed -- not restarting the service."
 
