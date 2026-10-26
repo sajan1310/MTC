@@ -164,7 +164,13 @@
 // (Partially checked, All checked, Needs review...), and an admin clearing
 // a partly ticked lot. On a tablet its screens fill the screen instead of
 // the 480px phone frame. mobile.js and mobile_styles.css carry all of it.
-const CACHE_NAME = 'erp-mobile-shell-v83';
+// v84: on a tablet the whole app fills the screen instead of a 480px phone
+// frame, card lists take columns, and sheets fill it with forms at a
+// readable width. Inspection is a table from 46rem: the lot list one row
+// per lot, the checklist one row per item with size, colour, specification
+// and quantity in columns, and "Needs admin review" a panel of its own
+// beside it. mobile.js and mobile_styles.css carry all of it.
+const CACHE_NAME = 'erp-mobile-shell-v84';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

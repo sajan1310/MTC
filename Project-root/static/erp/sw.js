@@ -479,7 +479,10 @@
 // and the list filters by stage (Partially checked, All checked, Needs
 // review...). All of it is in inspection.js, which is precached; the
 // dialog is full screen below 1400px, a tablet in either orientation.
-const CACHE_NAME = 'erp-shell-v95';
+// v96: the inspection dialog lays out in three parts -- the lot's details,
+// the checklist, and "Needs admin review" in a panel of its own -- side by
+// side from 1200px. inspection.js and styles.css are both precached.
+const CACHE_NAME = 'erp-shell-v96';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

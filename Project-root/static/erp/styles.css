@@ -5103,3 +5103,40 @@
     margin: 0 !important;
   }
 }
+
+/* Production > Inspections dialog (inspection.js renderDetail): the lot's
+   details, the checklist, and the admin review -- a panel of its own,
+   apart from the material list (owner, 2026-10-26). Stacked below 1200px;
+   from 1200px the checklist takes the main column and the details and the
+   review sit beside it, the review staying in view while it scrolls. */
+.insp-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "facts" "list" "review";
+  gap: 1rem;
+}
+
+.insp-facts {
+  display: grid;
+  grid-area: facts;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: 0.5rem 1rem;
+}
+
+.insp-list { grid-area: list; min-width: 0; }
+.insp-review { grid-area: review; }
+.insp-review-open.border { border-top: 4px solid var(--bs-warning) !important; }
+
+@media (min-width: 1200px) {
+  .insp-layout {
+    grid-template:
+      "list facts" auto
+      "list review" 1fr / minmax(0, 1fr) 22rem;
+    align-items: start;
+  }
+
+  .insp-review {
+    position: sticky;
+    top: 0;
+  }
+}
