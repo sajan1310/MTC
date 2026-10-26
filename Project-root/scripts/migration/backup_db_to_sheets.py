@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import functools
 import os
 import sys
 
@@ -120,6 +121,38 @@ TABLES = [
     "erp.app_settings",
 ]
 
+# A tab whose name matches one of the legacy Apps Script app's sheets gets
+# this prefix. _ensure_sheet_tab finds tabs ignoring case, and on the
+# production server this backup and the GAS mirror share one spreadsheet
+# (BACKUP_SPREADSHEET_ID and GAS_MIRROR_SPREADSHEET_ID name the same file).
+# Unprefixed, erp.vendors was written INTO the app's "Vendors" sheet -- and
+# erp.contractors, erp.clients, erp.stock and erp.production into theirs --
+# wiping each one whole; the mirror then rewrote its rows from row 2, so
+# every run left the app's heading row replaced by database column names.
+CLASH_PREFIX = "db_"
+
+
+@functools.lru_cache(maxsize=1)
+def _gas_sheet_names() -> frozenset[str]:
+    """The Apps Script app's sheet names, lower-cased, from the mirror's own
+    mapping -- so a sheet added there is avoided here without a second list."""
+    import yaml
+
+    with open(
+        os.path.join(_script_dir, "gas_sheet_mapping.yaml"), encoding="utf-8"
+    ) as f:
+        mapping = yaml.safe_load(f)
+    return frozenset(entry["sheet_name"].lower() for entry in mapping["sheets"])
+
+
+def tab_name_for(table: str) -> str:
+    """erp.items -> "items"; erp.vendors -> "db_vendors", because "vendors"
+    would land in the app's "Vendors" sheet (see CLASH_PREFIX)."""
+    name = table.split(".", 1)[1]
+    if name.lower() in _gas_sheet_names():
+        name = CLASH_PREFIX + name
+    return name[:99]  # Sheets tab-name length cap
+
 
 def _get_pk_columns(cur, table: str) -> list[str]:
     """Return the primary-key column(s) for *table* (schema-qualified)."""
@@ -193,7 +226,7 @@ def run_backup(
             first = True
             for table in TABLES:
                 columns, rows = fetch_table_rows(cur, table)
-                tab_name = table.split(".", 1)[1][:99]  # Sheets tab-name length cap
+                tab_name = tab_name_for(table)
                 actual_tab, is_fresh = _ensure_sheet_tab(
                     sheets, spreadsheet_id, tab_name, first
                 )
