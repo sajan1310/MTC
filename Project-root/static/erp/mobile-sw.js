@@ -177,7 +177,11 @@
 // unrecognised status as stored, a list's empty message spans the tablet
 // grid, and the checklist's page order matches the screen. mobile.js and
 // mobile_styles.css carry all of it.
-const CACHE_NAME = 'erp-mobile-shell-v86';
+// v87: item photos. The item form gets a Take photo button that opens the
+// camera (Chrome on Android 14+ offered only the gallery) beside Gallery
+// and Remove photo; the Items list shows each item's photo; a tap on a
+// photo opens it full screen. mobile.js and mobile_styles.css carry it.
+const CACHE_NAME = 'erp-mobile-shell-v87';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

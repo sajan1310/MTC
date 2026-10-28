@@ -753,6 +753,57 @@ textarea:focus-visible,
   line-height: 1;
 }
 
+/* ── Item photos (MApp.Items) ────────────────────────────────────────
+   The photo beside an item's name in the Items list, and in its form; a
+   tap on either opens it full screen (MApp.PhotoViewer). A thumb is a
+   whole tap target, the size the app holds every target to. */
+.mb-item-ident {
+  display: flex;
+  align-items: center;
+  gap: var(--mb-sp-3);
+  min-width: 0;
+}
+
+.mb-item-thumb {
+  flex: 0 0 auto;
+  width: var(--mb-tap-min);
+  height: var(--mb-tap-min);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--mb-steel-faint);
+  border-radius: var(--mb-radius-sm);
+  background: var(--mb-steel-faint);
+  cursor: zoom-in;
+}
+
+.mb-item-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.mb-item-photo-preview {
+  width: 96px;
+  height: 96px;
+}
+
+.mb-item-photo-current {
+  display: flex;
+  align-items: center;
+  gap: var(--mb-sp-3);
+  margin-bottom: var(--mb-sp-3);
+}
+
+.mb-item-photo-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--mb-sp-2);
+  max-width: 28rem;
+}
+
+.mb-item-photo-actions .mb-btn { padding-inline: var(--mb-sp-3); }
+
 /* ── List density (MApp.Density) ──────────────────────────────────────
    One card per row at a comfortable size is the right default and, on a
    1,600-row stock list, a lot of scrolling. Two alternatives, both
@@ -2052,7 +2103,19 @@ body.mb-selecting {
 /* ── Form controls ───────────────────────────────────────────────────── */
 .mb-field { margin-bottom: var(--mb-sp-5); }
 
-.mb-field label {
+/* A field of several controls (the item form's Photo) is a fieldset, its
+   legend dressed as every other field's label. */
+fieldset.mb-field {
+  min-width: 0;
+  margin-inline: 0;
+  padding: 0;
+  border: 0;
+}
+
+.mb-field legend { padding: 0; }
+
+.mb-field label,
+.mb-field legend {
   display: block;
   font-size: 0.8125rem;
   font-weight: 700;
@@ -2253,6 +2316,36 @@ body.mb-selecting {
    searchable picker instead of Select2" instruction. */
 .mb-picker-screen { z-index: 110; }
 .mb-picker-screen .mb-sheet-body { padding: 0; }
+
+/* Photo viewer (MApp.PhotoViewer) — over every sheet, the form it opens
+   from included. The photo fills the body however it is shaped, dark
+   around it like the header, and any tap on it closes. The id outranks
+   the tablet rule that centres a sheet body at 52rem. */
+.mb-photo-viewer { z-index: 120; }
+
+#sheet-photo-viewer > .mb-sheet-body {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  background: var(--mb-chrome);
+  cursor: zoom-out;
+}
+
+#photo-viewer-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding-bottom: env(safe-area-inset-bottom);
+  object-fit: contain;
+}
+
+#photo-viewer-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .mb-picker-option {
   width: 100%;

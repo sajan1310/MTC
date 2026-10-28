@@ -341,6 +341,33 @@ def test_no_backup_tab_lands_in_one_of_the_apps_sheets():
     assert len(set(tabs)) == len(tabs), "two tables would share one tab"
 
 
+def test_a_value_too_long_for_a_sheets_cell_is_noted_not_sent():
+    """Sheets refuses a cell over 50,000 characters, and the 400 ended the
+    whole backup at that table. An item photo from a phone is a data: URL --
+    24,000-73,000 characters measured on 800px photographs -- so the first
+    detailed one would have stopped every table after erp.items from reaching
+    the spreadsheet."""
+    backup_mod = backup_service._migration_module()
+    limit = backup_mod.SHEETS_CELL_LIMIT
+    photo = "data:image/jpeg;base64," + "A" * 73_000
+
+    cur = MagicMock()
+    cur.fetchall.side_effect = [
+        [("id",)],  # _get_pk_columns
+        [(1, "Hub Axle", photo), (2, "Spoke", "x" * limit)],
+    ]
+    cur.description = [("id",), ("item_name",), ("image",)]
+
+    columns, rows = backup_mod.fetch_table_rows(cur, "erp.items")
+
+    assert columns == ["id", "item_name", "image"]
+    assert rows[0][:2] == [1, "Hub Axle"]
+    assert len(rows[0][2]) <= limit
+    assert f"{len(photo):,} characters" in rows[0][2]
+    # Exactly at the limit still fits, and goes as it is.
+    assert rows[1] == [2, "Spoke", "x" * limit]
+
+
 def test_only_a_clashing_table_gets_the_prefix():
     backup_mod = backup_service._migration_module()
     assert backup_mod.tab_name_for("erp.vendors") == "db_vendors"
