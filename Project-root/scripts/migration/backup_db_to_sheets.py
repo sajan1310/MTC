@@ -186,10 +186,27 @@ def fetch_table_rows(cur, table: str) -> tuple[list[str], list[list]]:
     return columns, rows
 
 
-# Alias, not a re-implementation: the actual coercion logic lives in
-# sheets_client.to_cell_value so every script in this directory that writes
-# Postgres data into Sheets shares one implementation instead of drifting.
-_cell = sheets_client.to_cell_value
+# Google Sheets refuses any cell over 50,000 characters, with a 400 that
+# with_retry passes straight up. One such value therefore ended the whole run
+# at its table: that tab already cleared, and every table after it never
+# reached the spreadsheet. An item photo (erp.items.image, a base64 data: URL)
+# is the value expected to hit it: photographs through the phone's 800px
+# resize measured 24,000-73,000 characters, and the logo is ~12,000. The
+# dated pg_dump snapshot keeps the value whole, so here it becomes a note
+# saying what was left out and where it is.
+SHEETS_CELL_LIMIT = 50_000
+
+
+def _cell(value):
+    # The coercion itself lives in sheets_client.to_cell_value, shared by
+    # every script in this directory that writes Postgres data into Sheets.
+    value = sheets_client.to_cell_value(value)
+    if isinstance(value, str) and len(value) > SHEETS_CELL_LIMIT:
+        return (
+            f"[{len(value):,} characters, over the Sheets cell limit: "
+            "kept in the database snapshot]"
+        )
+    return value
 
 
 def run_backup(

@@ -10791,6 +10791,8 @@ MApp.Items = {
   editingItem: null,
   vendorRows: [],
   photoBase64: null,
+  // The shrink of the photo just picked (onPhotoChange), while it runs.
+  _photoTask: null,
 
   async openLookupSheet() {
     const stale = MApp.Util.openGuard(this);
@@ -10867,9 +10869,15 @@ MApp.Items = {
     listEl.innerHTML = page.rows.map((it, i) => `
       <div class="mb-card">
         <div class="mb-card-row">
-          <div>
-            <div class="mb-card-title">${MApp.Util.escapeHtml(it.name)}</div>
-            <div class="mb-card-sub">${MApp.Util.escapeHtml(it.size || 'No size')}${it.narration ? ' · ' + MApp.Util.escapeHtml(it.narration) : ''}</div>
+          <div class="mb-item-ident">
+            ${it.image ? `
+            <button type="button" class="mb-item-thumb" data-item-action="photo" data-edit-item="${i}" aria-label="View photo of ${MApp.Util.escapeHtml(it.name)}">
+              <img alt="" decoding="async" data-photo-row="${i}">
+            </button>` : ''}
+            <div>
+              <div class="mb-card-title">${MApp.Util.escapeHtml(it.name)}</div>
+              <div class="mb-card-sub">${MApp.Util.escapeHtml(it.size || 'No size')}${it.narration ? ' · ' + MApp.Util.escapeHtml(it.narration) : ''}</div>
+            </div>
           </div>
           ${it.currentStock !== null && it.currentStock !== undefined ? `
           <div style="text-align:right;">
@@ -10885,6 +10893,14 @@ MApp.Items = {
       </div>
     `).join('') + MApp.Paging.moreHtml(page);
 
+    // A photo is a data: URL of tens of thousands of characters. Assigned
+    // here rather than written into the markup above, which would escape and
+    // re-parse every photo on the page at each keystroke of a search.
+    listEl.querySelectorAll('img[data-photo-row]').forEach(img => {
+      const item = page.rows[Number(img.dataset.photoRow)];
+      if (item && item.image) img.src = item.image;
+    });
+
     listEl.querySelectorAll('[data-edit-item]').forEach(btn => {
       btn.addEventListener('click', () => {
         // page.rows, not this.filtered -- the indices were emitted while
@@ -10892,6 +10908,7 @@ MApp.Items = {
         const item = page.rows[Number(btn.dataset.editItem)];
         if (!item) return;
         if (btn.dataset.itemAction === 'processes') MApp.ItemProcesses.open(item);
+        else if (btn.dataset.itemAction === 'photo') MApp.PhotoViewer.open(item.image, this._photoTitle(item));
         else this.openForm(item);
       });
     });
@@ -10910,6 +10927,7 @@ MApp.Items = {
       ...(Array.isArray(item.unpricedVendors) ? item.unpricedVendors : []).map(vendor => ({ vendor, rate: '' }))
     ] : [];
     this.photoBase64 = item ? (item.image || null) : null;
+    this._photoTask = null;
 
     const titleEl = document.getElementById('item-form-title');
     if (titleEl) titleEl.textContent = item ? 'Edit Item' : 'Add Item';
@@ -10932,14 +10950,17 @@ MApp.Items = {
     const body = document.getElementById('item-form-body');
     if (!body) return;
     const it = this.editingItem || {};
+    // Two photo inputs, because Chrome on Android 14 and later answers a
+    // plain image input with the gallery picker alone, with no way to the
+    // camera. capture= goes straight to the camera; the other keeps the
+    // gallery.
     body.innerHTML = `
-      <div class="mb-field">
-        <label>Photo</label>
-        <div style="display:flex; align-items:center; gap:var(--mb-sp-3);">
-          <img id="item-form-photo-preview" src="${MApp.Util.escapeHtml(this.photoBase64 || '')}" alt="" style="width:56px;height:56px;border-radius:var(--mb-radius-sm);object-fit:cover;background:var(--mb-steel-faint);${this.photoBase64 ? '' : 'display:none;'}">
-          <input type="file" accept="image/*" id="item-form-photo-input" onchange="MApp.Items.onPhotoChange(this.files[0])">
-        </div>
-      </div>
+      <fieldset class="mb-field">
+        <legend>Photo</legend>
+        <div id="item-form-photo"></div>
+        <input type="file" accept="image/*" capture="environment" id="item-form-photo-camera" hidden aria-label="Take photo" onchange="MApp.Items.onPhotoChange(this.files[0]); this.value = '';">
+        <input type="file" accept="image/*" id="item-form-photo-gallery" hidden aria-label="Choose photo from gallery" onchange="MApp.Items.onPhotoChange(this.files[0]); this.value = '';">
+      </fieldset>
       <div class="mb-field">
         <label for="item-form-name">Item Name</label>
         <input type="text" id="item-form-name" value="${MApp.Util.escapeHtml(it.name || '')}">
@@ -10981,6 +11002,7 @@ MApp.Items = {
       <div id="item-form-vendor-rows">${this._vendorRowsHtml()}</div>
       <button type="button" class="mb-btn mb-btn-secondary mb-mt-2" onclick="MApp.Items.addVendorRow()">+ Add Vendor &amp; Rate</button>
     `;
+    this._renderPhotoField();
   },
 
   _vendorRowsHtml() {
@@ -11019,20 +11041,79 @@ MApp.Items = {
     this.vendorRows[i][key] = key === 'rate' && value !== '' ? MApp.Util.toNumber(value) : value;
   },
 
-  async onPhotoChange(file) {
-    if (!file) return;
-    try {
-      this.photoBase64 = await MApp.Util.resizeImageToBase64(file, 800);
-      const preview = document.getElementById('item-form-photo-preview');
-      if (preview) { preview.src = this.photoBase64; preview.style.display = ''; }
-    } catch (err) {
-      MApp.Toast.error(err.message || 'Could not read that photo.');
-    }
+  // The form's photo, which opens full size on a tap, and what can be done
+  // to it. A data: URL, so the <img> gets its src from _renderPhotoField
+  // rather than through this markup.
+  _photoFieldHtml() {
+    const cameraIcon = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
+    const galleryIcon = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
+    return `
+      ${this.photoBase64 ? `
+      <div class="mb-item-photo-current">
+        <button type="button" class="mb-item-thumb mb-item-photo-preview" aria-label="View photo" onclick="MApp.Items.viewFormPhoto()">
+          <img id="item-form-photo-preview" alt="">
+        </button>
+        <button type="button" class="mb-btn-text" style="color:var(--mb-enamel-red-ink);" onclick="MApp.Items.removePhoto()">Remove photo</button>
+      </div>` : ''}
+      <div class="mb-item-photo-actions">
+        <button type="button" class="mb-btn mb-btn-secondary" onclick="document.getElementById('item-form-photo-camera').click()">${cameraIcon}Take photo</button>
+        <button type="button" class="mb-btn mb-btn-secondary" onclick="document.getElementById('item-form-photo-gallery').click()">${galleryIcon}Gallery</button>
+      </div>`;
+  },
+
+  _renderPhotoField() {
+    const el = document.getElementById('item-form-photo');
+    if (!el) return;
+    el.innerHTML = this._photoFieldHtml();
+    const preview = document.getElementById('item-form-photo-preview');
+    if (preview && this.photoBase64) preview.src = this.photoBase64;
+  },
+
+  // A camera photo is several MB; it is shrunk to 800px before it goes
+  // anywhere (see resizeImageToBase64), which takes a moment on a slow
+  // phone. saveItem waits for it, so a Save tapped straight after the
+  // camera closes still sends the photo.
+  onPhotoChange(file) {
+    if (!file) return Promise.resolve();
+    const task = MApp.Util.resizeImageToBase64(file, 800).then(dataUrl => {
+      // Superseded: another photo was picked, the photo removed, or the
+      // form reopened on a different item while this one was shrinking.
+      if (this._photoTask !== task) return;
+      this.photoBase64 = dataUrl;
+      this._renderPhotoField();
+    }, err => {
+      if (this._photoTask === task) MApp.Toast.error(err.message || 'Could not read that photo.');
+    }).finally(() => {
+      if (this._photoTask === task) this._photoTask = null;
+    });
+    this._photoTask = task;
+    return task;
+  },
+
+  removePhoto() {
+    this.photoBase64 = null;
+    this._photoTask = null;
+    this._renderPhotoField();
+  },
+
+  viewFormPhoto() {
+    if (!this.photoBase64) return;
+    const name = (document.getElementById('item-form-name')?.value || '').trim();
+    const size = (document.getElementById('item-form-size')?.value || '').trim();
+    MApp.PhotoViewer.open(this.photoBase64, this._photoTitle({ name: name || 'New item', size }));
+  },
+
+  _photoTitle(item) {
+    return item.size ? `${item.name} · ${item.size}` : item.name;
   },
 
   async saveItem() {
     const name = (document.getElementById('item-form-name')?.value || '').trim();
     if (!name) { MApp.Toast.error('Enter an item name.'); return; }
+
+    const saveBtn = document.getElementById('item-form-save-btn');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+    if (this._photoTask) await this._photoTask;
 
     const formData = {
       itemName: name,
@@ -11053,9 +11134,6 @@ MApp.Items = {
       const initialStockEl = document.getElementById('item-form-initial-stock');
       if (initialStockEl && initialStockEl.value !== '') formData.itemInitialStock = MApp.Util.toNumber(initialStockEl.value);
     }
-
-    const saveBtn = document.getElementById('item-form-save-btn');
-    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
 
     // A name/size collision with a DIFFERENT existing item comes back as an
     // ordinary {success:false} here (data.mergeable, per saveItem's own
@@ -11081,6 +11159,28 @@ MApp.Items = {
       this.closeForm();
       this.openLookupSheet();
     }
+  }
+};
+
+// ================================================================
+// PHOTO VIEWER — an item's photo filling the screen, opened by a tap on
+// it in the Items list or the item form. A sheet like the rest, so Back,
+// Escape and a swipe down on its header close it, as does a tap on the
+// photo; it sits above every other sheet because it opens over the form.
+// ================================================================
+MApp.PhotoViewer = {
+  open(src, title) {
+    const img = document.getElementById('photo-viewer-img');
+    if (!src || !img) return;
+    img.src = src;
+    img.alt = title ? `Photo of ${title}` : 'Photo';
+    const titleEl = document.getElementById('photo-viewer-title');
+    if (titleEl) titleEl.textContent = title || 'Photo';
+    MApp.Sheet.open('sheet-photo-viewer');
+  },
+
+  close() {
+    MApp.Sheet.close('sheet-photo-viewer');
   }
 };
 
