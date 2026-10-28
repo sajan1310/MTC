@@ -81,6 +81,9 @@ MApp.Outbox = {
   async flush() {
     if (this._flushing) return;
     this._flushing = true;
+    // Entries the server answered this pass, either way. Only those change
+    // anything on screen.
+    let settled = 0;
 
     try {
       const pending = await OfflineCache.outbox.listPending();
@@ -102,6 +105,7 @@ MApp.Outbox = {
           // token once the page is open again) and move on to the rest
           // of the queue, same as an ordinary {success:false} below.
           await OfflineCache.outbox.markFailed(entry.id, err.message);
+          settled += 1;
           continue;
         }
 
@@ -113,12 +117,17 @@ MApp.Outbox = {
           // the queue.
           await OfflineCache.outbox.markFailed(entry.id, res && res.message);
         }
+        settled += 1;
       }
     } finally {
       this._flushing = false;
       this.updateBadge();
       if (typeof MApp.SyncIssues !== 'undefined') MApp.SyncIssues.updateSummary();
-      this._refreshCurrentTab();
+      // flush() runs at every start and on every reconnect, and redrew the
+      // screen each time -- an empty outbox included -- so a list could
+      // jump back to its top, search gone, a moment after it was opened or
+      // whenever the Wi-Fi blinked.
+      if (settled > 0) this._refreshCurrentTab();
     }
   },
 
@@ -314,12 +323,48 @@ MApp.Util = {
   //     if (stale()) return;
   //
   // Each owner gets its own counter, so two different sheets opening at
-  // once do not cancel each other.
-  openGuard(owner) {
+  // once do not cancel each other. `key` gives an owner a second counter:
+  // a list refreshing in place (keepScroll below) must not cancel a form
+  // opening on the same module, nor the other way round.
+  openGuard(owner, key) {
     const target = owner || {};
-    target._openSeq = (target._openSeq || 0) + 1;
-    const mine = target._openSeq;
-    return () => target._openSeq !== mine;
+    const seq = key || '_openSeq';
+    target[seq] = (target[seq] || 0) + 1;
+    const mine = target[seq];
+    return () => target[seq] !== mine;
+  },
+
+  // ── Refreshing a list in place ───────────────────────────────────────
+  // A change made from a list -- a lot's status, an item saved, a stock
+  // count corrected, a sync finishing -- reloaded it the way the screen
+  // first opens: the cards swapped for skeletons, which collapses the page
+  // so the scroll lands at the top; the search emptied (on the tabs only
+  // in memory, so the box still showed words over an unfiltered list); a
+  // filter brought from Home dropped; "Show more" folded back; a sheet
+  // opened a second time over itself. Every change sent the operator back
+  // to the start of the list.
+  //
+  // A refresh in place keeps all of that: the list stays on screen while
+  // the data comes, then is redrawn under the same search, filter and
+  // pages, at the same scroll -- which this returns the function to put
+  // back once the redraw is done.
+  keepScroll(el) {
+    const scroller = el && el.closest && (el.closest('.mb-sheet-body') || el.closest('#mapp-content'));
+    if (!scroller) return () => {};
+    const top = scroller.scrollTop;
+    return () => { scroller.scrollTop = top; };
+  },
+
+  // A refresh in place that fails leaves the list where it is and says so:
+  // the operator is still reading it, and "No connection" in its place
+  // would start them over as surely as the skeleton did. A first load has
+  // nothing to keep, so it gets the error state and its Retry.
+  loadFailed(container, message, onRetry, keep) {
+    if (keep && container && container.childElementCount > 0) {
+      MApp.Toast.error("Couldn't refresh the list. It may be out of date.");
+      return;
+    }
+    this.renderError(container, message, onRetry);
   },
 
   todayInputValue() {
@@ -1406,13 +1451,16 @@ MApp.Shell = {
   // Re-runs the currently visible tab's own data load — shared by
   // MApp.Outbox's post-flush refresh and MApp.PullToRefresh, both of
   // which just want "whatever's on screen right now, reloaded" without
-  // caring which module that happens to be.
+  // caring which module that happens to be. In place (MApp.Util.keepScroll):
+  // fresh data, the same search, filter and scroll. A module whose tab can
+  // show more than one list says which with refresh().
   refreshCurrentTab() {
     const tab = this.current;
     if (!tab) return;
     const moduleName = tab.charAt(0).toUpperCase() + tab.slice(1);
     const mod = MApp[moduleName];
-    if (mod && typeof mod.load === 'function') return mod.load();
+    if (mod && typeof mod.refresh === 'function') return mod.refresh();
+    if (mod && typeof mod.load === 'function') return mod.load({ keep: true });
     if (mod && typeof mod.mount === 'function') return mod.mount();
   }
 };
@@ -1458,6 +1506,10 @@ MApp.Sheet = {
     const backdrop = document.getElementById('mapp-sheet-backdrop');
     const sheet = document.getElementById(sheetId);
     if (!sheet) return;
+    // Already open: a list sheet re-opened to show a change made from it.
+    // A second stack entry and history entry left a Back press that seemed
+    // to do nothing, one per save.
+    if (this.isOpen(sheetId)) return;
     if (backdrop) backdrop.classList.add('open');
     sheet.classList.add('open');
     document.body.style.overflow = 'hidden';
@@ -1512,6 +1564,10 @@ MApp.Sheet = {
         this._pendingBack += 1;
       } catch (e) { /* history API unavailable */ }
     }
+  },
+
+  isOpen(sheetId) {
+    return this._stack.some(entry => entry.id === sheetId);
   },
 
   // Closes the topmost sheet the way a Back press or Escape should:
@@ -3690,9 +3746,25 @@ MApp.Stock = {
     if (switched) MApp.Haptics.light();
   },
 
-  async load() {
+  // `keep`: the refresh after a change made from this list, or a sync --
+  // the list stays up and comes back under the same search, filter and
+  // scroll (MApp.Util.keepScroll). Without it the screen starts over, as
+  // it should when it opens.
+  async load(opts) {
+    const keep = !!(opts && opts.keep);
     const listEl = document.getElementById('stock-list');
-    MApp.Util.renderSkeleton(listEl, 5);
+    const stale = MApp.Util.openGuard(this, '_loadSeq');
+    if (!keep) {
+      MApp.Util.renderSkeleton(listEl, 5);
+      // Taken now rather than when the data lands, so a refresh that
+      // overtakes this load finds Home's filter already in place.
+      this._lowStockOnly = MApp.State.stockFilter === 'lowstock';
+      MApp.State.stockFilter = '';
+      // What the box says: empty on a fresh screen, and whatever was typed
+      // when a failed load is retried.
+      const box = document.getElementById('stock-search');
+      this.searchTerm = box ? box.value : '';
+    }
 
     // getItemsData is supplementary here (unit lookup only, already has a
     // 'Pcs' fallback below) -- best-effort, caught independently so it
@@ -3704,12 +3776,14 @@ MApp.Stock = {
 
     try {
       const stockRes = await MApp.Api.callCached('getStockData');
+      if (stale()) return;
       if (!stockRes || !stockRes.success) {
-        MApp.Util.renderError(listEl, stockRes && stockRes.message, () => this.load());
+        MApp.Util.loadFailed(listEl, stockRes && stockRes.message, () => this.load(), keep);
         return;
       }
 
       const itemsRes = await itemsPromise;
+      if (stale()) return;
       const unitByKey = {};
       if (itemsRes && itemsRes.success) {
         (itemsRes.data || []).forEach(it => {
@@ -3722,20 +3796,27 @@ MApp.Stock = {
         unit: unitByKey[this._key(s.name, s.size)] || 'Pcs'
       }));
 
-      const lowStockOnly = MApp.State.stockFilter === 'lowstock';
-      MApp.State.stockFilter = '';
-      this._lowStockOnly = lowStockOnly;
       this._offlineCachedAt = stockRes._offlineCachedAt || null;
       this._pendingSyncCount = await OfflineCache.outbox.countPendingForMethod('adjustStockManually');
+      if (stale()) return;
 
-      this.searchTerm = '';
       MApp.SearchBox.attach('stock-search', term => this.onSearch(term));
       this._applyFilters();
 
+      const restoreScroll = MApp.Util.keepScroll(listEl);
       this.render();
+      restoreScroll();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this.load());
+      if (stale()) return;
+      MApp.Util.loadFailed(listEl, err && err.message, () => this.load(), keep);
     }
+  },
+
+  // The tab shows the Stock list or the Warehouse Pool. A refresh is of
+  // the one on screen: pull-to-refresh on the pool reloaded the stock list
+  // hidden behind it and left the pool as it was.
+  refresh() {
+    return this.view === 'pool' ? MApp.Pool.load({ keep: true }) : this.load({ keep: true });
   },
 
   _key(name, size) {
@@ -4155,8 +4236,15 @@ MApp.Stock = {
     if (ok) {
       MApp.Toast.success('Low-stock settings saved.');
       this.closeAdjustSheet();
-      this.load();
+      this.load({ keep: true });
     }
+  },
+
+  // The movements an open card shows are cached per item name for the
+  // session (_loadMovements). After a correction that cache is the one
+  // thing still saying the old figure, so the card refetches it.
+  _forgetMovements(item) {
+    if (this._ledgerCache) delete this._ledgerCache[String(item.name || '').trim().toLowerCase()];
   },
 
   // Note: source's own _apiCall handled both reads and writes with one
@@ -4202,7 +4290,8 @@ MApp.Stock = {
       MApp.Toast.success(res.message || 'Stock adjusted.');
       this.closeAdjustSheet();
       MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', false, null, 'Save Correction');
-      this.load();
+      this._forgetMovements(item);
+      this.load({ keep: true });
     } catch (err) {
       if (err && err.isNetworkError) {
         // The fetch itself never reached the server -- queue it under the
@@ -4213,7 +4302,7 @@ MApp.Stock = {
         MApp.Toast.success('Saved — will sync when back online.');
         this.closeAdjustSheet();
         MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', false, null, 'Save Correction');
-        this.load();
+        this.load({ keep: true });
         return;
       }
       // Reached the server but got a real HTTP-level failure (e.g. a CSRF
@@ -5463,7 +5552,7 @@ MApp.Production = {
       rows.map(r => r.rowIdx),
       rows.map(r => ({ rowIdx: r.rowIdx, expectedProductId: r.productId || '', expectedQty: r.qty }))
     ],
-    onDone: () => MApp.Production.load(),
+    onDone: () => MApp.Production.load({ keep: true }),
 
     // The same long-press selection that arms a bulk delete also arms a
     // bulk document job: the lots picked out of the list go to the
@@ -5512,9 +5601,28 @@ MApp.Production = {
     this.load();
   },
 
-  async load() {
+  // `keep`: the refresh after a change made from this list -- a status,
+  // an edit, a delete, a lot logged, a sync. The list stays up and comes
+  // back under the same search, filter, pages and scroll
+  // (MApp.Util.keepScroll); a status change no longer sends the storekeeper
+  // back to the top of the lots. Without it the screen starts over, as it
+  // should when it opens.
+  async load(opts) {
+    const keep = !!(opts && opts.keep);
     const listEl = document.getElementById('production-list');
-    MApp.Util.renderSkeleton(listEl, 4);
+    const stale = MApp.Util.openGuard(this, '_loadSeq');
+    if (!keep) {
+      MApp.Util.renderSkeleton(listEl, 4);
+      // Taken now rather than when the data lands, so a refresh that
+      // overtakes this load finds Home's filter already in place.
+      this._pendingOnly = MApp.State.productionFilter === 'pending';
+      MApp.State.productionFilter = '';
+      // What the box says: empty on a fresh screen, and whatever was typed
+      // when a failed load is retried.
+      const box = document.getElementById('production-search');
+      this.searchTerm = box ? box.value : '';
+      MApp.Paging.reset('production');
+    }
 
     // getProcessData here is supplementary (display-name lookup for
     // processById, plus the Log Lot cascade's own reference data) --
@@ -5527,12 +5635,14 @@ MApp.Production = {
 
     try {
       const lotsRes = await MApp.Api.callCached('getProductionData');
+      if (stale()) return;
       if (!lotsRes || !lotsRes.success) {
-        MApp.Util.renderError(listEl, lotsRes && lotsRes.message, () => this.load());
+        MApp.Util.loadFailed(listEl, lotsRes && lotsRes.message, () => this.load(), keep);
         return;
       }
 
       const procRes = await procPromise;
+      if (stale()) return;
       this.lots = lotsRes.data || [];
       // A failed read keeps the processes already loaded rather than
       // emptying them. load() runs after every lot is logged, so offline
@@ -5543,21 +5653,21 @@ MApp.Production = {
       this.processById = {};
       this.allProcesses.forEach(p => { this.processById[p.processId] = p; });
 
-      this._pendingOnly = MApp.State.productionFilter === 'pending';
-      MApp.State.productionFilter = '';
       this._offlineCachedAt = lotsRes._offlineCachedAt || null;
       this._pendingSyncCount = await OfflineCache.outbox.countPendingForMethod('saveProduction');
+      if (stale()) return;
 
       // Indexed after processById is built -- the Process field resolves
       // through it, so indexing earlier would bake in raw processIds.
       this.entries = MApp.Search.index(this.lots, this.SEARCH);
       MApp.SearchBox.attach('production-search', term => this.onSearch(term));
-      this.searchTerm = '';
-      MApp.Paging.reset('production');
 
+      const restoreScroll = MApp.Util.keepScroll(listEl);
       this.render();
+      restoreScroll();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this.load());
+      if (stale()) return;
+      MApp.Util.loadFailed(listEl, err && err.message, () => this.load(), keep);
     }
   },
 
@@ -5846,7 +5956,7 @@ MApp.Production = {
       }
       // The server's own message, warning and all.
       MApp.Toast.success(res.message || `Status set to ${newStatus}.`);
-      this.load();
+      this.load({ keep: true });
       return true;
     } catch (err) {
       MApp.Toast.error(err.message || 'Could not reach the server. Please try again.');
@@ -5863,7 +5973,7 @@ MApp.Production = {
     const res = await MApp.Util.mutateSimple('deleteProduction', [lot.rowIdx, lot.productId || '', lot.qty], null);
     if (!res || !res.success) return;
     MApp.Toast.success(res.message || 'Lot deleted.');
-    this.load();
+    this.load({ keep: true });
   },
 
   // ── Size/Model/Process Type helpers (mirror desktop's App.Utils, kept
@@ -5990,7 +6100,8 @@ MApp.Production = {
   },
 
   async _ensureRefData() {
-    if (this.allProcesses.length === 0) await this.load();
+    // In place: this is for the form, and must not reset the list behind it.
+    if (this.allProcesses.length === 0) await this.load({ keep: true });
 
     const [modelsRes, typesRes, contractorsRes, colorsRes, itemsRes] = await Promise.all([
       MApp.Api.call('getModels'),
@@ -7210,7 +7321,7 @@ MApp.Production = {
       }
     }
     if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Log Lot'; }
-    this.load();
+    this.load({ keep: true });
   },
 
   // A blank create form: process, size/model/type, colours, quantities,
@@ -7307,7 +7418,7 @@ MApp.Dispatch = {
     plural: 'dispatches',
     method: 'deleteDispatchBulk',
     payload: rows => [[...new Set(rows.map(r => r.dispatchNumber))]],
-    onDone: () => MApp.Dispatch.load()
+    onDone: () => MApp.Dispatch.load({ keep: true })
   },
 
   entries: [],
@@ -7323,9 +7434,26 @@ MApp.Dispatch = {
     this.render();
   },
 
-  async load() {
+  // `keep`: the refresh after a change made from this list, or a sync --
+  // the list stays up and comes back under the same search, filter, pages
+  // and scroll (MApp.Util.keepScroll). Without it the screen starts over,
+  // as it should when it opens.
+  async load(opts) {
+    const keep = !!(opts && opts.keep);
     const listEl = document.getElementById('dispatch-list');
-    MApp.Util.renderSkeleton(listEl, 4);
+    const stale = MApp.Util.openGuard(this, '_loadSeq');
+    if (!keep) {
+      MApp.Util.renderSkeleton(listEl, 4);
+      // Taken now rather than when the data lands, so a refresh that
+      // overtakes this load finds Home's filter already in place.
+      this._todayOnly = MApp.State.dispatchFilter === 'today';
+      MApp.State.dispatchFilter = '';
+      // What the box says: empty on a fresh screen, and whatever was typed
+      // when a failed load is retried.
+      const box = document.getElementById('dispatch-search');
+      this.searchTerm = box ? box.value : '';
+      MApp.Paging.reset('dispatch');
+    }
 
     // getClientsData here is supplementary (client address/gstin lookup
     // for print(), plus the New Dispatch sheet's own reference data) --
@@ -7336,28 +7464,30 @@ MApp.Dispatch = {
 
     try {
       const dispatchRes = await MApp.Api.callCached('getDispatchData');
+      if (stale()) return;
       if (!dispatchRes || !dispatchRes.success) {
-        MApp.Util.renderError(listEl, dispatchRes && dispatchRes.message, () => this.load());
+        MApp.Util.loadFailed(listEl, dispatchRes && dispatchRes.message, () => this.load(), keep);
         return;
       }
 
       const clientsRes = await clientsPromise;
+      if (stale()) return;
       this.dispatches = dispatchRes.data || [];
       this.clients = (clientsRes && clientsRes.success) ? (clientsRes.data || []) : [];
 
-      this._todayOnly = MApp.State.dispatchFilter === 'today';
-      MApp.State.dispatchFilter = '';
       this._offlineCachedAt = dispatchRes._offlineCachedAt || null;
       this._pendingSyncCount = await OfflineCache.outbox.countPendingForMethod('saveDispatch');
+      if (stale()) return;
 
       this.entries = MApp.Search.index(this.dispatches, this.SEARCH);
       MApp.SearchBox.attach('dispatch-search', term => this.onSearch(term));
-      this.searchTerm = '';
-      MApp.Paging.reset('dispatch');
 
+      const restoreScroll = MApp.Util.keepScroll(listEl);
       this.render();
+      restoreScroll();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this.load());
+      if (stale()) return;
+      MApp.Util.loadFailed(listEl, err && err.message, () => this.load(), keep);
     }
   },
 
@@ -7580,11 +7710,12 @@ MApp.Dispatch = {
   async deleteDispatch(dispatchNumber) {
     if (!MApp.Util.confirmDelete(dispatchNumber)) return;
     const res = await MApp.Util.mutateSimple('deleteDispatch', [dispatchNumber], 'Dispatch deleted.');
-    if (res.success) this.load();
+    if (res.success) this.load({ keep: true });
   },
 
   async _ensureRefData() {
-    if (this.clients.length === 0) await this.load();
+    // In place: this is for the form, and must not reset the list behind it.
+    if (this.clients.length === 0) await this.load({ keep: true });
 
     const [readyRes, contractorsRes] = await Promise.all([
       MApp.Api.call('getReadyToDispatchData'),
@@ -7793,7 +7924,7 @@ MApp.Dispatch = {
       const saveBtn = document.getElementById('new-dispatch-save-btn');
       if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Dispatch'; }
     }
-    this.load();
+    this.load({ keep: true });
   }
 };
 // ================================================================
@@ -7810,7 +7941,7 @@ MApp.Returns = {
     key: 'returns', noun: 'return', plural: 'returns',
     method: 'deleteReturnsBulk',
     payload: rows => [rows.map(r => r.returnNumber)],
-    onDone: () => MApp.Returns.load()
+    onDone: () => MApp.Returns.load({ keep: true })
   },
 
   returns: [],
@@ -7830,22 +7961,31 @@ MApp.Returns = {
     this.load();
   },
 
-  async load() {
+  // `keep`: the refresh after a return is saved or deleted -- in place,
+  // at the same scroll (MApp.Util.keepScroll).
+  async load(opts) {
+    const keep = !!(opts && opts.keep);
     const listEl = document.getElementById('more-returns-list');
     if (!listEl) return;
-    MApp.Util.renderSkeleton(listEl, 2);
+    const stale = MApp.Util.openGuard(this, '_loadSeq');
+    if (!keep) MApp.Util.renderSkeleton(listEl, 2);
 
     try {
       const res = await MApp.Api.call('getReturnData');
+      if (stale()) return;
       if (!res || !res.success) {
-        MApp.Util.renderError(listEl, res && res.message, () => this.load());
+        MApp.Util.loadFailed(listEl, res && res.message, () => this.load(), keep);
         return;
       }
       this.returns = (res.data || []).slice(0, 8);
       this._pendingSyncCount = await OfflineCache.outbox.countPendingForMethod('saveReturn');
+      if (stale()) return;
+      const restoreScroll = MApp.Util.keepScroll(listEl);
       this.render();
+      restoreScroll();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this.load());
+      if (stale()) return;
+      MApp.Util.loadFailed(listEl, err && err.message, () => this.load(), keep);
     }
   },
 
@@ -7996,7 +8136,7 @@ MApp.Returns = {
   async deleteReturn(record) {
     if (!MApp.Util.confirmDelete(record.returnNumber)) return;
     const res = await MApp.Util.mutateSimple('deleteReturn', [record.returnNumber], 'Return deleted.');
-    if (res.success) this.load();
+    if (res.success) this.load({ keep: true });
   },
 
   async _ensureRefData() {
@@ -8180,7 +8320,7 @@ MApp.Returns = {
       const saveBtn = document.getElementById('log-return-save-btn');
       if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Log Return'; }
     }
-    this.load();
+    this.load({ keep: true });
   }
 };
 // ================================================================
@@ -8418,28 +8558,42 @@ MApp.PO = {
   lines: [],
   editingPoNumber: null,
 
+  // Opened again while it is open -- a PO saved, deleted or bulk-deleted
+  // from it -- this is a refresh in place (MApp.Util.keepScroll): the
+  // search, the status filter, the pages and the scroll all stay.
   async openLedgerSheet() {
+    const keep = MApp.Sheet.isOpen('sheet-po-ledger');
     const listEl = document.getElementById('po-ledger-list');
-    const searchInput = document.getElementById('po-ledger-search');
-    if (searchInput) searchInput.value = '';
-    this.searchTerm = '';
-    MApp.SearchBox.attach('po-ledger-search', term => this.onSearch(term));
-    this.statusFilter = 'all';
-    this._updateFilterChips();
-    MApp.Util.renderSkeleton(listEl, 5);
-    MApp.Sheet.open('sheet-po-ledger');
+    // Its own counter: openGuard(this) belongs to the PO form.
+    const stale = MApp.Util.openGuard(this, '_loadSeq');
+    if (!keep) {
+      const searchInput = document.getElementById('po-ledger-search');
+      if (searchInput) searchInput.value = '';
+      this.searchTerm = '';
+      MApp.Paging.reset('po');
+      MApp.SearchBox.attach('po-ledger-search', term => this.onSearch(term));
+      this.statusFilter = 'all';
+      this._updateFilterChips();
+      MApp.Util.renderSkeleton(listEl, 5);
+      MApp.Sheet.open('sheet-po-ledger');
+    }
 
     try {
       const res = await MApp.Api.call('getPOData');
+      if (stale()) return;
       if (!res || !res.success) {
-        MApp.Util.renderError(listEl, res && res.message, () => this.openLedgerSheet());
+        MApp.Util.loadFailed(listEl, res && res.message, () => this.openLedgerSheet(), keep);
         return;
       }
       this.pos = res.data || [];
       this._pendingSyncCount = await OfflineCache.outbox.countPendingForMethod('savePO');
+      if (stale()) return;
+      const restoreScroll = MApp.Util.keepScroll(listEl);
       this._applyFilters();
+      restoreScroll();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this.openLedgerSheet());
+      if (stale()) return;
+      MApp.Util.loadFailed(listEl, err && err.message, () => this.openLedgerSheet(), keep);
     }
   },
 
@@ -9019,19 +9173,13 @@ MApp.PO = {
     this._refreshLedger();
   },
 
-  // Best-effort refresh of the ledger list behind the New PO sheet -- a
-  // failure here must not surface as an error toast; the PO itself
-  // already saved successfully by this point (see save() above).
-  async _refreshLedger() {
-    try {
-      const res = await MApp.Api.call('getPOData');
-      if (res && res.success) {
-        this.pos = res.data || [];
-        this._applyFilters();
-      }
-    } catch (err) {
-      // Non-critical -- next manual open of the ledger will show it.
-    }
+  // The ledger behind the New PO sheet, once a PO is saved or deleted:
+  // refreshed in place (openLedgerSheet). A failed refresh says the LIST
+  // may be out of date, never that the save failed -- the PO is saved by
+  // the time this runs. Not on screen, there is nothing to refresh:
+  // opening the ledger fetches it.
+  _refreshLedger() {
+    if (MApp.Sheet.isOpen('sheet-po-ledger')) this.openLedgerSheet();
   }
 };
 // ================================================================
@@ -9080,25 +9228,37 @@ MApp.Bill = {
   editingBillVendor: null,
   _formSeq: 0,
 
+  // Opened again while it is open -- a bill saved, deleted or bulk-deleted
+  // from it -- this is a refresh in place (MApp.Util.keepScroll): the
+  // search, the pages and the scroll all stay.
   async openLedgerSheet() {
+    const keep = MApp.Sheet.isOpen('sheet-bill-ledger');
     const listEl = document.getElementById('bill-ledger-list');
-    const searchInput = document.getElementById('bill-ledger-search');
-    if (searchInput) searchInput.value = '';
-    this.searchTerm = '';
-    MApp.SearchBox.attach('bill-ledger-search', term => this.onSearch(term));
-    MApp.Util.renderSkeleton(listEl, 5);
-    MApp.Sheet.open('sheet-bill-ledger');
+    const stale = MApp.Util.openGuard(this, '_loadSeq');
+    if (!keep) {
+      const searchInput = document.getElementById('bill-ledger-search');
+      if (searchInput) searchInput.value = '';
+      this.searchTerm = '';
+      MApp.Paging.reset('bill');
+      MApp.SearchBox.attach('bill-ledger-search', term => this.onSearch(term));
+      MApp.Util.renderSkeleton(listEl, 5);
+      MApp.Sheet.open('sheet-bill-ledger');
+    }
 
     try {
       const res = await MApp.Api.call('getBillData');
+      if (stale()) return;
       if (!res || !res.success) {
-        MApp.Util.renderError(listEl, res && res.message, () => this.openLedgerSheet());
+        MApp.Util.loadFailed(listEl, res && res.message, () => this.openLedgerSheet(), keep);
         return;
       }
       this.bills = res.data || [];
+      const restoreScroll = MApp.Util.keepScroll(listEl);
       this._applyFilters();
+      restoreScroll();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this.openLedgerSheet());
+      if (stale()) return;
+      MApp.Util.loadFailed(listEl, err && err.message, () => this.openLedgerSheet(), keep);
     }
   },
 
@@ -9838,25 +9998,37 @@ MApp.Issue = {
   items: [],
   lines: [],
 
+  // Opened again while it is open -- an issue saved or deleted from it --
+  // this is a refresh in place (MApp.Util.keepScroll): search, pages and
+  // scroll all stay.
   async open() {
+    const keep = MApp.Sheet.isOpen('sheet-issue-log');
     const listEl = document.getElementById('issue-log-list');
-    const searchInput = document.getElementById('issue-log-search');
-    if (searchInput) searchInput.value = '';
-    this.searchTerm = '';
-    MApp.SearchBox.attach('issue-log-search', term => this.onSearch(term));
-    MApp.Util.renderSkeleton(listEl, 4);
-    MApp.Sheet.open('sheet-issue-log');
+    const stale = MApp.Util.openGuard(this, '_loadSeq');
+    if (!keep) {
+      const searchInput = document.getElementById('issue-log-search');
+      if (searchInput) searchInput.value = '';
+      this.searchTerm = '';
+      MApp.Paging.reset('issue');
+      MApp.SearchBox.attach('issue-log-search', term => this.onSearch(term));
+      MApp.Util.renderSkeleton(listEl, 4);
+      MApp.Sheet.open('sheet-issue-log');
+    }
 
     try {
       const res = await MApp.Api.call('getIssueData');
+      if (stale()) return;
       if (!res || !res.success) {
-        MApp.Util.renderError(listEl, res && res.message, () => this.open());
+        MApp.Util.loadFailed(listEl, res && res.message, () => this.open(), keep);
         return;
       }
       this.records = res.data || [];
+      const restoreScroll = MApp.Util.keepScroll(listEl);
       this._applyFilters();
+      restoreScroll();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this.open());
+      if (stale()) return;
+      MApp.Util.loadFailed(listEl, err && err.message, () => this.open(), keep);
     }
   },
 
@@ -10266,25 +10438,37 @@ MApp.Wastage = {
     return `${it.name || ''}${detail ? ` (${detail})` : ''}`;
   },
 
+  // Opened again while it is open -- a write-off saved or deleted from it
+  // -- this is a refresh in place (MApp.Util.keepScroll): search, pages
+  // and scroll all stay.
   async open() {
+    const keep = MApp.Sheet.isOpen('sheet-wastage-log');
     const listEl = document.getElementById('wastage-log-list');
-    const searchInput = document.getElementById('wastage-log-search');
-    if (searchInput) searchInput.value = '';
-    this.searchTerm = '';
-    MApp.SearchBox.attach('wastage-log-search', term => this.onSearch(term));
-    MApp.Util.renderSkeleton(listEl, 4);
-    MApp.Sheet.open('sheet-wastage-log');
+    const stale = MApp.Util.openGuard(this, '_loadSeq');
+    if (!keep) {
+      const searchInput = document.getElementById('wastage-log-search');
+      if (searchInput) searchInput.value = '';
+      this.searchTerm = '';
+      MApp.Paging.reset('wastage');
+      MApp.SearchBox.attach('wastage-log-search', term => this.onSearch(term));
+      MApp.Util.renderSkeleton(listEl, 4);
+      MApp.Sheet.open('sheet-wastage-log');
+    }
 
     try {
       const res = await MApp.Api.call('getWastageData');
+      if (stale()) return;
       if (!res || !res.success) {
-        MApp.Util.renderError(listEl, res && res.message, () => this.open());
+        MApp.Util.loadFailed(listEl, res && res.message, () => this.open(), keep);
         return;
       }
       this.records = res.data || [];
+      const restoreScroll = MApp.Util.keepScroll(listEl);
       this._applyFilters();
+      restoreScroll();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this.open());
+      if (stale()) return;
+      MApp.Util.loadFailed(listEl, err && err.message, () => this.open(), keep);
     }
   },
 
@@ -10794,21 +10978,29 @@ MApp.Items = {
   // The shrink of the photo just picked (onPhotoChange), while it runs.
   _photoTask: null,
 
+  // Opened again while it is open -- after an item is saved or deleted
+  // from it -- this is a refresh in place (MApp.Util.keepScroll): the
+  // search being worked through, the pages shown and the scroll all stay,
+  // so adding photos to item after item does not start over at the top.
   async openLookupSheet() {
+    const keep = MApp.Sheet.isOpen('sheet-items-lookup');
     const stale = MApp.Util.openGuard(this);
     const listEl = document.getElementById('items-lookup-list');
-    const searchInput = document.getElementById('items-lookup-search');
-    if (searchInput) searchInput.value = '';
-    this.searchTerm = '';
-    MApp.SearchBox.attach('items-lookup-search', term => this.onSearch(term));
-    MApp.Util.renderSkeleton(listEl, 5);
-    MApp.Sheet.open('sheet-items-lookup');
+    if (!keep) {
+      const searchInput = document.getElementById('items-lookup-search');
+      if (searchInput) searchInput.value = '';
+      this.searchTerm = '';
+      MApp.Paging.reset('items');
+      MApp.SearchBox.attach('items-lookup-search', term => this.onSearch(term));
+      MApp.Util.renderSkeleton(listEl, 5);
+      MApp.Sheet.open('sheet-items-lookup');
+    }
 
     try {
       const res = await MApp.Api.call('getItemsData');
       if (stale()) return;
       if (!res || !res.success) {
-        MApp.Util.renderError(listEl, res && res.message, () => this.openLookupSheet());
+        MApp.Util.loadFailed(listEl, res && res.message, () => this.openLookupSheet(), keep);
         return;
       }
       this.items = res.data || [];
@@ -10834,11 +11026,17 @@ MApp.Items = {
       } catch (stockErr) {
         // Non-critical -- item lookup still works without stock figures.
       }
+      if (stale()) return;
 
-      this.filtered = this.items;
+      this.filtered = this.searchTerm
+        ? MApp.Search.run(MApp.Search.index(this.items, this.SEARCH), this.searchTerm)
+        : this.items;
+      const restoreScroll = MApp.Util.keepScroll(listEl);
       this.render();
+      restoreScroll();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this.openLookupSheet());
+      if (stale()) return;
+      MApp.Util.loadFailed(listEl, err && err.message, () => this.openLookupSheet(), keep);
     }
   },
 
@@ -12049,31 +12247,43 @@ MApp.Admin = {
     super_admin: 'Super Admin'
   },
 
+  // Opened again while it is open -- a user saved, deactivated or deleted
+  // from it -- this is a refresh in place (MApp.Util.keepScroll): search,
+  // pages and scroll all stay.
   async open() {
+    const keep = MApp.Sheet.isOpen('sheet-admin-users');
     const listEl = document.getElementById('admin-users-list');
-    const searchInput = document.getElementById('admin-users-search');
-    if (searchInput) searchInput.value = '';
-    this.searchTerm = '';
-    MApp.SearchBox.attach('admin-users-search', term => this.onSearch(term));
-    MApp.Util.renderSkeleton(listEl, 5);
-    MApp.Sheet.open('sheet-admin-users');
+    const stale = MApp.Util.openGuard(this, '_loadSeq');
+    if (!keep) {
+      const searchInput = document.getElementById('admin-users-search');
+      if (searchInput) searchInput.value = '';
+      this.searchTerm = '';
+      MApp.Paging.reset('admin');
+      MApp.SearchBox.attach('admin-users-search', term => this.onSearch(term));
+      MApp.Util.renderSkeleton(listEl, 5);
+      MApp.Sheet.open('sheet-admin-users');
+    }
 
     try {
       const [usersRes, rolesRes] = await Promise.all([
         MApp.Api.call('getUsersData'),
         MApp.Api.call('getCustomRoles').catch(() => null)
       ]);
+      if (stale()) return;
       if (!usersRes || !usersRes.success) {
-        MApp.Util.renderError(listEl, usersRes && usersRes.message, () => this.open());
+        MApp.Util.loadFailed(listEl, usersRes && usersRes.message, () => this.open(), keep);
         return;
       }
       this.users = usersRes.data || [];
       // Best-effort -- an admin (not super_admin) may not have custom
       // roles configured yet; a failure here shouldn't block the user list.
       this.customRoles = (rolesRes && rolesRes.success) ? (rolesRes.data || []) : [];
+      const restoreScroll = MApp.Util.keepScroll(listEl);
       this._applyFilters();
+      restoreScroll();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this.open());
+      if (stale()) return;
+      MApp.Util.loadFailed(listEl, err && err.message, () => this.open(), keep);
     }
   },
 
@@ -12347,25 +12557,38 @@ MApp.Process = {
   lines: [],
   _formSeq: 0,
 
+  // Opened again while it is open -- a process saved, deleted or moved
+  // from it -- this is a refresh in place (MApp.Util.keepScroll): search,
+  // pages and scroll all stay, so a process walked down a long list one
+  // tap at a time stays in view.
   async open() {
+    const keep = MApp.Sheet.isOpen('sheet-process-list');
     const listEl = document.getElementById('process-list-list');
-    const searchInput = document.getElementById('process-list-search');
-    if (searchInput) searchInput.value = '';
-    this.searchTerm = '';
-    MApp.SearchBox.attach('process-list-search', term => this.onSearch(term));
-    MApp.Util.renderSkeleton(listEl, 5);
-    MApp.Sheet.open('sheet-process-list');
+    const stale = MApp.Util.openGuard(this, '_loadSeq');
+    if (!keep) {
+      const searchInput = document.getElementById('process-list-search');
+      if (searchInput) searchInput.value = '';
+      this.searchTerm = '';
+      MApp.Paging.reset('process');
+      MApp.SearchBox.attach('process-list-search', term => this.onSearch(term));
+      MApp.Util.renderSkeleton(listEl, 5);
+      MApp.Sheet.open('sheet-process-list');
+    }
 
     try {
       const res = await MApp.Api.call('getProcessData');
+      if (stale()) return;
       if (!res || !res.success) {
-        MApp.Util.renderError(listEl, res && res.message, () => this.open());
+        MApp.Util.loadFailed(listEl, res && res.message, () => this.open(), keep);
         return;
       }
       this.processes = res.data || [];
+      const restoreScroll = MApp.Util.keepScroll(listEl);
       this._applyFilters();
+      restoreScroll();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this.open());
+      if (stale()) return;
+      MApp.Util.loadFailed(listEl, err && err.message, () => this.open(), keep);
     }
   },
 
@@ -12462,7 +12685,10 @@ MApp.Process = {
 
     MApp.Toast.success(res.message || 'Process order updated.');
     MApp.Haptics.light();
-    this.load();
+    // The sheet is open, so this is the refresh in place. It called
+    // this.load(), which this module has never had: the reorder saved, the
+    // call threw, and the list kept showing the old order.
+    this.open();
   },
 
   // What is actually available in the pool for this process's inputs.
@@ -12829,26 +13055,38 @@ MApp.BOM = {
     }
   },
 
+  // Run again while the list is open -- a recipe saved, deleted or moved
+  // from it -- this is a refresh in place (MApp.Util.keepScroll): search,
+  // pages and scroll all stay.
   async _loadList() {
+    const keep = MApp.Sheet.isOpen('sheet-bom-list');
     const listEl = document.getElementById('bom-list-list');
-    const searchInput = document.getElementById('bom-list-search');
-    if (searchInput) searchInput.value = '';
-    this.searchTerm = '';
-    MApp.SearchBox.attach('bom-list-search', term => this.onSearch(term));
-    MApp.Util.renderSkeleton(listEl, 4);
-    MApp.Sheet.open('sheet-bom-list');
+    const stale = MApp.Util.openGuard(this, '_loadSeq');
+    if (!keep) {
+      const searchInput = document.getElementById('bom-list-search');
+      if (searchInput) searchInput.value = '';
+      this.searchTerm = '';
+      MApp.Paging.reset('bom');
+      MApp.SearchBox.attach('bom-list-search', term => this.onSearch(term));
+      MApp.Util.renderSkeleton(listEl, 4);
+      MApp.Sheet.open('sheet-bom-list');
+    }
 
     try {
       const res = await MApp.Api.call('getBOMData', this.token);
+      if (stale()) return;
       if (!res || !res.success) {
         if (this._isAccessError(res)) { this._resetToken(); return; }
-        MApp.Util.renderError(listEl, res && res.message, () => this._loadList());
+        MApp.Util.loadFailed(listEl, res && res.message, () => this._loadList(), keep);
         return;
       }
       this.products = res.data || [];
+      const restoreScroll = MApp.Util.keepScroll(listEl);
       this._applyFilters();
+      restoreScroll();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this._loadList());
+      if (stale()) return;
+      MApp.Util.loadFailed(listEl, err && err.message, () => this._loadList(), keep);
     }
   },
 
@@ -14046,29 +14284,40 @@ MApp.StockGroups = {
   searchTerm: '',
   editing: null,
 
+  // Opened again while it is open -- a group saved or deleted from it --
+  // this is a refresh in place (MApp.Util.keepScroll): search, pages and
+  // scroll all stay.
   async open() {
+    const keep = MApp.Sheet.isOpen('sheet-stock-groups');
     const listEl = document.getElementById('stock-groups-list');
-    const input = document.getElementById('stock-groups-search');
-    if (input) input.value = '';
-    this.searchTerm = '';
-    MApp.SearchBox.attach('stock-groups-search', term => this.onSearch(term));
+    const stale = MApp.Util.openGuard(this, '_loadSeq');
+    if (!keep) {
+      const input = document.getElementById('stock-groups-search');
+      if (input) input.value = '';
+      this.searchTerm = '';
+      MApp.Paging.reset('stockGroups');
+      MApp.SearchBox.attach('stock-groups-search', term => this.onSearch(term));
 
-    MApp.Util.renderSkeleton(listEl, 4);
-    MApp.Sheet.open('sheet-stock-groups');
+      MApp.Util.renderSkeleton(listEl, 4);
+      MApp.Sheet.open('sheet-stock-groups');
+    }
 
     try {
       const res = await MApp.Api.call('getStockGroupsData');
+      if (stale()) return;
       if (!res || !res.success) {
-        MApp.Util.renderError(listEl, res && res.message, () => this.open());
+        MApp.Util.loadFailed(listEl, res && res.message, () => this.open(), keep);
         return;
       }
       this.groups = res.data || [];
       this.entries = MApp.Search.index(this.groups, this.SEARCH);
-      MApp.Paging.reset('stockGroups');
-      this.filtered = this.groups;
+      this.filtered = this.searchTerm ? MApp.Search.run(this.entries, this.searchTerm) : this.groups;
+      const restoreScroll = MApp.Util.keepScroll(listEl);
       this.render();
+      restoreScroll();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this.open());
+      if (stale()) return;
+      MApp.Util.loadFailed(listEl, err && err.message, () => this.open(), keep);
     }
   },
 
@@ -14462,20 +14711,28 @@ MApp.DispatchPlan = {
     this.load();
   },
 
-  async load() {
+  // `keep`: the refresh after a line is saved or removed -- in place, at
+  // the same scroll (MApp.Util.keepScroll).
+  async load(opts) {
+    const keep = !!(opts && opts.keep);
     const listEl = document.getElementById('dispatch-plan-list');
     if (!listEl) return;
-    MApp.Util.renderSkeleton(listEl, 4);
+    const stale = MApp.Util.openGuard(this, '_loadSeq');
+    if (!keep) MApp.Util.renderSkeleton(listEl, 4);
     try {
       const res = await MApp.Api.call('getDispatchPlans');
+      if (stale()) return;
       if (!res || !res.success) {
-        MApp.Util.renderError(listEl, res && res.message, () => this.load());
+        MApp.Util.loadFailed(listEl, res && res.message, () => this.load(), keep);
         return;
       }
       this.lines = res.data || [];
+      const restoreScroll = MApp.Util.keepScroll(listEl);
       this.render();
+      restoreScroll();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this.load());
+      if (stale()) return;
+      MApp.Util.loadFailed(listEl, err && err.message, () => this.load(), keep);
     }
   },
 
@@ -14664,11 +14921,13 @@ MApp.DispatchPlan = {
     MApp.Toast.success(res.message || 'Plan updated.');
     this.closeForm();
     // The saved line may have moved to another day, so follow it rather
-    // than leaving the operator looking at a list it is no longer in.
+    // than leaving the operator looking at a list it is no longer in. That
+    // is another day's list, from its top; the same day is kept in place.
+    const sameDay = this.planDate === payload.planDate;
     this.planDate = payload.planDate;
     const dateEl = document.getElementById('dispatch-plan-date');
     if (dateEl) dateEl.value = this.planDate;
-    this.load();
+    this.load({ keep: sameDay });
   },
 
   async remove(line) {
@@ -14676,7 +14935,7 @@ MApp.DispatchPlan = {
     const res = await MApp.Util.mutateSimple('deleteDispatchPlanLine', [line.lineId], null);
     if (res.success) {
       MApp.Toast.success(res.message || 'Removed from plan.');
-      this.load();
+      this.load({ keep: true });
     }
   }
 };
@@ -14730,20 +14989,29 @@ MApp.ClientOrders = {
   lines: [],
   selection: null,
 
+  // Opened again while it is open -- an order saved, deleted or
+  // bulk-deleted from it -- this is a refresh in place
+  // (MApp.Util.keepScroll): search, pages and scroll all stay.
   async open() {
+    const keep = MApp.Sheet.isOpen('sheet-client-orders');
     const listEl = document.getElementById('client-orders-list');
-    const input = document.getElementById('client-orders-search');
-    if (input) input.value = '';
-    this.searchTerm = '';
-    MApp.SearchBox.attach('client-orders-search', term => this.onSearch(term));
+    const stale = MApp.Util.openGuard(this, '_loadSeq');
+    if (!keep) {
+      const input = document.getElementById('client-orders-search');
+      if (input) input.value = '';
+      this.searchTerm = '';
+      MApp.Paging.reset('clientOrder');
+      MApp.SearchBox.attach('client-orders-search', term => this.onSearch(term));
 
-    MApp.Util.renderSkeleton(listEl, 5);
-    MApp.Sheet.open('sheet-client-orders');
+      MApp.Util.renderSkeleton(listEl, 5);
+      MApp.Sheet.open('sheet-client-orders');
+    }
 
     try {
       const res = await MApp.Api.call('getClientOrdersData');
+      if (stale()) return;
       if (!res || !res.success) {
-        MApp.Util.renderError(listEl, res && res.message, () => this.open());
+        MApp.Util.loadFailed(listEl, res && res.message, () => this.open(), keep);
         return;
       }
       this.orders = (res.data || []).map(o => ({
@@ -14751,11 +15019,13 @@ MApp.ClientOrders = {
         _products: (o.lines || []).map(l => `${l.productId} ${l.productName}`).join(' ')
       }));
       this.entries = MApp.Search.index(this.orders, this.SEARCH);
-      MApp.Paging.reset('clientOrder');
       this._applyFilters();
+      const restoreScroll = MApp.Util.keepScroll(listEl);
       this.render();
+      restoreScroll();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this.open());
+      if (stale()) return;
+      MApp.Util.loadFailed(listEl, err && err.message, () => this.open(), keep);
     }
   },
 
@@ -15678,21 +15948,33 @@ MApp.Inspection = {
   // _listReady says the list on screen is drawn from this.lots: not the
   // skeleton, not an error with its Retry -- which a redraw must not paint
   // over (_watchWidth).
-  async load() {
+  //
+  // `keep`: back from a lot's checklist -- the list stays up, ready, and
+  // comes back under the same search, filter, pages and scroll
+  // (MApp.Util.keepScroll), so the next lot down is where it was.
+  async load(opts) {
+    const keep = !!(opts && opts.keep);
     const listEl = document.getElementById('inspections-list');
-    this._listReady = false;
-    MApp.Util.renderSkeleton(listEl, 4);
+    const stale = MApp.Util.openGuard(this, '_loadSeq');
+    if (!keep) {
+      this._listReady = false;
+      MApp.Util.renderSkeleton(listEl, 4);
+    }
     try {
       const res = await MApp.Api.call('getInspectionLots');
+      if (stale()) return;
       if (!res || !res.success) {
-        MApp.Util.renderError(listEl, res && res.message, () => this.load());
+        MApp.Util.loadFailed(listEl, res && res.message, () => this.load(), keep);
         return;
       }
       this.lots = res.data || [];
       this._listReady = true;
+      const restoreScroll = MApp.Util.keepScroll(listEl);
       this._applyFilters();
+      restoreScroll();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this.load());
+      if (stale()) return;
+      MApp.Util.loadFailed(listEl, err && err.message, () => this.load(), keep);
     }
   },
 
@@ -15867,7 +16149,7 @@ MApp.Inspection = {
   closeChecklist() {
     MApp.Sheet.close('sheet-inspection');
     // Counts and badges on the list may have moved while it was open.
-    if (this._isOpen('sheet-inspections')) this.load();
+    if (this._isOpen('sheet-inspections')) this.load({ keep: true });
   },
 
   async _loadChecklist() {
@@ -17438,7 +17720,12 @@ MApp.Pool = {
     MApp.Shell.showTab('stock');
   },
 
-  async load() {
+  // `keep`: the refresh after an adjustment, a bucket flag, an opening or
+  // a sync -- the buckets stay up and come back under the same search,
+  // filter, pages and scroll (MApp.Util.keepScroll). Without it the pane
+  // starts over, as it should when it opens.
+  async load(opts) {
+    const keep = !!(opts && opts.keep);
     const listEl = document.getElementById('pool-list');
     // The pane is only in the DOM while the Stock tab is showing it, and
     // several things that recalculate the pool -- an opening balance, a
@@ -17446,21 +17733,28 @@ MApp.Pool = {
     // ask for a refresh unconditionally; this is where that costs
     // nothing instead of throwing.
     if (!listEl) return;
-    MApp.Util.renderSkeleton(listEl, 5);
+    const stale = MApp.Util.openGuard(this, '_loadSeq');
+    if (!keep) {
+      MApp.Util.renderSkeleton(listEl, 5);
+      MApp.Paging.reset('pool');
+    }
 
     try {
       const res = await MApp.Api.call('getWarehousePoolData');
+      if (stale()) return;
       if (!res || !res.success) {
-        MApp.Util.renderError(listEl, res && res.message, () => this.load());
+        MApp.Util.loadFailed(listEl, res && res.message, () => this.load(), keep);
         return;
       }
       this.rows = res.data || [];
       this.entries = MApp.Search.index(this.rows, this.SEARCH);
-      MApp.Paging.reset('pool');
       this._applyFilters();
+      const restoreScroll = MApp.Util.keepScroll(listEl);
       this.render();
+      restoreScroll();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this.load());
+      if (stale()) return;
+      MApp.Util.loadFailed(listEl, err && err.message, () => this.load(), keep);
     }
   },
 
@@ -17605,7 +17899,7 @@ MApp.Pool = {
     );
     if (res.success) {
       MApp.Toast.success(res.message || 'Bucket updated.');
-      this.load();
+      this.load({ keep: true });
     }
   },
 
@@ -17686,7 +17980,7 @@ MApp.Pool = {
     const res = await MApp.PoolOpenings.deleteEntry(entry.entryId);
     if (res && res.success) {
       this.renderLedger(row);
-      this.load();
+      this.load({ keep: true });
     }
   },
 
@@ -17854,7 +18148,7 @@ MApp.Pool = {
     if (typeof applied === 'number' && typeof expected === 'number' && applied !== expected) {
       MApp.Toast.action(res.message, 'Got it', () => {});
       this.closeAdjust();
-      this.load();
+      this.load({ keep: true });
       return;
     }
 
@@ -17862,7 +18156,7 @@ MApp.Pool = {
     this.closeAdjust();
     // load(), not open(): the pane is already on screen behind the sheet
     // that just closed, and open() would re-enter the whole tab.
-    this.load();
+    this.load({ keep: true });
   },
 
   // ── Adjustment history ───────────────────────────────────────────────
@@ -17953,10 +18247,15 @@ MApp.PoolOpenings = {
   selection: null,
 
   async open() {
+    // Opened again while it is open -- an opening saved from it -- this is
+    // the refresh in place below, not a fresh list.
+    if (MApp.Sheet.isOpen('sheet-pool-openings')) return this.reload({ keep: true });
+
     const listEl = document.getElementById('pool-openings-list');
     const input = document.getElementById('pool-openings-search');
     if (input) input.value = '';
     this.searchTerm = '';
+    MApp.Paging.reset('poolOpening');
     MApp.SearchBox.attach('pool-openings-search', term => this.onSearch(term));
 
     MApp.Util.renderSkeleton(listEl, 4);
@@ -17965,27 +18264,33 @@ MApp.PoolOpenings = {
   },
 
   // Fetches and draws the list without opening the sheet again. Sheet.open
-  // pushes a history entry every time, so calling open() on a sheet that is
-  // already up leaves a stale one behind and the next Back appears to do
-  // nothing.
-  async reload() {
+  // pushed a history entry every time, so calling open() on a sheet that
+  // was already up left a stale one behind and the next Back appeared to do
+  // nothing. `keep`: after a change, in place -- search, pages and scroll
+  // stay (MApp.Util.keepScroll).
+  async reload(opts) {
+    const keep = !!(opts && opts.keep);
     const listEl = document.getElementById('pool-openings-list');
+    const stale = MApp.Util.openGuard(this, '_loadSeq');
     try {
       const res = await MApp.Api.call('getWarehousePoolOpeningData');
+      if (stale()) return;
       if (!res || !res.success) {
-        MApp.Util.renderError(listEl, res && res.message, () => this.reload());
+        MApp.Util.loadFailed(listEl, res && res.message, () => this.reload(), keep);
         return;
       }
       this.rows = res.data || [];
       this.entries = MApp.Search.index(this.rows, this.SEARCH);
-      MApp.Paging.reset('poolOpening');
       // Whatever the search box still says.
       this.filtered = this.searchTerm.trim()
         ? MApp.Search.run(this.entries, this.searchTerm)
         : this.rows;
+      const restoreScroll = MApp.Util.keepScroll(listEl);
       this.render();
+      restoreScroll();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this.reload());
+      if (stale()) return;
+      MApp.Util.loadFailed(listEl, err && err.message, () => this.reload(), keep);
     }
   },
 
@@ -18243,14 +18548,14 @@ this.processes = procRes && procRes.success ? (procRes.data || []).filter(p => p
     this.open();
     // The server recalculated the pool, so the bucket list behind this
     // sheet is now wrong. A no-op when that pane is not on screen.
-    MApp.Pool.load();
+    MApp.Pool.load({ keep: true });
   },
 
   async remove(row) {
     const res = await this.deleteEntry(row.rowIdx);
     if (res && res.success) {
-      this.reload();
-      MApp.Pool.load();
+      this.reload({ keep: true });
+      MApp.Pool.load({ keep: true });
     }
   },
 

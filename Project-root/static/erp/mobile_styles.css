@@ -410,7 +410,8 @@ textarea:focus-visible,
     max-width: 480px;
     box-shadow: 0 0 48px rgb(0 0 0 / 35%);
   }
-  .mb-toast-stack { left: 50%; right: auto; width: calc(480px - var(--mb-sp-4) * 2); max-width: calc(100% - var(--mb-sp-4) * 2); transform: translateX(-50%); }
+  /* The toast's own wide-screen rule is with the toast (below), not here:
+     here, the base toast rule further down the file overrode it. */
 
   /* The tab-screen FAB is position:fixed (see .mapp-content > .mb-fab), so
      without this it anchors to the window edge and floats outside the 480px
@@ -2558,6 +2559,21 @@ fieldset.mb-field {
 
 @media (prefers-reduced-motion: reduce) {
   .mb-toast { animation: none; }
+}
+
+/* 640px and wider -- a tablet, or a phone turned sideways: centred, at a
+   phone's width. After the rule above on purpose. It used to sit in the
+   640px block at the top of the file, where that rule's left/right won
+   over its left: 50% while its width and translateX(-50%) still applied:
+   every toast was pushed 224px off the left edge, its text unreadable. */
+@media (min-width: 640px) {
+  .mb-toast-stack {
+    left: 50%;
+    right: auto;
+    width: calc(480px - var(--mb-sp-4) * 2);
+    max-width: calc(100% - var(--mb-sp-4) * 2);
+    transform: translateX(-50%);
+  }
 }
 
 /* ── Activity feed (Home) ────────────────────────────────────────────── */
