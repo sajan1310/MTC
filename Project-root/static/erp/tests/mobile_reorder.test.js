@@ -143,22 +143,29 @@ describe('reordering processes', () => {
     // Otherwise the list shows an order the lot numbers do not follow.
     MApp.Util.mutateSimple = jest.fn(async () => ({ success: false }));
     await open();
-    MApp.Process.load = jest.fn();
+    MApp.Api.call.mockClear();
 
     await MApp.Process.move(0, 1);
 
     expect(MApp.Process.processes.map(p => p.processId)).toEqual(['P1', 'P2', 'P3']);
-    expect(MApp.Process.load).not.toHaveBeenCalled();
+    expect(MApp.Api.call).not.toHaveBeenCalled();
   });
 
   test('a success reloads from the server rather than trusting the swap', async () => {
+    // It called MApp.Process.load(), which this module has never had: this
+    // test stubbed one in, while on the phone the reorder saved, the call
+    // threw, and the list kept showing the old order.
     MApp.Util.mutateSimple = jest.fn(async () => ({ success: true }));
     await open();
-    MApp.Process.load = jest.fn();
+    const renumbered = [PROCESSES[1], PROCESSES[0], PROCESSES[2]];
+    MApp.Api.call = jest.fn(async () => ({ success: true, data: renumbered }));
 
     await MApp.Process.move(0, 1);
+    await new Promise(resolve => setTimeout(resolve, 0));
 
-    expect(MApp.Process.load).toHaveBeenCalled();
+    expect(MApp.Api.call).toHaveBeenCalledWith('getProcessData');
+    const names = [...document.querySelectorAll('#process-list-list .mb-card-title')].map(el => el.textContent);
+    expect(names).toEqual(['Painting', 'Welding', 'Packing']);
   });
 
   test('a move off the end sends nothing', async () => {

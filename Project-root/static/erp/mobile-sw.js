@@ -181,7 +181,14 @@
 // camera (Chrome on Android 14+ offered only the gallery) beside Gallery
 // and Remove photo; the Items list shows each item's photo; a tap on a
 // photo opens it full screen. mobile.js and mobile_styles.css carry it.
-const CACHE_NAME = 'erp-mobile-shell-v87';
+// v88: a change no longer starts a list over. After a save, a delete, a
+// lot's status or a sync, a list refreshes in place -- search, filter,
+// pages and scroll kept -- instead of reloading as if just opened, and the
+// screen is no longer redrawn on every start and reconnect when nothing
+// was waiting to sync (this worker now only says so when something was).
+// And toasts are readable on a tablet: from 640px wide every toast sat
+// 224px off the left edge. mobile.js, mobile_styles.css and this file.
+const CACHE_NAME = 'erp-mobile-shell-v88';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so
@@ -372,6 +379,8 @@ self.addEventListener('sync', event => {
 
 async function flushOutboxInBackground() {
   const pending = await OfflineCache.outbox.listPending();
+  // Entries the server answered, either way -- see the notice below.
+  let settled = 0;
   for (const entry of pending) {
     let res;
     try {
@@ -380,11 +389,12 @@ async function flushOutboxInBackground() {
       if (err && err.isNetworkError) {
         // Still offline -- stop here, leave the rest pending for the
         // next sync event (the browser will retry with backoff).
-        return;
+        break;
       }
       // A real HTTP-level failure (e.g. a CSRF token that went stale
       // while this page was closed) -- not safe to retry blindly.
       await OfflineCache.outbox.markFailed(entry.id, err.message);
+      settled += 1;
       continue;
     }
 
@@ -393,10 +403,15 @@ async function flushOutboxInBackground() {
     } else {
       await OfflineCache.outbox.markFailed(entry.id, res && res.message);
     }
+    settled += 1;
   }
 
   // Let any open page(s) know, so an on-screen badge/list reflects this
   // background replay immediately instead of only on next visit/reload.
+  // Only when something was replayed: the page redraws its screen on this
+  // notice, and every start of the app arms a sync -- which, with nothing
+  // queued, redrew whatever the operator had just opened.
+  if (settled === 0) return;
   const clientsList = await self.clients.matchAll({ type: 'window' });
   for (const client of clientsList) {
     client.postMessage({ type: 'outbox-flushed' });
