@@ -36,6 +36,7 @@ import psycopg2.extras
 import database
 from . import items_service
 from . import locks
+from . import lot_receipts
 from . import units_service
 from .current_user import get_current_user_id
 from .. import config_maps
@@ -122,7 +123,8 @@ _ANCHOR_CTE = """
 def _iter_completed_production_components(cur):
     """Yields one normalized dict per ITEM-sourced component line on a
     Completed production lot -- the SINGLE definition of "production
-    consumption" in this codebase.
+    consumption" in this codebase. A lot received in part and not Completed
+    yields the received share of each component (migration 055).
 
     Both the Current Stock formula (_get_stock_terms's
     PRODUCTION term) and the Item Ledger (get_item_ledger_data) read this
@@ -153,18 +155,29 @@ def _iter_completed_production_components(cur):
 
     item_unit_map = items_service.get_item_unit_info_map(cur)
     units_map = units_service.get_units_map(cur)
+    # A lot received in part and not Completed has used up the share of each
+    # component its receipts account for (migration 055) -- the same shares
+    # _production_consumed_map scales by.
+    received_shares = lot_receipts.component_shares(cur)
 
     cur.execute(
         f"""
-        SELECT p.lot_number, p.production_date, p.process_id, p.product_name,
-               p.output_item_name, p.components_consumed,
+        SELECT p.id, p.status, p.lot_number, p.production_date, p.process_id,
+               p.product_name, p.output_item_name, p.components_consumed,
                {_LOT_MOMENT_SQL} AS stock_at
         FROM {table} p
-        WHERE p.deleted_at IS NULL AND lower(p.status) = 'completed'
-        """
+        WHERE p.deleted_at IS NULL
+          AND (lower(p.status) = 'completed' OR p.id = ANY(%s))
+        """,
+        (list(received_shares),),
     )
     for row in cur.fetchall():
-        for comp in row["components_consumed"] or []:
+        lot_shares = (
+            None
+            if str(row["status"] or "").strip().lower() == "completed"
+            else received_shares.get(row["id"], {})
+        )
+        for index, comp in enumerate(row["components_consumed"] or []):
             if not isinstance(comp, dict):
                 continue
             if str(comp.get("sourceType") or "").strip().upper() == "POOL":
@@ -174,6 +187,11 @@ def _iter_completed_production_components(cur):
                 continue
             size = str(comp.get("size") or "").strip()
             entered_qty = float(comp.get("qty") or 0)
+            if lot_shares is not None:
+                share = lot_shares.get(index)
+                if not share:
+                    continue
+                entered_qty *= share
 
             # Blank unit = "already in the item's Base Unit" -- an
             # unconvertible unit must never block the Stock computation,
@@ -360,6 +378,54 @@ _PRODUCTION_CONSUMED_SQL = (
 """
 )
 
+# The same term for lots received in part and not Completed (migration 055):
+# each ITEM component scaled by the share of it the lot's receipts account
+# for. The shares come from lot_receipts.component_shares -- which colour a
+# component belongs to is a heuristic Python already owns, and it is not
+# re-implemented in SQL -- and arrive as three parallel arrays, one entry per
+# (lot, component index). A separate statement rather than a branch of the
+# one above, so the query every Stock read runs is unchanged when nothing is
+# received in part, which is most of the time.
+#
+# The moment is the lot's own, as for a Completed lot: the materials left on
+# the lot's date, so a count taken while they were with the contractor
+# already holds their absence and must not lose them a second time.
+_RECEIVED_LOT_CONSUMED_SQL = (
+    """
+    WITH """
+    + _ANCHOR_CTE
+    + """,
+    share AS MATERIALIZED (
+        SELECT *
+        FROM unnest(%(lot_ids)s::int[], %(indexes)s::int[], %(shares)s::numeric[])
+             AS s(lot_id, idx, share)
+    ),
+    comps AS MATERIALIZED (
+        SELECT lower(btrim(c.comp ->> 'itemName'))                 AS name_k,
+               lower(btrim(COALESCE(c.comp ->> 'size', '')))       AS size_k,
+               btrim(COALESCE(c.comp ->> 'unit', ''))              AS unit,
+               COALESCE(NULLIF(c.comp ->> 'qty', '')::numeric, 0) * s.share AS qty,
+               """
+    + _LOT_MOMENT_SQL
+    + """                                       AS at
+        FROM share s
+        JOIN {table} p ON p.id = s.lot_id
+        CROSS JOIN LATERAL (SELECT p.components_consumed -> s.idx AS comp) c
+        WHERE p.deleted_at IS NULL
+          AND lower(p.status) <> 'completed'
+          AND jsonb_typeof(p.components_consumed) = 'array'
+          AND jsonb_typeof(c.comp) = 'object'
+          AND upper(btrim(COALESCE(c.comp ->> 'sourceType', ''))) <> 'POOL'
+          AND btrim(COALESCE(c.comp ->> 'itemName', '')) <> ''
+    )
+    SELECT c.name_k, c.size_k, c.unit, SUM(c.qty) AS qty
+    FROM comps c
+    LEFT JOIN anchor a ON a.name_k = c.name_k AND a.size_k = c.size_k
+    WHERE a.at IS NULL OR c.at > a.at
+    GROUP BY 1, 2, 3
+"""
+)
+
 
 # The same aggregation, restricted to a named set of items.
 #
@@ -403,9 +469,9 @@ def _movement_map(cur, keys: list | None = None) -> dict:
 
 
 def _production_consumed_map(cur, keys: list | None = None) -> dict:
-    """{"name|size": base-unit qty} consumed by Completed production lots
-    that took effect after each item's newest count (all of them, for an
-    item never counted).
+    """{"name|size": base-unit qty} consumed by Completed production lots,
+    and by the received share of lots received in part, that took effect
+    after each item's newest count (all of them, for an item never counted).
 
     The PRODUCTION term of the Current Stock formula. Equivalent to folding
     _iter_completed_production_components (which is retained, because the Item
@@ -434,6 +500,25 @@ def _production_consumed_map(cur, keys: list | None = None) -> dict:
     # signatures symmetrical.
     cur.execute(_PRODUCTION_CONSUMED_SQL.format(table=table))
     rows = cur.fetchall()
+
+    # Lots received in part and not yet Completed (migration 055).
+    received_shares = lot_receipts.component_shares(cur)
+    if received_shares:
+        flat = [
+            (lot_id, index, share)
+            for lot_id, per_index in received_shares.items()
+            for index, share in per_index.items()
+        ]
+        cur.execute(
+            _RECEIVED_LOT_CONSUMED_SQL.format(table=table),
+            {
+                "lot_ids": [lot_id for lot_id, _i, _s in flat],
+                "indexes": [index for _l, index, _s in flat],
+                "shares": [share for _l, _i, share in flat],
+            },
+        )
+        rows = list(rows) + cur.fetchall()
+
     if not rows:
         return {}
 

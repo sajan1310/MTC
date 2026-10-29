@@ -177,7 +177,9 @@ describe('it survives a narrow card', () => {
     MApp.Production.render();
 
     expect(document.querySelector('.mapp-lot-date').textContent).toBe('—');
-    expect(actions()).toHaveLength(3);
+    // Receive, Edit, Sheet, Delete: an open lot can be received against
+    // (2026-10-29).
+    expect(actions()).toHaveLength(4);
   });
 });
 

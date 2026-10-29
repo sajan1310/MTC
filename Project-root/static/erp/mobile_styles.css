@@ -1191,6 +1191,17 @@ body.mb-selecting select.mb-chip-select { pointer-events: none; }
 }
 
 .mapp-lot-extra { white-space: nowrap; }
+/* "Received 4 · Balance 6" on an open lot's card (migration 055). */
+.mapp-lot-received { font-weight: 700; color: var(--mb-ink); }
+
+/* Receive sheet: a colour's quantity with its "All" button beside it. */
+.mapp-receive-line {
+  display: flex;
+  gap: var(--mb-sp-2);
+  align-items: stretch;
+}
+.mapp-receive-line .mapp-receive-qty { flex: 1 1 auto; min-width: 0; }
+.mapp-receive-line .mapp-receive-all { flex: 0 0 auto; width: auto; }
 
 /* ── Log Lot form ─────────────────────────────────────────────────────
    Size, model and type narrow the process list; side by side they read

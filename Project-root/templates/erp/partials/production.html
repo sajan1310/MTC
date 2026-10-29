@@ -350,6 +350,61 @@
   </div>
 </div>
 
+<!-- Receive processed items against a lot (migration 055). A lot that comes
+     back in parts records each delivery here, colour by colour: what came
+     back goes into the Warehouse Pool when it is received, and the rest
+     stays as the lot's balance. Filled by App.Production.renderReceiveModal. -->
+<div class="modal fade" id="receiveLotModal" tabindex="-1" aria-hidden="true" aria-labelledby="receiveLotTitle">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-success text-white">
+        <h5 class="modal-title fw-bold" id="receiveLotTitle" style="font-family: 'Outfit', sans-serif;">Receive Processed Items</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <div id="receiveLotSummary" class="mb-3"></div>
+        <div id="receiveLotClosedNote" class="alert alert-secondary py-2 mb-3" role="note" style="display:none;"></div>
+        <form id="receiveLotForm" autocomplete="off" onsubmit="App.Production.submitReceipt(event)">
+          <div class="table-responsive mb-3">
+            <table class="table table-bordered bg-white align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th scope="col">Colour</th>
+                  <th scope="col" class="text-end">Lot Qty</th>
+                  <th scope="col" class="text-end">Received</th>
+                  <th scope="col" class="text-end">Balance</th>
+                  <th scope="col" style="width: 30%;">Receiving now</th>
+                </tr>
+              </thead>
+              <tbody id="receiveLotLines"></tbody>
+            </table>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label fw-bold" for="receiveLotDate">Received on *</label>
+              <input type="date" id="receiveLotDate" class="form-control" required>
+            </div>
+            <div class="col-md-8">
+              <label class="form-label" for="receiveLotRemarks">Remarks</label>
+              <input type="text" id="receiveLotRemarks" class="form-control" maxlength="500"
+                placeholder="e.g. challan no., vehicle, who brought it">
+            </div>
+          </div>
+          <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-3">
+            <div id="receiveLotTotal" class="fw-bold" aria-live="polite"></div>
+            <div>
+              <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Close</button>
+              <button type="submit" id="receiveLotSubmitBtn" class="btn btn-success fw-bold px-4">Save Receipt</button>
+            </div>
+          </div>
+        </form>
+        <h6 class="text-secondary border-bottom pb-2 mt-4 mb-2 fw-bold">Received so far</h6>
+        <div id="receiveLotHistory"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Colorwise Production Summary Modal -->
 <div class="modal fade" id="colorwiseSummaryModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-fullscreen-sm-down">

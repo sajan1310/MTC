@@ -541,6 +541,9 @@ TABLE_NAMES = {
     # Activates contractors_service's delete-guard/rename-cascade and
     # bom_service's delete-guard, all guarded no-ops until now.
     "PRODUCTION": "erp.production",
+    # Processed items received against a lot, in parts (migration 055).
+    "PRODUCTION_RECEIPTS": "erp.production_receipts",
+    "PRODUCTION_RECEIPT_LINES": "erp.production_receipt_lines",
     # Activates contractors_service._get_dispatch_logistics_payable_rows,
     # bom_service._get_product_ids_in_use's DISPATCH leg, and
     # warehouse_service._recalculate_warehouse_pool's Pass 3 -- all guarded

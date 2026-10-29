@@ -50,6 +50,7 @@ from datetime import date
 import psycopg2.extras
 
 import database
+from . import lot_receipts
 from . import process_service
 from . import rename_utils
 from .current_user import get_current_user_id
@@ -915,13 +916,25 @@ def get_contractor_ledger_data():
             qty_col = config_maps.to_snake_case("qty")
             process_id_col = config_maps.to_snake_case("processId")
             cur.execute(
-                f"SELECT {status_col} AS status, {assigned_col} AS assigned_to, {payable_col} AS payable, "
+                f"SELECT id, {status_col} AS status, {assigned_col} AS assigned_to, {payable_col} AS payable, "
                 f"{rate_col} AS contractor_rate, {extra_col} AS extra_charge_amount, {qty_col} AS qty, "
                 f"{process_id_col} AS process_id FROM {table} WHERE deleted_at IS NULL"
             )
-            for row in cur.fetchall():
+            lots = cur.fetchall()
+            receipts_by_lot = lot_receipts.load_receipts(cur)
+            for row in lots:
+                payable = float(row["payable"] or 0)
+                qty = float(row["qty"] or 0)
                 if str(row["status"] or "").strip().lower() != "completed":
-                    continue
+                    # A lot received in part is owed for what came back
+                    # (migration 055); one nobody received against, nothing.
+                    received = sum(
+                        r["qty"] for r in receipts_by_lot.get(row["id"]) or []
+                    )
+                    if not received or qty <= 0:
+                        continue
+                    payable = payable * received / qty
+                    qty = received
                 contractor_name = str(row["assigned_to"] or "").strip()
                 if not contractor_name:
                     continue
@@ -936,8 +949,6 @@ def get_contractor_ledger_data():
                     and float(row["extra_charge_amount"] or 0) == 0
                 ):
                     continue
-                payable = float(row["payable"] or 0)
-                qty = float(row["qty"] or 0)
                 process_id = str(row["process_id"] or "").strip().lower()
                 process_name = process_name_by_id.get(process_id, "Uncategorized")
 
@@ -1049,16 +1060,25 @@ def get_contractor_account_ledger(contractor_name):
             product_col = config_maps.to_snake_case("productName")
             lot_col = config_maps.to_snake_case("lotNumber")
             cur.execute(
-                f"SELECT {status_col} AS status, {assigned_col} AS assigned_to, {payable_col} AS payable, "
+                f"SELECT id, {status_col} AS status, {assigned_col} AS assigned_to, {payable_col} AS payable, "
                 f"{rate_col} AS contractor_rate, {extra_type_col} AS extra_charge_type, "
                 f"{extra_amount_col} AS extra_charge_amount, {date_col} AS prod_date, "
-                f"{process_id_col} AS process_id, {product_col} AS product_name, {lot_col} AS lot_number "
+                f"{process_id_col} AS process_id, {product_col} AS product_name, {lot_col} AS lot_number, "
+                f"qty, completed_at::date AS completed_day "
                 f"FROM {table} WHERE deleted_at IS NULL"
             )
-            for row in cur.fetchall():
-                if str(row["status"] or "").strip().lower() != "completed":
-                    continue
-                if str(row["assigned_to"] or "").strip().lower() != name.lower():
+            lots = [
+                row
+                for row in cur.fetchall()
+                if str(row["assigned_to"] or "").strip().lower() == name.lower()
+            ]
+            receipts_by_lot = lot_receipts.load_receipts(
+                cur, [row["id"] for row in lots]
+            )
+            for row in lots:
+                completed = str(row["status"] or "").strip().lower() == "completed"
+                receipts = receipts_by_lot.get(row["id"]) or []
+                if not completed and not receipts:
                     continue
                 # Gate on whether a rate card OR an extra charge applied --
                 # see get_contractor_ledger_data's identical comment.
@@ -1074,16 +1094,47 @@ def get_contractor_account_ledger(contractor_name):
                 description = f"{process_name} — {row['product_name'] or ''}"
                 if extra_charge_type:
                     description += f" (+ {extra_charge_type})"
-                entries.append(
-                    {
-                        "date": date_utils.to_display_string(row["prod_date"]) or "",
-                        "dateRaw": date_utils.to_iso_string(row["prod_date"]) or "",
-                        "type": "Payable",
-                        "ref": row["lot_number"] or "-",
-                        "description": description,
-                        "amount": payable,
-                    }
-                )
+
+                def payable_entry(day, amount, text):
+                    entries.append(
+                        {
+                            "date": date_utils.to_display_string(day) or "",
+                            "dateRaw": date_utils.to_iso_string(day) or "",
+                            "type": "Payable",
+                            "ref": row["lot_number"] or "-",
+                            "description": text,
+                            "amount": amount,
+                        }
+                    )
+
+                if not receipts:
+                    payable_entry(row["prod_date"], payable, description)
+                    continue
+
+                # Received in parts (migration 055): owed as each part came
+                # back, dated by its receipt, so the history does not move
+                # when the lot is finished. A lot Completed with a balance
+                # still out owes that balance from the day it was completed.
+                lot_qty = float(row["qty"] or 0)
+                if lot_qty <= 0:
+                    continue
+                received = 0.0
+                for r in receipts:
+                    received += r["qty"]
+                    payable_entry(
+                        r["date"],
+                        payable * r["qty"] / lot_qty,
+                        f"{description} — received {lot_receipts.fmt_qty(r['qty'])} "
+                        f"of {lot_receipts.fmt_qty(lot_qty)}",
+                    )
+                rest = lot_qty - received
+                if completed and rest > 0:
+                    payable_entry(
+                        row["completed_day"] or row["prod_date"],
+                        payable * rest / lot_qty,
+                        f"{description} — rest of the lot "
+                        f"({lot_receipts.fmt_qty(rest)}), on completion",
+                    )
 
         for d in _get_dispatch_logistics_payable_rows(cur, name):
             entries.append(

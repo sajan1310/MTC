@@ -73,6 +73,7 @@ import database
 from . import bill_service
 from . import contractors_service
 from . import dispatch_service
+from . import lot_receipts
 from . import po_service
 from . import process_service
 from . import production_service
@@ -507,21 +508,34 @@ def _get_active_production_lots(cur) -> list:
         """,
         (list(_ACTIVE_PRODUCTION_STATUSES),),
     )
-    return [
-        {
-            # id and production_date are read by _get_stage_rollups only:
-            # the first so a colour-split lot counts once rather than once
-            # per colour, the second for each stage's oldest-lot age.
-            "rowIdx": row["id"],
-            "date": row["production_date"],
-            "status": row["status"],
-            "processId": row["process_id"] or "",
-            "productName": row["product_name"] or "",
-            "qty": float(row["qty"] or 0),
-            "colorBreakdown": row["color_breakdown"] or [],
-        }
-        for row in cur.fetchall()
-    ]
+    rows = cur.fetchall()
+    # What has already come back is not work in progress any more: a lot
+    # received in part (migration 055) is on the floor for its balance only.
+    receipts_by_lot = lot_receipts.load_receipts(cur, [row["id"] for row in rows])
+    lots = []
+    for row in rows:
+        qty = float(row["qty"] or 0)
+        breakdown = row["color_breakdown"] or []
+        receipts = receipts_by_lot.get(row["id"])
+        if receipts:
+            qty, breakdown = lot_receipts.outstanding(
+                breakdown, qty, lot_receipts.received_amounts(receipts)
+            )
+        lots.append(
+            {
+                # id and production_date are read by _get_stage_rollups only:
+                # the first so a colour-split lot counts once rather than once
+                # per colour, the second for each stage's oldest-lot age.
+                "rowIdx": row["id"],
+                "date": row["production_date"],
+                "status": row["status"],
+                "processId": row["process_id"] or "",
+                "productName": row["product_name"] or "",
+                "qty": qty,
+                "colorBreakdown": breakdown,
+            }
+        )
+    return lots
 
 
 def _get_dispatch_trend(cur) -> list:

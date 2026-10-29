@@ -63,6 +63,7 @@ import psycopg2.extras
 import database
 from . import items_service
 from . import locks
+from . import lot_receipts
 from . import process_service
 from . import units_service
 from .current_user import get_current_user_id
@@ -989,16 +990,35 @@ def _build_warehouse_pool_buckets(
         # settled), so the rows are materialised here and walked again where
         # Pass 2 needs them. Measured on 7,200 lots: the second scan was
         # ~100 ms of a ~474 ms rebuild.
+        lot_columns = """
+            id, process_id, output_item_name, product_id, color_breakdown, qty,
+            lot_number, production_date, created_at, completed_at, remarks,
+            components_consumed
+        """
         cur.execute(
             f"""
-            SELECT process_id, output_item_name, product_id, color_breakdown, qty,
-                   lot_number, production_date, created_at, completed_at, remarks,
-                   components_consumed
+            SELECT {lot_columns}
             FROM {table}
             WHERE deleted_at IS NULL AND lower(status) = 'completed'
             """
         )
-        completed_lots = cur.fetchall()
+
+        def received_but_not_completed(ids):
+            cur.execute(
+                f"SELECT {lot_columns} FROM {table} "
+                "WHERE deleted_at IS NULL AND lower(status) <> 'completed' "
+                "AND id = ANY(%s)",
+                (list(ids),),
+            )
+            return cur.fetchall()
+
+        # Lots received in parts (migration 055) join as one slice per
+        # receipt, each dated when it was received, plus the rest of a
+        # Completed lot. A lot nobody received against passes through as it
+        # always did. See lot_receipts.pool_rows.
+        completed_lots = lot_receipts.pool_rows(
+            cur, cur.fetchall(), received_but_not_completed
+        )
 
         for row in completed_lots:
             lot_ref = str(row["lot_number"] or "")
@@ -1035,16 +1055,28 @@ def _build_warehouse_pool_buckets(
                 continue
             product_tag = str(row["product_id"] or "").strip()
             color_breakdown = row["color_breakdown"] or []
+            # Set on a slice of a lot received in parts (lot_receipts.
+            # pool_rows): every credit below is scaled to what that receipt
+            # brought back of the entry it comes from. Scaling the credits
+            # rather than the colour breakdown keeps each bucket's NAME
+            # exactly what the whole lot would credit.
+            receipt_shape = row.get("_receipt_shape")
+            receipt_amounts = row.get("_receipt_amounts")
 
             if color_breakdown:
                 # Zero/negative kept -- a negative per-color qty is a
                 # correction/reversal lot that credits this bucket back
                 # down, mirroring the flat (non-color) path below which
                 # never filtered by sign either.
-                def credit_color(color, qty, counts=True):
+                def credit_color(color, qty, counts=True, source=None):
                     color = str(color or "").strip()
                     if not color:
                         return
+                    if receipt_shape is not None:
+                        qty = receipt_shape.entry_qty(source, qty, receipt_amounts)
+                        if not qty:
+                            # Nothing of this colour in this receipt.
+                            return
                     bucket = get_bucket(
                         output_item_name, process_id, product_tag, color
                     )
@@ -1226,6 +1258,7 @@ def _build_warehouse_pool_buckets(
                                         primary_entry, fixed + cell_entries, axis_order
                                     ),
                                     cell_qty,
+                                    source=primary_entry,
                                 )
                         combined = True
                     else:
@@ -1250,6 +1283,7 @@ def _build_warehouse_pool_buckets(
                                         primary_entry, independent, axis_order
                                     ),
                                     primary_entry.get("qty"),
+                                    source=primary_entry,
                                 )
                             combined = True
 
@@ -1272,9 +1306,14 @@ def _build_warehouse_pool_buckets(
                             entry.get("color"),
                             entry.get("qty"),
                             counts=entry.get("countsTowardTotal") is not False,
+                            source=entry,
                         )
             else:
                 qty = float(row["qty"] or 0)
+                if receipt_shape is not None:
+                    qty = receipt_shape.entry_qty(None, qty, receipt_amounts)
+                    if not qty:
+                        continue
                 bucket = get_bucket(output_item_name, process_id, product_tag, "")
                 note_credit(bucket, lot_at)
                 if not frozen(bucket, freeze_at):
@@ -1313,6 +1352,7 @@ def _build_warehouse_pool_buckets(
             lot_at = _effective_at(lot_date, row.get("created_at"))
             freeze_at = _lot_freeze_at(row, lot_at)
             lot_remarks = str(row["remarks"] or "")
+            receipt_shape = row.get("_receipt_shape")
             for comp in row["components_consumed"] or []:
                 comp = comp or {}
                 if str(comp.get("sourceType") or "").strip().upper() != "POOL":
@@ -1321,6 +1361,14 @@ def _build_warehouse_pool_buckets(
                 if not item_name:
                     continue
                 qty = float(comp.get("qty") or 0)
+                if receipt_shape is not None:
+                    # A slice of a lot received in parts uses up only what
+                    # went into the goods it brought back -- see Pass 1.
+                    qty = receipt_shape.component_qty(
+                        comp, qty, row["_receipt_amounts"]
+                    )
+                    if not qty:
+                        continue
 
                 unit = str(comp.get("unit") or "").strip()
                 if unit:
