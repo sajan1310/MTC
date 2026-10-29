@@ -199,7 +199,11 @@
 // has come back and the balance, and its Receive button records a
 // delivery colour by colour; Completed or Cancelled on a partly received
 // lot asks first. mobile.js and mobile_styles.css carry it.
-const CACHE_NAME = 'erp-mobile-shell-v90';
+// v91: the inspection checklist shows each item's Items Master photo; a tap
+// shows it full screen, and the inspector can take or pick a new one from
+// the checklist ("Change photo" in the viewer, a camera where there is
+// none). mobile.js and mobile_styles.css carry it.
+const CACHE_NAME = 'erp-mobile-shell-v91';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

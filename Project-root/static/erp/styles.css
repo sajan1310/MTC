@@ -5140,3 +5140,54 @@
     top: 0;
   }
 }
+
+/* An inspection row's Items Master photo (inspection.js _photoCell): a
+   thumbnail that opens App.PhotoViewer. */
+.insp-photo-thumb {
+  display: block;
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 6px;
+  cursor: zoom-in;
+}
+
+/* App.PhotoViewer (core.js): a photo filling the window, over the dialog
+   it is mounted in. Dark around the photo; the bar holds its name, "Change
+   photo" when offered, and close. */
+.photo-viewer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  background: rgb(15 18 22 / 94%);
+}
+.photo-viewer-overlay[hidden] { display: none; }
+
+.photo-viewer-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  color: #fff;
+}
+
+.photo-viewer-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.photo-viewer-overlay img {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  padding: 0 1rem 1rem;
+  object-fit: contain;
+  cursor: zoom-out;
+}

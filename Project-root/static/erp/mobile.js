@@ -11716,18 +11716,32 @@ MApp.Items = {
 // photo; it sits above every other sheet because it opens over the form.
 // ================================================================
 MApp.PhotoViewer = {
-  open(src, title) {
+  _onChange: null,
+
+  // `opts.onChange`, when given, puts a "Change photo" button under the
+  // photo (an inspection row whose item the inspector may re-photograph);
+  // it closes the viewer and calls back.
+  open(src, title, opts) {
     const img = document.getElementById('photo-viewer-img');
     if (!src || !img) return;
     img.src = src;
     img.alt = title ? `Photo of ${title}` : 'Photo';
     const titleEl = document.getElementById('photo-viewer-title');
     if (titleEl) titleEl.textContent = title || 'Photo';
+    this._onChange = (opts && opts.onChange) || null;
+    const footer = document.getElementById('photo-viewer-footer');
+    if (footer) footer.hidden = !this._onChange;
     MApp.Sheet.open('sheet-photo-viewer');
   },
 
   close() {
     MApp.Sheet.close('sheet-photo-viewer');
+  },
+
+  change() {
+    const onChange = this._onChange;
+    this.close();
+    if (onChange) onChange();
   }
 };
 
@@ -16545,6 +16559,10 @@ MApp.Inspection = {
     // wide screen the details and the review move beside the checklist.
     const facts = [lot.lotNumber, lot.date, `${MApp.Util.formatQty(lot.qty)} units`]
       .concat(lot.colors.length ? [lot.colors.join(', ')] : []);
+    // A photo column when anything on this sheet has a photo, or an Items
+    // Master item the inspector can photograph; a lot of Warehouse Pool
+    // rows alone looks exactly as it did.
+    this._withPhotos = d.items.some(i => i.photoUrl || i.canSetPhoto);
     body.innerHTML = `
       <div class="mb-insp-layout">
         <div class="mb-insp-head">
@@ -16560,7 +16578,7 @@ MApp.Inspection = {
         <div class="mb-insp-main">
           ${this._bannerHtml(d, e)}
           <div class="mb-insp-progress" id="inspection-progress" role="status" aria-live="polite"></div>
-          <div class="mb-insp-list" role="list">
+          <div class="mb-insp-list${this._withPhotos ? ' mb-insp-with-photos' : ''}" role="list">
             ${d.items.length
               ? this._itemHeadHtml() + d.items.map(item => this._itemHtml(item, e, closed)).join('')
               : '<div class="mb-field-hint">This lot has nothing on its Production Sheet to inspect.</div>'}
@@ -16580,6 +16598,116 @@ MApp.Inspection = {
   _bindRow(row) {
     const box = row.querySelector('[data-insp-key]');
     if (box) box.addEventListener('change', () => this.toggle(box.dataset.inspKey));
+    const photo = row.querySelector('[data-insp-photo]');
+    if (photo) {
+      // The row is the box's label: a tap on the photo opens it, and must
+      // not tick the item as well.
+      photo.addEventListener('click', ev => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const key = row.dataset.inspRow;
+        const item = this.data && this.data.items.find(i => i.key === key);
+        if (!item) return;
+        if (item.photoUrl) {
+          MApp.PhotoViewer.open(item.photoUrl, this._photoTitle(item),
+            item.canSetPhoto ? { onChange: () => this.choosePhoto(key) } : null);
+        } else {
+          this.choosePhoto(key);
+        }
+      });
+      // Offline, or the photo was removed since: no broken-image icon.
+      const img = photo.querySelector('img');
+      if (img) img.addEventListener('error', () => img.remove());
+    }
+  },
+
+  _photoTitle(item) {
+    return [item.itemName, item.size].filter(Boolean).join(' · ');
+  },
+
+  // The item's Items Master photo, small, beside its box: a tap shows it
+  // full screen, with "Change photo" under it. An item with none shows a
+  // camera to add one. A row with no Items Master item (Warehouse Pool)
+  // keeps an empty slot so the names stay in line.
+  _photoHtml(item, e) {
+    if (!this._withPhotos) return '';
+    const title = e(this._photoTitle(item));
+    if (item.photoUrl) {
+      return `<button type="button" class="mb-insp-photo" data-insp-photo aria-label="View photo of ${title}">
+          <img src="${e(item.photoUrl)}" alt="" loading="lazy" decoding="async">
+        </button>`;
+    }
+    if (item.canSetPhoto) {
+      return `<button type="button" class="mb-insp-photo mb-insp-photo-add" data-insp-photo aria-label="Add a photo of ${title}">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h3l2-3h8l2 3h3v12H3z"/><circle cx="12" cy="13" r="3.5"/></svg>
+        </button>`;
+    }
+    return '<span class="mb-insp-photo mb-insp-photo-none" aria-hidden="true"></span>';
+  },
+
+  // Take a photo or pick one, shrink it, and put it on the row's Items
+  // Master item (setInspectionItemPhoto). Two routes, as on the item form:
+  // Chrome on Android 14+ offers only the gallery to a plain image input.
+  async choosePhoto(key) {
+    const item = this.data && this.data.items.find(i => i.key === key);
+    if (!item || !item.canSetPhoto) return;
+    const picked = await MApp.Picker.open({
+      title: item.photoUrl ? 'Change photo' : 'Add photo',
+      searchable: false,
+      items: [
+        { value: 'camera', label: 'Take photo' },
+        { value: 'gallery', label: 'Choose from gallery' }
+      ]
+    });
+    if (!picked) return;
+    const file = await this._pickFile(picked.value === 'camera');
+    if (!file) return;
+    let dataUrl;
+    try {
+      dataUrl = await MApp.Util.resizeImageToBase64(file, 800);
+    } catch (err) {
+      MApp.Toast.error(err.message || 'Could not read that photo.');
+      return;
+    }
+    await this.savePhoto(key, dataUrl);
+  },
+
+  _pickFile(camera) {
+    return new Promise(resolve => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      if (camera) input.setAttribute('capture', 'environment');
+      input.hidden = true;
+      input.addEventListener('change', () => {
+        resolve(input.files && input.files[0] ? input.files[0] : null);
+        input.remove();
+      });
+      document.body.appendChild(input);
+      input.click();
+    });
+  },
+
+  async savePhoto(key, dataUrl) {
+    const d = this.data;
+    if (!d) return;
+    try {
+      const res = await MApp.Api.mutate('setInspectionItemPhoto', this.rowIdx, key, dataUrl);
+      if (!res || !res.success) {
+        MApp.Toast.error((res && res.message) || 'The photo was not saved.');
+        return;
+      }
+      // The photo is the item's: every row of the same item and size shows it.
+      const same = i => String(i.itemName).toLowerCase() === String(res.data.itemName).toLowerCase()
+        && String(i.size || '').toLowerCase() === String(res.data.size || '').toLowerCase();
+      d.items.filter(same).forEach(i => {
+        i.photoUrl = res.data.photoUrl;
+        if (this.data === d) this._repaintRow(i);
+      });
+      MApp.Toast.success(res.message || 'Photo saved.');
+    } catch (err) {
+      MApp.Toast.error((err && err.message) || 'No connection. The photo was not saved.');
+    }
   },
 
   _bannerHtml(d, e) {
@@ -16608,7 +16736,7 @@ MApp.Inspection = {
   _itemHeadHtml() {
     return `
       <div class="mb-insp-thead" aria-hidden="true">
-        <span></span><span>Item</span><span>Size</span><span>Colour</span><span>Specification</span><span class="mb-insp-num">Qty</span>
+        <span></span>${this._withPhotos ? '<span>Photo</span>' : ''}<span>Item</span><span>Size</span><span>Colour</span><span>Specification</span><span class="mb-insp-num">Qty</span>
       </div>`;
   },
 
@@ -16628,6 +16756,7 @@ MApp.Inspection = {
     return `
       <label class="${cls}" role="listitem" data-insp-row="${e(item.key)}">
         <input type="checkbox" class="mb-insp-check" data-insp-key="${e(item.key)}"${ticked ? ' checked' : ''}${off}>
+        ${this._photoHtml(item, e)}
         <span class="mb-insp-item">
           <span class="mb-insp-name">${e(item.itemName)} ${badge}</span>
           ${meta ? `<span class="mb-insp-meta">${meta}</span>` : ''}

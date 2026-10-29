@@ -496,7 +496,11 @@
 // each open lot's received and balance quantities, and a Receive button
 // records what came back, colour by colour; marking a partly received lot
 // Completed or Cancelled asks first. production.js is precached.
-const CACHE_NAME = 'erp-shell-v98';
+// v99: the inspection checklist shows each item's Items Master photo; a
+// click shows it large (App.PhotoViewer, core.js), and an inspector can add
+// or change the photo from the checklist. inspection.js, core.js and
+// styles.css are precached.
+const CACHE_NAME = 'erp-shell-v99';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

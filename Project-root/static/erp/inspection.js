@@ -224,12 +224,92 @@ App.Inspection = {
     const name = closed ? escapeHtml(item.itemName) : `<label class="form-check-label" for="${escapeHtml(id)}">${escapeHtml(item.itemName)}</label>`;
     return `<tr data-insp-row="${escapeHtml(item.key)}"${ticked ? ' class="table-success"' : ''}>
       <td class="text-center">${tick}</td>
+      ${this._withPhotos() ? `<td class="text-center">${this._photoCell(item)}</td>` : ''}
       <td>${name}${badge}</td>
       <td>${escapeHtml(item.size)}</td>
       <td>${escapeHtml(item.color)}</td>
       <td>${escapeHtml(item.narration)}</td>
       <td class="text-end text-nowrap">${escapeHtml(formatQty(item.qty))}${unit}${this._was(item)}</td>
     </tr>`;
+  },
+
+  // ── Item photos ───────────────────────────────────────────────────────
+  // Each row shows its Items Master photo (photoUrl, loaded only when the
+  // row is shown); a click shows it large, with "Change photo". An item
+  // with none offers "Add photo". A Warehouse Pool row has no Items Master
+  // item, so no photo. The column appears when any row has either.
+  _withPhotos() {
+    const d = this._current;
+    return !!(d && d.items.some(i => i.photoUrl || i.canSetPhoto));
+  },
+
+  _photoTitle(item) {
+    return [item.itemName, item.size].filter(Boolean).join(' · ');
+  },
+
+  _photoCell(item) {
+    const key = escapeHtml(JSON.stringify(item.key));
+    const title = escapeHtml(this._photoTitle(item));
+    if (item.photoUrl) {
+      return `<button type="button" class="btn p-0 border-0 insp-photo-btn" onclick="App.Inspection.viewPhoto(${key})" aria-label="View photo of ${title}">
+        <img src="${escapeHtml(item.photoUrl)}" alt="" class="insp-photo-thumb" loading="lazy" decoding="async" onerror="this.remove()">
+      </button>`;
+    }
+    if (item.canSetPhoto) {
+      return `<button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" onclick="App.Inspection.choosePhoto(${key})" aria-label="Add a photo of ${title}"><i class="bi bi-camera"></i> Add photo</button>`;
+    }
+    return '';
+  },
+
+  viewPhoto(key) {
+    const item = this._current && this._current.items.find(i => i.key === key);
+    if (!item || !item.photoUrl) return;
+    App.PhotoViewer.open(item.photoUrl, this._photoTitle(item),
+      item.canSetPhoto ? { onChange: () => this.choosePhoto(key) } : null);
+  },
+
+  // Pick a photo, shrink it as the phone does, and put it on the row's
+  // Items Master item (setInspectionItemPhoto -- the inspector need not be
+  // able to edit Items Master for this).
+  choosePhoto(key) {
+    const item = this._current && this._current.items.find(i => i.key === key);
+    if (!item || !item.canSetPhoto) return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.hidden = true;
+    input.addEventListener('change', async () => {
+      const file = input.files && input.files[0];
+      input.remove();
+      if (!file) return;
+      try {
+        await this.savePhoto(key, await App.Utils.resizeImageFile(file, 800));
+      } catch (err) {
+        App.Utils.showToast((err && err.message) || 'Could not read that photo.', true);
+      }
+    });
+    // Inside the open dialog, for the same reason the viewer is.
+    (document.querySelector('.modal.show') || document.body).appendChild(input);
+    input.click();
+  },
+
+  async savePhoto(key, dataUrl) {
+    const d = this._current;
+    if (!d) return;
+    const res = await Api.mutate('setInspectionItemPhoto', d.lot.rowIdx, key, dataUrl);
+    if (!res || !res.success) {
+      App.Utils.showToast((res && res.message) || 'The photo was not saved.', true);
+      return;
+    }
+    // The photo is the item's: every row of the same item and size shows it.
+    const lower = s => String(s || '').toLowerCase();
+    d.items
+      .filter(i => lower(i.itemName) === lower(res.data.itemName) && lower(i.size) === lower(res.data.size))
+      .forEach(i => {
+        i.photoUrl = res.data.photoUrl;
+        if (this._current === d) this._repaintRow(i);
+      });
+    App.Utils.showToast(res.message || 'Photo saved.');
   },
 
   _diffLine(x) {
@@ -298,7 +378,7 @@ App.Inspection = {
           <div id="inspectionProgress" class="mb-2" role="status" aria-live="polite"></div>
           <div class="table-responsive">
             <table class="table table-sm table-bordered align-middle mb-2">
-              <thead class="table-light"><tr><th class="text-center" style="width: 4.5rem;">Ticked</th><th>Item</th><th>Size</th><th>Colour</th><th>Specification</th><th class="text-end">Qty</th></tr></thead>
+              <thead class="table-light"><tr><th class="text-center" style="width: 4.5rem;">Ticked</th>${this._withPhotos() ? '<th class="text-center" style="width: 6rem;">Photo</th>' : ''}<th>Item</th><th>Size</th><th>Colour</th><th>Specification</th><th class="text-end">Qty</th></tr></thead>
               <tbody>${d.items.length ? d.items.map(item => this._itemRow(item, closed)).join('') : '<tr><td colspan="6" class="text-center text-muted">Nothing on the Production Sheet to inspect.</td></tr>'}</tbody>
             </table>
           </div>

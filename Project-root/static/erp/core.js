@@ -1140,6 +1140,71 @@ const App = {
     }
   },
 
+  // ── A photo, large ───────────────────────────────────────────────────
+  // Opened from an inspection checklist to compare the material with its
+  // Items Master photo. Built on first use and mounted inside whatever
+  // dialog is open: Bootstrap's focus trap pulls focus back out of anything
+  // outside it, so a viewer laid over the dialog from outside could never
+  // take the keyboard. Escape, the close button, or a click on the photo
+  // close it -- and Escape closes only it, not the dialog underneath.
+  // `opts.onChange` adds a "Change photo" button.
+  PhotoViewer: {
+    _el: null,
+    _onChange: null,
+    _returnFocus: null,
+
+    open(src, title, opts) {
+      if (!src) return;
+      const host = document.querySelector('.modal.show') || document.body;
+      if (!this._el) this._el = this._build();
+      if (this._el.parentNode !== host) host.appendChild(this._el);
+      this._onChange = (opts && opts.onChange) || null;
+      this._el.querySelector('.photo-viewer-title').textContent = title || 'Photo';
+      const img = this._el.querySelector('img');
+      img.src = src;
+      img.alt = title ? `Photo of ${title}` : 'Photo';
+      this._el.querySelector('.photo-viewer-change').hidden = !this._onChange;
+      this._returnFocus = document.activeElement;
+      this._el.hidden = false;
+      this._el.querySelector('.photo-viewer-close').focus();
+    },
+
+    close() {
+      if (!this._el || this._el.hidden) return;
+      this._el.hidden = true;
+      if (this._returnFocus && this._returnFocus.isConnected) this._returnFocus.focus();
+    },
+
+    _build() {
+      const el = document.createElement('div');
+      el.className = 'photo-viewer-overlay';
+      el.hidden = true;
+      el.setAttribute('role', 'dialog');
+      el.setAttribute('aria-modal', 'true');
+      el.setAttribute('aria-label', 'Photo');
+      el.innerHTML = `
+        <div class="photo-viewer-bar">
+          <span class="photo-viewer-title"></span>
+          <button type="button" class="btn btn-light btn-sm fw-bold photo-viewer-change" hidden><i class="bi bi-camera me-1"></i>Change photo</button>
+          <button type="button" class="btn-close btn-close-white photo-viewer-close" aria-label="Close"></button>
+        </div>
+        <img alt="">`;
+      el.querySelector('.photo-viewer-close').addEventListener('click', () => this.close());
+      el.querySelector('img').addEventListener('click', () => this.close());
+      el.querySelector('.photo-viewer-change').addEventListener('click', () => {
+        const onChange = this._onChange;
+        this.close();
+        if (onChange) onChange();
+      });
+      el.addEventListener('keydown', ev => {
+        if (ev.key !== 'Escape') return;
+        ev.stopPropagation();
+        this.close();
+      });
+      return el;
+    }
+  },
+
   // ── Shared UX primitives ─────────────────────────────────────────────
   Utils: {
     // ── Announcements to assistive technology (A11Y-005, A11Y-006) ───────
@@ -1413,6 +1478,34 @@ const App = {
       rememberFocusForModal(el);
       const isNested = Array.from(document.querySelectorAll('.modal.show')).some(m => m !== el);
       new bootstrap.Modal(el, { backdrop: isNested ? false : true, keyboard: !isNested }).show();
+    },
+
+    // A picked photo as a JPEG data: URL no larger than maxDim on its long
+    // side -- what the phone's MApp.Util.resizeImageToBase64 does, so a photo
+    // taken on either is the same size.
+    resizeImageFile(file, maxDim) {
+      return new Promise((resolve, reject) => {
+        if (!file || !String(file.type || '').startsWith('image/')) {
+          reject(new Error('Please choose an image file.'));
+          return;
+        }
+        const reader = new FileReader();
+        reader.onerror = () => reject(reader.error || new Error('Could not read that file.'));
+        reader.onload = () => {
+          const img = new Image();
+          img.onerror = () => reject(new Error('That file is not a readable image.'));
+          img.onload = () => {
+            const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.round(img.width * scale);
+            canvas.height = Math.round(img.height * scale);
+            canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+            resolve(canvas.toDataURL('image/jpeg', 0.85));
+          };
+          img.src = reader.result;
+        };
+        reader.readAsDataURL(file);
+      });
     },
 
     // Placeholder for a module not yet ported this round -- keeps a Quick

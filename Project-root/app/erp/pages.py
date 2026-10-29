@@ -256,6 +256,39 @@ def _awaiting_approval():
     ), 403
 
 
+@erp_bp.route("/erp/item-photo/<int:item_id>")
+@login_required
+def item_photo(item_id):
+    """One Items Master photo, as an image (see items_service.get_item_photo).
+
+    Not an RPC method for the reason render_pdf is not: this returns bytes,
+    and an <img> asks for it by address. Every signed-in, approved user may
+    see a photo -- an inspector checks materials against them without
+    needing the Items Master tab.
+
+    The address carries ?v=<photo_version>; while that matches, the photo
+    cannot change, so the browser keeps it for good. A stale or missing v
+    is answered with revalidation instead, by ETag.
+    """
+    from .services import items_service
+
+    if getattr(current_user, "role", None) == "pending_approval":
+        return Response(status=403)
+    photo = items_service.get_item_photo(item_id)
+    if photo is None:
+        return Response(status=404)
+    mimetype, payload, version = photo
+    response = Response(payload, mimetype=mimetype)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Cache-Control"] = (
+        "private, max-age=31536000, immutable"
+        if request.args.get("v") == version
+        else "private, no-cache"
+    )
+    response.set_etag(version)
+    return response.make_conditional(request)
+
+
 @erp_bp.route("/erp/render-pdf", methods=["POST"])
 @login_required
 def render_pdf():
