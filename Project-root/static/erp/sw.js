@@ -492,7 +492,11 @@
 // loses its PO link: the match leaves the bill's own lines out (bill.js).
 // po.js, api.js, core.js, vendors.js, bill.js and print-templates.js are
 // precached.
-const CACHE_NAME = 'erp-shell-v97';
+// v98: the inspection checklist shows each item's Items Master photo; a
+// click shows it large (App.PhotoViewer, core.js), and an inspector can add
+// or change the photo from the checklist. inspection.js, core.js and
+// styles.css are precached.
+const CACHE_NAME = 'erp-shell-v98';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

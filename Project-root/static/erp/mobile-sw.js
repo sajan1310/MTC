@@ -195,7 +195,11 @@
 // list is in each PO's own unit, labelled. Editing a bill on the phone no
 // longer turns its PO-linked lines Direct. mobile.js, api.js and
 // print-templates.js carry it.
-const CACHE_NAME = 'erp-mobile-shell-v89';
+// v90: the inspection checklist shows each item's Items Master photo; a tap
+// shows it full screen, and the inspector can take or pick a new one from
+// the checklist ("Change photo" in the viewer, a camera where there is
+// none). mobile.js and mobile_styles.css carry it.
+const CACHE_NAME = 'erp-mobile-shell-v90';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

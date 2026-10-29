@@ -93,6 +93,7 @@ from flask_login import current_user
 
 import database
 
+from . import items_service
 from . import process_service
 from .current_user import (
     get_current_user_email,
@@ -258,6 +259,41 @@ def merge_checklist(live_rows, checks, baseline) -> tuple[list[dict], list[dict]
         if key and key not in live_keys and key not in removed:
             removed[key] = dict(base, key=key)
     return items, list(removed.values())
+
+
+def _photo_key(item) -> tuple:
+    return (_text(item.get("itemName")).lower(), _text(item.get("size")).lower())
+
+
+def attach_photos(cur, items) -> None:
+    """Gives each checklist row its Items Master photo's address as
+    `photoUrl` ("" when it has none), so the inspector can compare the
+    material with a picture of it, and `canSetPhoto` when the row has an
+    Items Master item for the inspector to photograph.
+
+    The match is exact, name and size: a rim photographed in 16 inch must
+    not stand in for the 20 inch rim the row asks for, because checking the
+    size is part of the inspection. A Warehouse Pool row (a painted frame, a
+    fitted rim) has no Items Master entry, so no photo and nowhere to put
+    one. Only the address is sent; the photo itself loads when shown."""
+    names = list({_photo_key(i)[0] for i in items if i.get("itemName")})
+    found: dict = {}
+    if names:
+        cur.execute(
+            "SELECT id, lower(item_name) AS n, lower(size) AS s, row_version, "
+            "image <> '' AS has_photo "
+            "FROM erp.items WHERE deleted_at IS NULL AND lower(item_name) = ANY(%s)",
+            (names,),
+        )
+        found = {(r["n"], r["s"]): r for r in cur.fetchall()}
+    for item in items:
+        match = found.get(_photo_key(item))
+        item["canSetPhoto"] = match is not None
+        item["photoUrl"] = (
+            items_service.photo_url(match["id"], match["row_version"])
+            if match is not None and match["has_photo"]
+            else ""
+        )
 
 
 def summarize(items, removed=()) -> dict:
@@ -597,6 +633,7 @@ def get_inspection(row_idx):
         items, removed = merge_checklist(
             rows, checks, inspection["baseline"] if inspection else None
         )
+        attach_photos(cur, items)
         header = _lot_header(lot, _process_name(cur, lot["process_id"]))
         identity = _identity(cur)
     summary = summarize(items, removed)
@@ -704,6 +741,8 @@ def set_inspection_check(conn, cur, row_idx, item_key, result, item_fingerprint)
     # The row as the merge now sees it, so the client never guesses what an
     # untick turns a row back into (pending, or still revised).
     merged = next((i for i in items if i["key"] == row["key"]), None)
+    if merged is not None:
+        attach_photos(cur, [merged])
     summary = summarize(items, removed)
     return build_response(
         True,
@@ -716,6 +755,63 @@ def set_inspection_check(conn, cur, row_idx, item_key, result, item_fingerprint)
             "stage": stage(inspection["status"], summary),
         },
         message,
+    )
+
+
+@rpc_method("setInspectionItemPhoto", mutation=True)
+@database.transactional
+def set_inspection_item_photo(conn, cur, row_idx, item_key, image):
+    """Puts a new photo on the Items Master item behind one checklist row --
+    the inspector found it missing, or out of date.
+
+    Only the photo, and only for an item on this lot's live Production
+    Sheet: an inspector need not be able to edit Items Master to keep its
+    photos current, so this sits under the Inspection permission rather than
+    going through saveItem. It is the item's photo everywhere -- Items
+    Master, the phone's Items list, every other lot's checklist. The
+    inspection itself is untouched, cleared or not."""
+    lot = _load_lot(cur, row_idx)
+    key = _text(item_key)
+    row = next(
+        (
+            r
+            for r in sheet_rows(lot["custom_components"], lot["components_consumed"])
+            if r["key"] == key
+        ),
+        None,
+    )
+    if row is None:
+        raise ValueError(
+            "That item is no longer on this lot's Production Sheet. Reload the checklist."
+        )
+    image = items_service.check_servable_photo(image)
+    cur.execute(
+        "SELECT id, item_name FROM erp.items WHERE deleted_at IS NULL "
+        "AND lower(item_name) = lower(%s) AND lower(size) = lower(%s) FOR UPDATE",
+        (row["itemName"], row["size"]),
+    )
+    item = cur.fetchone()
+    if item is None:
+        raise ValueError(
+            f"{row['itemName']} is not in Items Master, so there is no item to "
+            "put a photo on."
+        )
+    cur.execute(
+        "UPDATE erp.items SET image = %s, updated_by = %s WHERE id = %s "
+        "RETURNING row_version",
+        (image, get_current_user_id(), item["id"]),
+    )
+    version = cur.fetchone()["row_version"]
+    label = " ".join(part for part in (row["itemName"], row["size"]) if part)
+    return build_response(
+        True,
+        {
+            "key": key,
+            "itemName": row["itemName"],
+            "size": row["size"],
+            "photoUrl": items_service.photo_url(item["id"], version),
+        },
+        f"Photo saved for {label}.",
     )
 
 

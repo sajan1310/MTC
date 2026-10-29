@@ -36,6 +36,7 @@ no-ops until their own rounds land, the same tolerance the source's own
 
 from __future__ import annotations
 
+import base64
 import bisect
 import json
 import math
@@ -759,6 +760,78 @@ def _row_to_item_record(row, vendor_rows, units_map) -> dict:
         "vendors": vendors,
         "unpricedVendors": unpriced_vendors,
     }
+
+
+# ── An item's photo, by its own address ───────────────────────────────────
+#
+# A photo is a base64 data: URL in erp.items.image (migration 024), about
+# 100,000 characters for a phone camera shot, and getItemsData sends every
+# one of them inline. A screen that shows a few photos among many rows -- an
+# inspection checklist -- asks for them one at a time instead, at
+# /erp/item-photo/<id>?v=<photo_version>, so each is fetched only when shown
+# and the browser keeps it.
+
+# Raster types only. saveItem accepts any data:image/ URL, and SVG served
+# from this origin could carry script, so an SVG "photo" is never served.
+_SERVABLE_PHOTO_TYPES = frozenset(
+    {"image/jpeg", "image/png", "image/webp", "image/gif"}
+)
+
+
+def check_servable_photo(image: str) -> str:
+    """`image` as a photo that /erp/item-photo can serve, or ValueError.
+    The limits saveItem applies, and a raster type: a photo set from an
+    inspection is shown from that address straight away."""
+    image = str(image or "").strip()
+    if not image:
+        raise ValueError("Take or choose a photo first.")
+    if len(image) > 3_000_000:
+        raise ValueError("Item photo is too large. Please choose a smaller image.")
+    header = image.partition(",")[0]
+    mimetype = header[len("data:") :].split(";", 1)[0].strip().lower()
+    if (
+        not image.startswith("data:image/")
+        or ";base64" not in header
+        or mimetype not in _SERVABLE_PHOTO_TYPES
+    ):
+        raise ValueError("Item photo is not a valid image.")
+    return image
+
+
+def photo_version(row_version) -> str:
+    """What an item photo's address carries so a changed photo is a new
+    address: the item's row_version, bumped by every save of the item."""
+    return str(row_version or 0)
+
+
+def photo_url(item_id, row_version) -> str:
+    return f"/erp/item-photo/{int(item_id)}?v={photo_version(row_version)}"
+
+
+def get_item_photo(item_id: int):
+    """(mimetype, bytes, version) for a live item's photo, or None when it
+    has none, is deleted, or holds something that is not a raster image."""
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
+        cur.execute(
+            "SELECT image, row_version FROM erp.items "
+            "WHERE id = %s AND deleted_at IS NULL AND image <> ''",
+            (item_id,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    header, sep, data = str(row["image"]).partition(",")
+    mimetype = header[len("data:") :].split(";", 1)[0].strip().lower()
+    if not sep or ";base64" not in header or mimetype not in _SERVABLE_PHOTO_TYPES:
+        return None
+    try:
+        payload = base64.b64decode(data, validate=False)
+    except ValueError:  # binascii.Error, a malformed payload
+        return None
+    return mimetype, payload, photo_version(row["row_version"])
 
 
 @rpc_method("getItemsData")

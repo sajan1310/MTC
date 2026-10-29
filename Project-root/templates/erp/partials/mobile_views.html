@@ -1640,8 +1640,10 @@
 
 <!-- ═══════════════════════════════════════════════════════════════════
      SHEET — PHOTO VIEWER (MApp.PhotoViewer) — an item's photo filling the
-     screen, tapped from the Items list or the item form. mb-sheet-full,
-     so a phone held sideways gets the whole screen as well.
+     screen, tapped from the Items list, the item form or an inspection
+     checklist row. mb-sheet-full, so a phone held sideways gets the whole
+     screen as well. The footer's "Change photo" shows only when the opener
+     can replace the photo (an inspection row).
      ═══════════════════════════════════════════════════════════════════ -->
 <div class="mb-sheet mb-sheet-full mb-photo-viewer" id="sheet-photo-viewer" role="dialog" aria-modal="true" aria-labelledby="photo-viewer-title">
   <div class="mb-sheet-header">
@@ -1652,6 +1654,9 @@
   </div>
   <div class="mb-sheet-body" onclick="MApp.PhotoViewer.close()">
     <img id="photo-viewer-img" alt="">
+  </div>
+  <div class="mb-sheet-footer" id="photo-viewer-footer" hidden>
+    <button type="button" class="mb-btn mb-btn-primary" id="photo-viewer-change" onclick="MApp.PhotoViewer.change()">Change photo</button>
   </div>
 </div>
 
