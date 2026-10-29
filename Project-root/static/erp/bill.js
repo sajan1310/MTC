@@ -1340,8 +1340,16 @@ App.Bill = {
     // this to exclude PO lines dated after the bill itself.
     const billDate = document.getElementById('billDateInput')?.value || '';
 
+    // Editing a saved bill: the server leaves that bill's own lines out of
+    // what each PO has received, or the PO reads as already received by the
+    // very bill being matched to it again.
+    const editingNumber = document.getElementById('existingBillNumber')?.value?.trim() || '';
+    const editing = editingNumber
+      ? { vendor: document.getElementById('existingVendor')?.value?.trim() || vendor, billNumber: editingNumber }
+      : null;
+
     try {
-      const res = await Api.call('suggestPoAllocations', vendor, items, billDate);
+      const res = await Api.call('suggestPoAllocations', vendor, items, billDate, editing);
       if (res?.success) App.Bill.applyAutoMatch(candidateRows, res.data || []);
     } catch (err) {
       // Auto-match is a convenience layer only -- never block bill entry on failure.

@@ -1047,7 +1047,7 @@ const App = {
       const now = new Date();
       const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
       const overduePOs = pos.filter(po => {
-        if (!po || po.status === PO_STATUS.COMPLETED) return false;
+        if (!po || po.status === PO_STATUS.COMPLETED || po.status === PO_STATUS.CANCELLED) return false;
         const poDate = parseRecordDate(po.poDateRaw, po.poDate);
         return !isNaN(poDate.getTime()) && (now - poDate) > SEVEN_DAYS_MS;
       });

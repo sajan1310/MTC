@@ -98,10 +98,8 @@ App.PO = {
   // patchRowInPlace's single-row swap below.
   rowHtml(po) {
     const index = App.State.globalPOs.indexOf(po);
-    const itemsPreview = formatItemsPreview(po.items);
     const key = String(po.poNumber);
     const checkedAttr = App.Selection.isSelected(App.State.selectedPOs, key) ? 'checked' : '';
-    const statusInfo = this.getStatusBadge(po.status);
 
     return `
       <tr data-po-key="${escapeHtml(key)}">
@@ -111,10 +109,10 @@ App.PO = {
         <td><span class="badge bg-dark fs-6 shadow-sm">PO-${escapeHtml(po.poNumber)}</span></td>
         <td>${escapeHtml(po.poDate || '')}</td>
         <td><strong class="text-primary">${escapeHtml(App.Utils.formatNameCase(po.vendor))}</strong></td>
-        <td><small class="text-muted">${itemsPreview}</small></td>
-        <td class="text-center fw-bold">${escapeHtml(String(po.totalQty ?? 0))}</td>
+        <td><small class="text-muted">${this.itemsSummaryHtml(po)}</small></td>
+        <td class="text-center fw-bold">${this.qtyCellHtml(po)}</td>
         <td class="text-success fw-bold">${formatCurrency(po.grandTotal)}</td>
-        <td class="text-center"><span class="badge ${statusInfo.badgeClass} shadow-sm"><i class="bi ${statusInfo.icon} me-1"></i>${escapeHtml(po.status || PO_STATUS.ISSUED)}</span></td>
+        <td class="text-center">${this.statusControlHtml(po)}</td>
         <td>
           <button class="btn btn-sm btn-outline-dark    btn-action w-100 mb-1" data-action="po-print"  data-index="${index}">Print Document</button>
           <button class="btn btn-sm btn-outline-primary  btn-action w-100 mb-1" data-action="po-edit"   data-index="${index}">Edit Order</button>
@@ -318,21 +316,261 @@ App.PO = {
   },
 
   // Status -> badge color/icon. Keyed off the shared PO_STATUS constant
-  // (api.js) so this can never drift from the 3 values module_po.js emits.
+  // (api.js) so this can never drift from the values the server emits.
   STATUS_BADGES: {
     [PO_STATUS.ISSUED]: { badgeClass: 'bg-primary', icon: 'bi-file-earmark-text' },
     [PO_STATUS.PARTIAL]: { badgeClass: 'bg-info', icon: 'bi-truck' },
-    [PO_STATUS.COMPLETED]: { badgeClass: 'bg-success', icon: 'bi-check-circle' }
+    [PO_STATUS.COMPLETED]: { badgeClass: 'bg-success', icon: 'bi-check-circle' },
+    [PO_STATUS.CANCELLED]: { badgeClass: 'bg-danger', icon: 'bi-x-circle' }
   },
 
   getStatusBadge(status) {
     return this.STATUS_BADGES[status] || { badgeClass: 'bg-secondary', icon: 'bi-question-circle' };
   },
 
+  // Items Summary: each line as ordered, then what is still to come in --
+  // "400 Pcs pending" -- in the line's own unit (getPOData's pendingQty).
+  // A PO completed or cancelled by hand names what it never got instead,
+  // a line billed past its order says by how much, and on a partly
+  // received PO a line that is all in says so.
+  itemsSummaryHtml(po) {
+    const verb = po.closedAs === PO_STATUS.CANCELLED ? 'cancelled' : 'short';
+    return (po.items || []).map(item => {
+      const unit = escapeHtml(item.unit || 'Pcs');
+      const pending = Number(item.pendingQty) || 0;
+      const short = Number(item.shortQty) || 0;
+      let note = '';
+      if (pending > 0.0001) {
+        note = `<span class="text-danger fw-semibold text-nowrap">${formatQty(pending)} ${unit} pending</span>`;
+      } else if (short > 0.0001) {
+        note = `<span class="text-secondary fw-semibold text-nowrap">${formatQty(short)} ${unit} ${verb}</span>`;
+      } else if (pending < -0.0001) {
+        note = `<span class="text-info fw-semibold text-nowrap">${formatQty(-pending)} ${unit} extra</span>`;
+      } else if (po.status === PO_STATUS.PARTIAL && (Number(item.receivedQty) || 0) > 0.0001) {
+        note = '<span class="text-success fw-semibold text-nowrap">received</span>';
+      }
+      const narration = this.distinguishingNarration(po, item);
+      return `<div class="mb-1">${escapeHtml(item.name)}${item.size ? ` [${escapeHtml(item.size)}]` : ''}` +
+        `${narration ? ` <span class="fst-italic">“${escapeHtml(narration)}”</span>` : ''}` +
+        ` (${escapeHtml(String(item.qty))} ${unit})${note ? ` · ${note}` : ''}</div>`;
+    }).join('');
+  },
+
+  // The narration to show beside a line's item: only when the PO orders the
+  // same item and size on another line too, where it is all that tells the
+  // two apart (PO 1289's 16T and 18T freewheels).
+  distinguishingNarration(po, item) {
+    const part = v => String(v == null ? '' : v).trim().toLowerCase();
+    const twins = (po.items || []).filter(i => part(i.name) === part(item.name) && part(i.size) === part(item.size));
+    return twins.length > 1 ? String(item.narration || '').trim() : '';
+  },
+
+  // The Qty cell: the PO's total, then how much of it is still to come or
+  // never came. A PO ordering in more than one unit totals each unit on its
+  // own line -- 1000 Pair and 1000 Set are not "2000".
+  qtyCellHtml(po) {
+    const byUnit = field => {
+      const sums = new Map();
+      (po.items || []).forEach(i => {
+        const unit = String(i.unit || 'Pcs').trim();
+        const entry = sums.get(unit.toLowerCase()) || { unit, qty: 0 };
+        entry.qty += Math.max(Number(i[field]) || 0, 0);
+        sums.set(unit.toLowerCase(), entry);
+      });
+      return [...sums.values()];
+    };
+    const mixed = byUnit('qty').length > 1;
+    const text = list => list.filter(e => e.qty > 0.0001)
+      .map(e => (mixed ? `${formatQty(e.qty)} ${escapeHtml(e.unit)}` : formatQty(e.qty)))
+      .join(' + ');
+    const total = mixed
+      ? byUnit('qty').map(e => `<div>${formatQty(e.qty)} ${escapeHtml(e.unit)}</div>`).join('')
+      : formatQty(po.totalQty);
+    const pending = text(byUnit('pendingQty'));
+    if (pending) return `${total}<div class="small text-danger fw-semibold">${pending} pending</div>`;
+    const short = text(byUnit('shortQty'));
+    if (short) {
+      const verb = po.closedAs === PO_STATUS.CANCELLED ? 'cancelled' : 'short';
+      return `${total}<div class="small text-secondary fw-semibold">${short} ${verb}</div>`;
+    }
+    return total;
+  },
+
+  // ── Status set by hand: Completed / Cancelled (closePO, reopenPO) ──
+  // A PO's status comes from its bills. Its Status cell is a dropdown of
+  // what a person may set instead (poStatusChoices, api.js); a fully
+  // received PO has nothing to offer, so it keeps a plain badge. The
+  // dropdown is the Production Log's status pill, in the PO's colours: a
+  // select that reads as a badge (native arrow suppressed).
+  STATUS_SELECT_BASE_STYLE: 'font-size:0.75rem;appearance:none;-webkit-appearance:none;-moz-appearance:none;background-image:none;padding-right:0.5rem;',
+  STATUS_COLORS: {
+    [PO_STATUS.ISSUED]: 'background-color:#0d6efd;color:#fff;',
+    [PO_STATUS.PARTIAL]: 'background-color:#0dcaf0;color:#fff;',
+    [PO_STATUS.COMPLETED]: 'background-color:#198754;color:#fff;',
+    [PO_STATUS.CANCELLED]: 'background-color:#dc3545;color:#fff;'
+  },
+
+  statusControlHtml(po) {
+    const status = po.status || PO_STATUS.ISSUED;
+    const choices = poStatusChoices(po);
+    const detail = this.closedDetailHtml(po);
+    if (!choices.length) {
+      const info = this.getStatusBadge(status);
+      return `<span class="badge ${info.badgeClass} shadow-sm"><i class="bi ${info.icon} me-1"></i>${escapeHtml(status)}</span>${detail}`;
+    }
+    const style = this.STATUS_SELECT_BASE_STYLE + (this.STATUS_COLORS[status] || 'background-color:#6c757d;color:#fff;');
+    const options = [{ value: status, label: status }, ...choices]
+      .map((c, i) => `<option value="${escapeHtml(c.value)}"${i === 0 ? ' selected' : ''}>${escapeHtml(c.label)}</option>`)
+      .join('');
+    return `<select class="form-select form-select-sm fw-bold border-0 shadow-sm po-status-select" style="${style}"` +
+      ` data-ponumber="${escapeHtml(po.poNumber)}" data-shown="${escapeHtml(status)}" onchange="App.PO.onStatusSelect(this)"` +
+      ` aria-label="Status of PO ${escapeHtml(po.poNumber)}" title="Change this PO's status">${options}</select>${detail}`;
+  },
+
+  // Who set the status by hand, when, and why -- under the dropdown.
+  closedDetailHtml(po) {
+    if (!po.closedAs) return '';
+    const verb = po.closedAs === PO_STATUS.CANCELLED ? 'Cancelled' : 'Marked complete';
+    const by = po.closedBy ? ` by ${escapeHtml(po.closedBy)}` : '';
+    const at = po.closedAt ? `, ${escapeHtml(po.closedAt)}` : '';
+    const note = po.closeNote
+      ? `<div class="small text-muted fst-italic text-break">“${escapeHtml(po.closeNote)}”</div>`
+      : '';
+    return `<div class="small text-muted mt-1">${verb}${by}${at}</div>${note}`;
+  },
+
+  _findPo(poNumber) {
+    return (App.State.globalPOs || []).find(p => String(p.poNumber) === String(poNumber));
+  },
+
+  // The dropdown only asks: nothing changes until the dialog is confirmed,
+  // so it goes straight back to what the PO is.
+  onStatusSelect(selectEl) {
+    const choice = selectEl.value;
+    const shown = selectEl.dataset.shown;
+    selectEl.value = shown;
+    if (choice === shown) return;
+    if (choice === 'reopen') this.reopen(selectEl.dataset.ponumber);
+    else this.openCloseModal(selectEl.dataset.ponumber, choice);
+  },
+
+  openCloseModal(poNumber, closedAs) {
+    const po = this._findPo(poNumber);
+    if (!po) {
+      App.Utils.showToast('Purchase order not found.', true);
+      return;
+    }
+    const cancelling = closedAs === PO_STATUS.CANCELLED;
+    this._closing = { poNumber: String(po.poNumber), closedAs };
+
+    const vendor = escapeHtml(App.Utils.formatNameCase(po.vendor));
+    const label = `<strong>PO-${escapeHtml(po.poNumber)}</strong>`;
+    const title = document.getElementById('poCloseTitle');
+    if (title) title.textContent = cancelling ? `Cancel PO-${po.poNumber}` : `Mark PO-${po.poNumber} complete`;
+    const intro = document.getElementById('poCloseIntro');
+    if (intro) {
+      intro.innerHTML = po.status === PO_STATUS.ISSUED
+        ? `Nothing has been received against ${label} from ${vendor} yet. Cancel it if the order is off.`
+        : `${vendor} has sent part of ${label}. ` +
+          (cancelling ? 'Cancel it if the rest of the order is off.' : 'Mark it complete if the rest is not coming.');
+    }
+
+    const lines = document.getElementById('poCloseLines');
+    if (lines) {
+      lines.innerHTML = (po.items || [])
+        .filter(item => (Number(item.pendingQty) || 0) > 0.0001)
+        .map(item => {
+          const unit = escapeHtml(item.unit || 'Pcs');
+          const narration = this.distinguishingNarration(po, item);
+          return `<tr>
+            <td>${escapeHtml(item.name)}${item.size ? ` <span class="text-muted">(${escapeHtml(item.size)})</span>` : ''}${narration ? ` <span class="fst-italic text-muted">“${escapeHtml(narration)}”</span>` : ''}</td>
+            <td class="text-center">${formatQty(item.qty)} ${unit}</td>
+            <td class="text-center">${formatQty(item.receivedQty || 0)} ${unit}</td>
+            <td class="text-center fw-bold text-danger">${formatQty(item.pendingQty)} ${unit}</td>
+          </tr>`;
+        }).join('');
+    }
+
+    const effect = document.getElementById('poCloseEffect');
+    if (effect) {
+      effect.textContent = `It will read ${closedAs}. These quantities stop counting as pending — ` +
+        'in Pending Orders, Item Master and the vendor\'s pending list — and new bills are no longer ' +
+        'matched to it. What was received stays received. You can reopen it from the same dropdown.';
+    }
+
+    const note = document.getElementById('poCloseNote');
+    if (note) note.value = '';
+    const confirmBtn = document.getElementById('poCloseConfirmBtn');
+    if (confirmBtn) {
+      confirmBtn.textContent = cancelling ? 'Cancel PO' : 'Mark complete';
+      confirmBtn.classList.toggle('btn-danger', cancelling);
+      confirmBtn.classList.toggle('btn-success', !cancelling);
+    }
+    safeModalShow('poCloseModal');
+  },
+
+  async confirmClose() {
+    const target = this._closing;
+    if (!target) return;
+    const note = (document.getElementById('poCloseNote')?.value || '').trim();
+    setDisabled('poCloseConfirmBtn', true);
+    try {
+      const res = await Api.mutate('closePO', target.poNumber, target.closedAs, note);
+      App.Utils.showToast(res?.message || 'PO status updated.', !res?.success);
+      if (res?.success) {
+        this._closing = null;
+        safeModalHide('poCloseModal');
+        this._applyStatusChange(res.data);
+      }
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to update the PO status.', true);
+    } finally {
+      setDisabled('poCloseConfirmBtn', false);
+    }
+  },
+
+  reopen(poNumber) {
+    const po = this._findPo(poNumber);
+    if (!po) {
+      App.Utils.showToast('Purchase order not found.', true);
+      return;
+    }
+    App.Utils.confirmAction(
+      `Reopen PO #${po.poNumber}? It goes back to ${po.statusFromBills || PO_STATUS.ISSUED}, ` +
+      'and whatever it is still owed counts as pending again.',
+      async () => {
+        try {
+          const res = await Api.mutate('reopenPO', po.poNumber);
+          App.Utils.showToast(res?.message || 'PO reopened.', !res?.success);
+          if (res?.success) this._applyStatusChange(res.data);
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to reopen the PO.', true);
+        }
+      }
+    );
+  },
+
+  // After a status is set or a PO reopened: its row is redrawn where it
+  // stands -- search, filter, page and scroll kept -- and an open Pending
+  // Orders list is worked out again. A PO this list has never loaded
+  // means the list is stale, so that alone reloads.
+  _applyStatusChange(data) {
+    const fresh = data && data.po;
+    if (fresh && this._findPo(fresh.poNumber)) this.patchRowInPlace(fresh);
+    else this.loadData();
+
+    if (document.getElementById('pendingPOsModal')?.classList.contains('show')) {
+      App.State.allPendingPOs = this.calculatePendingPOLines();
+      this.filterPendingPOs(document.getElementById('searchPendingPOs')?.value || '');
+    }
+  },
+
   // Refreshes the status-bar tile counts from the full (unfiltered) PO
   // list, so counts stay meaningful no matter what's currently filtered.
   updateStatusBar() {
-    const counts = { [PO_STATUS.ISSUED]: 0, [PO_STATUS.PARTIAL]: 0, [PO_STATUS.COMPLETED]: 0 };
+    const counts = {
+      [PO_STATUS.ISSUED]: 0, [PO_STATUS.PARTIAL]: 0, [PO_STATUS.COMPLETED]: 0, [PO_STATUS.CANCELLED]: 0
+    };
     App.State.globalPOs.forEach(po => {
       if (counts[po.status] !== undefined) counts[po.status]++;
     });
@@ -345,6 +583,7 @@ App.PO = {
     setCount('poStatusCountIssued', counts[PO_STATUS.ISSUED]);
     setCount('poStatusCountPartial', counts[PO_STATUS.PARTIAL]);
     setCount('poStatusCountCompleted', counts[PO_STATUS.COMPLETED]);
+    setCount('poStatusCountCancelled', counts[PO_STATUS.CANCELLED]);
     setCount('poStatusCountPending', counts[PO_STATUS.ISSUED] + counts[PO_STATUS.PARTIAL]);
   },
 
@@ -383,30 +622,30 @@ App.PO = {
   // Returns one row per PO line that still has qty pending receipt.
   // receivedQty/pendingQty come straight from getPOData (computed
   // server-side by _attachPoStatus), so this needs no Bill data of its
-  // own client-side.
+  // own client-side. A PO completed or cancelled by hand has nothing
+  // pending (its leftover is shortQty).
   calculatePendingPOLines() {
     const result = [];
 
     (App.State.globalPOs || []).forEach(po => {
-      if (po.status === 'Completed') return;
-      const badge = this.getStatusBadge(po.status);
+      if (po.status === PO_STATUS.COMPLETED || po.status === PO_STATUS.CANCELLED) return;
 
       (po.items || []).forEach(item => {
         const pendingQty = Number(item.pendingQty) || 0;
         if (pendingQty <= 0.0001) return;
 
         result.push({
+          po,
           poNumber: po.poNumber,
           poDate: po.poDate,
           vendor: po.vendor,
           itemName: item.name,
           size: item.size,
           unit: item.unit,
+          narration: this.distinguishingNarration(po, item),
           orderedQty: item.qty,
           receivedQty: item.receivedQty || 0,
-          pendingQty,
-          label: po.status,
-          badgeClass: badge.badgeClass
+          pendingQty
         });
       });
     });
@@ -453,11 +692,11 @@ App.PO = {
       <td><span class="badge bg-dark shadow-sm">PO-${escapeHtml(p.poNumber)}</span></td>
       <td>${escapeHtml(p.poDate)}</td>
       <td><strong>${escapeHtml(App.Utils.formatNameCase(p.vendor))}</strong></td>
-      <td>${escapeHtml(p.itemName)} ${p.size ? `<span class="text-muted">(${escapeHtml(p.size)})</span>` : ''}</td>
+      <td>${escapeHtml(p.itemName)} ${p.size ? `<span class="text-muted">(${escapeHtml(p.size)})</span>` : ''}${p.narration ? ` <span class="fst-italic text-muted">“${escapeHtml(p.narration)}”</span>` : ''}</td>
       <td class="text-center">${formatQty(p.orderedQty)} ${escapeHtml(p.unit || '')}</td>
       <td class="text-center">${formatQty(p.receivedQty)} ${escapeHtml(p.unit || '')}</td>
       <td class="text-center fw-bold text-danger">${formatQty(p.pendingQty)} ${escapeHtml(p.unit || '')}</td>
-      <td class="text-center"><span class="badge ${p.badgeClass} shadow-sm">${escapeHtml(p.label)}</span></td>
+      <td class="text-center">${this.statusControlHtml(p.po)}</td>
     </tr>`).join('');
   },
 

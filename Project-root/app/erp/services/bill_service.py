@@ -95,6 +95,9 @@ _BILLED_BY_PO_SQL = """
           -- A blank or DIRECT PO number is not fulfilling any PO.
           AND btrim(COALESCE(l.po_number, '')) <> ''
           AND upper(btrim(l.po_number)) <> 'DIRECT'
+          -- The bill being edited, when a match is asked for while editing
+          -- it (NULL otherwise, which excludes nothing).
+          AND h.id IS DISTINCT FROM %(exclude_header_id)s
         GROUP BY 1, 2, 3, 4
     ),
     po_line AS (
@@ -135,7 +138,7 @@ _BILLED_BY_PO_SQL = """
 """
 
 
-def _aggregate_billed_base_qty_by_po(cur) -> dict:
+def _aggregate_billed_base_qty_by_po(cur, exclude_header_id=None) -> dict:
     """Sums already-billed base quantity per PO LINE across the entire Bill
     Ledger, keyed by that line's _build_po_line_key. Lines with a blank or
     'DIRECT' PO number aren't fulfilling any PO, so they're excluded.
@@ -158,8 +161,12 @@ def _aggregate_billed_base_qty_by_po(cur) -> dict:
 
     Aggregated by the database -- see _BILLED_BY_PO_SQL for why, and for the
     exact correspondence with _build_po_line_key.
+
+    `exclude_header_id` leaves one bill out: the one being edited, whose own
+    earlier quantities would otherwise read as already received against
+    the very PO it is being matched to again.
     """
-    cur.execute(_BILLED_BY_PO_SQL)
+    cur.execute(_BILLED_BY_PO_SQL, {"exclude_header_id": exclude_header_id})
     return {row["po_line_key"]: float(row["billed"] or 0) for row in cur.fetchall()}
 
 
@@ -277,6 +284,39 @@ def _find_item_id(cur, name: str, size: str):
     return row["id"] if row else None
 
 
+def find_live_bill_id(cur, vendor, bill_number):
+    """A live bill's header id by its identity -- vendor + bill number, case
+    blind, as save_bill finds the bill it edits -- or None."""
+    vendor, bill_number = str(vendor or "").strip(), str(bill_number or "").strip()
+    if not vendor or not bill_number:
+        return None
+    cur.execute(
+        "SELECT id FROM erp.bill_headers WHERE lower(vendor) = lower(%s) AND lower(bill_number) = lower(%s) AND deleted_at IS NULL",
+        (vendor, bill_number),
+    )
+    row = cur.fetchone()
+    return row["id"] if row else None
+
+
+def _open_lines_elsewhere(pos, po, po_item) -> list:
+    """(PO, line) pairs on the same vendor's OTHER POs still waiting for this
+    item + size, oldest PO first."""
+
+    def part(v) -> str:
+        return str(v if v is not None else "").strip().lower()
+
+    found = [
+        (other, line)
+        for other in pos
+        if other is not po and part(other["vendor"]) == part(po["vendor"])
+        for line in other["items"]
+        if part(line["name"]) == part(po_item["name"])
+        and part(line["size"]) == part(po_item["size"])
+        and line["pendingQty"] > 0.0001
+    ]
+    return sorted(found, key=lambda pair: pair[0]["poDateRaw"] or "")
+
+
 def _compute_bill_overage_warnings(cur, items: list) -> list[str]:
     """Advisory, non-blocking check run after a bill has been saved: for
     every bill line linked to a real PO (not "DIRECT"/blank), re-aggregates
@@ -336,14 +376,37 @@ def _compute_bill_overage_warnings(cur, items: list) -> list[str]:
                 continue
             seen_keys.add(line_key)
 
-            billed_base_qty = billed_map.get(line_key, 0)
-            ordered_base_qty = po_item.get("baseQty") or 0
-            if billed_base_qty > ordered_base_qty + 0.0001:
-                over_by = billed_base_qty - ordered_base_qty
-                warnings.append(
-                    f'"{it.get("name")}" on PO {po_num} is now billed {billed_base_qty:.2f} vs '
-                    f"ordered {ordered_base_qty:.2f} ({over_by:.2f} over)."
+            # Identical lines on one PO share their bills, so they are over
+            # only together. In the PO line's own unit, as the PO Ledger
+            # shows it -- base units read "billed 28800 vs ordered 14400" for
+            # spokes ordered in Gross.
+            same = [
+                pi
+                for pi in po["items"]
+                if _build_po_line_key(po_num, pi["name"], pi["size"], pi["narration"])
+                == line_key
+            ]
+            ordered = sum(pi["qty"] for pi in same)
+            received = sum(pi["receivedQty"] for pi in same)
+            if received <= ordered + 0.0001:
+                continue
+            fmt = units_service.format_qty
+            unit = po_item["unit"] or "Pcs"
+            message = (
+                f'"{po_item["name"]}" on PO {po_num} has now received {fmt(received)} {unit} '
+                f"against {fmt(ordered)} ordered ({fmt(received - ordered)} over)."
+            )
+            # The usual cause is a bill linked to an older order while a newer
+            # one for the same item is still open -- name it.
+            elsewhere = _open_lines_elsewhere(pos_by_number.values(), po, po_item)
+            if elsewhere:
+                other_po, other_item = elsewhere[0]
+                message += (
+                    f" PO {other_po['poNumber']} still has "
+                    f"{fmt(other_item['pendingQty'])} {other_item['unit'] or 'Pcs'} of it "
+                    "pending -- was this meant for it?"
                 )
+            warnings.append(message)
         return warnings
     except Exception:
         # Advisory only -- never let this check block or fail a bill save.

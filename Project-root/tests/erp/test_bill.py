@@ -382,7 +382,8 @@ def test_save_bill_warns_when_billed_beyond_po_line(erp_client):
     assert over_body["success"] is True
     assert "Warning" in over_body["message"]
     assert po_number in over_body["message"]
-    assert "2.00 over" in over_body["message"]  # 3 + 4 = 7 billed vs 5 ordered
+    # 3 + 4 = 7 received vs 5 ordered, in the PO line's own unit.
+    assert "has now received 7 Pcs against 5 ordered (2 over)" in over_body["message"]
 
 
 def test_delete_bill_success_and_not_found(erp_client):
@@ -1093,7 +1094,7 @@ def test_over_billing_is_caught_on_a_line_reached_by_the_fallback(erp_client):
     )
 
     assert "Warning" in body["message"], body["message"]
-    assert "2.00 over" in body["message"]
+    assert "against 5 ordered (2 over)" in body["message"]
 
 
 # --- POs keep working as they are edited, renumbered and deleted -----------

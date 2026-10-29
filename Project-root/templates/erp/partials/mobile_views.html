@@ -1323,15 +1323,16 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <input type="search" id="po-ledger-search" placeholder="Search PO number or vendor..." aria-label="Search purchase orders" autocomplete="off">
     </div>
-    <!-- The 3 literal data-status/onclick values below must match
+    <!-- The 4 literal data-status/onclick values below must match
          config.js#PO_STATUS (server) and its client mirror in
-         Script_ApiCore.html#PO_STATUS exactly — static markup can't
+         api.js#PO_STATUS exactly — static markup can't
          reference that JS constant directly. -->
     <div class="mb-filter-chip-row" id="po-ledger-status-bar">
       <button type="button" class="mb-filter-chip active" data-status="all" onclick="MApp.PO.filterByStatus('all')">All</button>
       <button type="button" class="mb-filter-chip" data-status="PO Issued" onclick="MApp.PO.filterByStatus('PO Issued')">PO Issued</button>
       <button type="button" class="mb-filter-chip" data-status="Partially Received" onclick="MApp.PO.filterByStatus('Partially Received')">Partial</button>
       <button type="button" class="mb-filter-chip" data-status="Completed" onclick="MApp.PO.filterByStatus('Completed')">Completed</button>
+      <button type="button" class="mb-filter-chip" data-status="Cancelled" onclick="MApp.PO.filterByStatus('Cancelled')">Cancelled</button>
     </div>
     <div class="mb-list" id="po-ledger-list"></div>
   </div>

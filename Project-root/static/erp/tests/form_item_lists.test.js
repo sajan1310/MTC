@@ -45,7 +45,8 @@ function loadDesktop() {
     'global.inDateRange = inDateRange;',
     'global.todayIso = todayIso;',
     'global.tomorrowIso = tomorrowIso;',
-    'global.PO_STATUS = PO_STATUS;'
+    'global.PO_STATUS = PO_STATUS;',
+    'global.poStatusChoices = poStatusChoices;'
   ].join('\n'));
   // eslint-disable-next-line no-eval
   eval(read('print-templates.js').replace(/^const PrintTemplates = /m, 'global.PrintTemplates = '));

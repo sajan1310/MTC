@@ -8652,7 +8652,13 @@ MApp.PO = {
       const idx = this.pos.indexOf(po);
       const pendingLines = (po.items || [])
         .filter(item => (item.pendingQty || 0) > 0.0001)
-        .map(item => `${MApp.Util.escapeHtml(item.name)}: ${MApp.Util.formatQty(item.pendingQty)} ${MApp.Util.escapeHtml(item.unit || '')} pending`)
+        .map(item => `${this._lineLabel(po, item)}: ${MApp.Util.formatQty(item.pendingQty)} ${MApp.Util.escapeHtml(item.unit || '')} pending`)
+        .join('<br>');
+      // Completed or cancelled by hand: what never came, and who said so.
+      const verb = po.closedAs === PO_STATUS.CANCELLED ? 'cancelled' : 'short';
+      const shortLines = (po.items || [])
+        .filter(item => (item.shortQty || 0) > 0.0001)
+        .map(item => `${this._lineLabel(po, item)}: ${MApp.Util.formatQty(item.shortQty)} ${MApp.Util.escapeHtml(item.unit || '')} ${verb}`)
         .join('<br>');
 
       return `
@@ -8663,14 +8669,16 @@ MApp.PO = {
             <div class="mb-card-sub">${MApp.Util.escapeHtml(po.vendor || '')} · ${MApp.Util.escapeHtml(po.poDate || '')}</div>
           </div>
           <div style="display:flex;align-items:center;gap:6px;">
-            <span class="mb-chip ${MApp.Util.statusChipClass(po.status)}">${MApp.Util.escapeHtml(po.status || '')}</span>
+            ${this._statusHtml(po, idx)}
             <button type="button" class="mapp-topbar-btn" aria-label="Document actions for PO ${MApp.Util.escapeHtml(po.poNumber)}" onclick="MApp.PO.documentActions(${idx})">
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/></svg>
             </button>
           </div>
         </div>
-        <div class="mb-card-sub" style="margin-top:4px;">Qty: ${MApp.Util.formatQty(po.totalQty)} · Total: ${MApp.Util.formatCurrency(po.grandTotal)}</div>
+        <div class="mb-card-sub" style="margin-top:4px;">Qty: ${this._qtyText(po)} · Total: ${MApp.Util.formatCurrency(po.grandTotal)}</div>
         ${pendingLines ? `<div class="mb-card-sub" style="margin-top:4px;color:var(--mb-enamel-amber-ink);">${pendingLines}</div>` : ''}
+        ${shortLines ? `<div class="mb-card-sub" style="margin-top:4px;">${shortLines}</div>` : ''}
+        ${this._closedHtml(po)}
         <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4); flex-wrap:wrap;">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-po-action="edit" data-po-index="${idx}">Edit</button>
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-po-action="delete" data-po-index="${idx}">Delete</button>
@@ -8678,7 +8686,7 @@ MApp.PO = {
       </div>`;
     }).join('') + MApp.Paging.moreHtml(page);
 
-    listEl.querySelectorAll('[data-po-action]').forEach(btn => {
+    listEl.querySelectorAll('button[data-po-action]').forEach(btn => {
       btn.addEventListener('click', () => {
         const po = this.pos[Number(btn.dataset.poIndex)];
         if (!po) return;
@@ -8687,7 +8695,97 @@ MApp.PO = {
       });
     });
 
+    // The dropdown only asks: it goes straight back to what the PO is, and
+    // the list redraws once the server has saved a change.
+    listEl.querySelectorAll('select[data-po-action="status"]').forEach(sel => {
+      sel.addEventListener('change', () => {
+        const choice = sel.value;
+        const shown = sel.dataset.shown;
+        sel.value = shown;
+        const po = this.pos[Number(sel.dataset.poIndex)];
+        // Long-press selection: a tap means "toggle this PO", never a status.
+        if (!po || choice === shown || MApp.Select.isActive(this.SELECT.key)) return;
+        this.setStatus(po, choice);
+      });
+    });
+
     MApp.Select.enable(listEl, page.rows, this.SELECT);
+  },
+
+  // A line's item as the card names it: name and size -- one PO often
+  // orders RIM---BLACK in two sizes -- and the narration when the PO orders
+  // the same item and size on another line too (desktop's
+  // App.PO.distinguishingNarration).
+  _lineLabel(po, item) {
+    const e = MApp.Util.escapeHtml;
+    const part = v => String(v == null ? '' : v).trim().toLowerCase();
+    const twins = (po.items || []).filter(i => part(i.name) === part(item.name) && part(i.size) === part(item.size));
+    const narration = twins.length > 1 ? String(item.narration || '').trim() : '';
+    return `${e(item.name)}${item.size ? ` [${e(item.size)}]` : ''}${narration ? ` “${e(narration)}”` : ''}`;
+  },
+
+  // "2000" -- or, for a PO ordering in more than one unit, a total per
+  // unit: 1000 Pair and 1000 Set are not "2000".
+  _qtyText(po) {
+    const sums = new Map();
+    (po.items || []).forEach(i => {
+      const unit = String(i.unit || 'Pcs').trim();
+      const entry = sums.get(unit.toLowerCase()) || { unit, qty: 0 };
+      entry.qty += MApp.Util.toNumber(i.qty);
+      sums.set(unit.toLowerCase(), entry);
+    });
+    if (sums.size <= 1) return MApp.Util.formatQty(po.totalQty);
+    return [...sums.values()]
+      .map(s => `${MApp.Util.formatQty(s.qty)} ${MApp.Util.escapeHtml(s.unit)}`)
+      .join(' + ');
+  },
+
+  // The card's status: a dropdown when there is something a person may set
+  // (poStatusChoices, shared with desktop), otherwise the plain chip.
+  _statusHtml(po, idx) {
+    const e = MApp.Util.escapeHtml;
+    const status = po.status || PO_STATUS.ISSUED;
+    const chip = MApp.Util.statusChipClass(status);
+    const choices = poStatusChoices(po);
+    if (!choices.length) return `<span class="mb-chip ${chip}">${e(status)}</span>`;
+    const options = [{ value: status, label: status }, ...choices]
+      .map((c, i) => `<option value="${e(c.value)}"${i === 0 ? ' selected' : ''}>${e(c.label)}</option>`)
+      .join('');
+    return `<select class="mb-chip mb-chip-select ${chip}" data-po-action="status" data-po-index="${idx}" data-shown="${e(status)}" aria-label="Status for PO ${e(po.poNumber)}">${options}</select>`;
+  },
+
+  _closedHtml(po) {
+    if (!po.closedAs) return '';
+    const e = MApp.Util.escapeHtml;
+    const verb = po.closedAs === PO_STATUS.CANCELLED ? 'Cancelled' : 'Marked complete';
+    const by = po.closedBy ? ` by ${e(po.closedBy)}` : '';
+    const at = po.closedAt ? `, ${e(po.closedAt)}` : '';
+    const note = po.closeNote ? ` — “${e(po.closeNote)}”` : '';
+    return `<div class="mb-card-sub" style="margin-top:4px;font-style:italic;">${verb}${by}${at}${note}</div>`;
+  },
+
+  // Desktop's Status dropdown (App.PO.onStatusSelect), as native dialogs:
+  // Completed or Cancelled names what stops being pending and takes an
+  // optional reason in the same prompt; Reopen asks to confirm. The
+  // server's own message is the toast.
+  async setStatus(po, choice) {
+    let res;
+    if (choice === 'reopen') {
+      if (!window.confirm(`Reopen PO ${po.poNumber}? It goes back to ${po.statusFromBills || PO_STATUS.ISSUED}, and whatever it is still owed counts as pending again.`)) return;
+      res = await MApp.Util.mutateSimple('reopenPO', [po.poNumber], null);
+    } else {
+      const left = (po.items || [])
+        .filter(item => (item.pendingQty || 0) > 0.0001)
+        .map(item => `${item.name}${item.size ? ` [${item.size}]` : ''}: ${MApp.Util.formatQty(item.pendingQty)} ${item.unit || ''}`)
+        .join('\n');
+      const ask = choice === PO_STATUS.CANCELLED ? `Cancel PO ${po.poNumber}?` : `Mark PO ${po.poNumber} complete?`;
+      const note = window.prompt(`${ask}\n\nNo longer pending:\n${left}\n\nReason (optional):`, '');
+      if (note === null) return;
+      res = await MApp.Util.mutateSimple('closePO', [po.poNumber, choice, note.trim()], null);
+    }
+    if (!res || !res.success) return;
+    MApp.Toast.success(res.message || 'PO status updated.');
+    this._refreshLedger();
   },
 
   // Desktop's name for a PO, for its Print title and Download filename
@@ -9720,10 +9818,17 @@ MApp.Bill = {
       unit: l.unit || 'Pcs', qty: l.qty, price: l.priceAuto ? 0 : (MApp.Util.toNumber(l.price) || 0)
     }));
     const billDate = document.getElementById('bill-form-date')?.value || MApp.Util.todayInputValue();
+    // Editing a saved bill: the server leaves that bill's own lines out of
+    // what each PO has received. Counted in, they made the PO look already
+    // received by this very bill -- editing bill 288 from 500 to 498 cartons
+    // found PO 1187 full and saved the line Direct.
+    const editing = this.editingBillNumber
+      ? { vendor: this.editingBillVendor || vendor, billNumber: this.editingBillNumber }
+      : null;
 
     let results = [];
     try {
-      const res = await MApp.Api.call('suggestPoAllocations', vendor, payload, billDate);
+      const res = await MApp.Api.call('suggestPoAllocations', vendor, payload, billDate, editing);
       results = (res && res.success && res.data) ? res.data : [];
     } catch (err) {
       return; // offline or failing: leave the lines as they are
@@ -11715,14 +11820,17 @@ MApp.Directory = {
   _vendorPendingRows(pendingList) {
     const esc = MApp.Util.escapeHtml;
     let pHtml = '';
+    const qty = v => MApp.Util.formatQty(v);
     pendingList.forEach(item => {
       const over = Number(item.over) || 0;
+      // Each figure in the PO's own unit (PrintTemplates.vendorLedger).
+      const unit = item.unit ? ` ${esc(item.unit)}` : '';
       pHtml += `<tr>
           <td><strong class="text-primary">${esc(item.name)}</strong></td>
           <td>${esc(item.size) || '-'}</td>
-          <td class="text-center">${item.ordered}</td>
-          <td class="text-center">${item.received}${over ? ` <small class="text-success fw-bold">+${over} over</small>` : ''}</td>
-          <td class="${item.pending > 0 ? 'text-danger' : 'text-success'} fw-bold text-center">${item.pending}</td>
+          <td class="text-center">${qty(item.ordered)}${unit}</td>
+          <td class="text-center">${qty(item.received)}${unit}${over ? ` <small class="text-success fw-bold">+${qty(over)} over</small>` : ''}</td>
+          <td class="${item.pending > 0 ? 'text-danger' : 'text-success'} fw-bold text-center">${qty(item.pending)}${unit}</td>
         </tr>`;
     });
     return pHtml || '<tr><td colspan="5" class="text-center text-success fw-bold p-4">No pending orders. All caught up!</td></tr>';

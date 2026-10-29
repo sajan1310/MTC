@@ -100,9 +100,11 @@ App.Vendor = {
     let html = '';
     pageItems.forEach(v => {
       const { pendingList } = this.calculateLedgerAndPending(v.name);
-      const pendingCount = pendingList.reduce((sum, p) => sum + p.pending, 0);
+      // Items, not units: adding pieces, pairs and Gross of spokes together
+      // gave one number that meant nothing.
+      const pendingCount = pendingList.filter(p => p.pending > 0.0001).length;
       const pendingBadge = pendingCount > 0
-        ? `<span class="badge bg-warning text-dark">${pendingCount} Units Pending</span>`
+        ? `<span class="badge bg-warning text-dark">${pendingCount} ${pendingCount === 1 ? 'Item' : 'Items'} Pending</span>`
         : `<span class="badge bg-success">All Clear</span>`;
 
       const checkedAttr = App.Selection.isSelected(App.State.selectedVendors, v.name) ? 'checked' : '';
@@ -342,12 +344,14 @@ App.Vendor = {
       // 148 rows. See PrintTemplates.vendorLedger.
       pendingList.forEach(item => {
         const over = Number(item.over) || 0;
+        // Each figure in the PO's own unit (PrintTemplates.vendorLedger).
+        const unit = item.unit ? ` ${escapeHtml(item.unit)}` : '';
         pHtml += `<tr>
           <td><strong class="text-primary">${escapeHtml(item.name)}</strong></td>
           <td>${escapeHtml(item.size) || '-'}</td>
-          <td class="text-center">${item.ordered}</td>
-          <td class="text-center">${item.received}${over ? ` <small class="text-success fw-bold">+${over} over</small>` : ''}</td>
-          <td class="${item.pending > 0 ? 'text-danger' : 'text-success'} fw-bold text-center">${item.pending}</td>
+          <td class="text-center">${formatQty(item.ordered)}${unit}</td>
+          <td class="text-center">${formatQty(item.received)}${unit}${over ? ` <small class="text-success fw-bold">+${formatQty(over)} over</small>` : ''}</td>
+          <td class="${item.pending > 0 ? 'text-danger' : 'text-success'} fw-bold text-center">${formatQty(item.pending)}${unit}</td>
         </tr>`;
       });
       pBody.innerHTML = pHtml || '<tr><td colspan="5" class="text-center text-success fw-bold p-4">No pending orders. All caught up!</td></tr>';

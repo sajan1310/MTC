@@ -105,3 +105,49 @@ describe('editing a bill', () => {
     expect(App.Bill.serializeForm().formData.remarks).toBe('Paid by cheque 118822');
   });
 });
+
+
+// Matching an edited bill to its POs (audit 2026-10-29). The server counted
+// the bill's own saved lines as already received, so a PO the bill had
+// filled looked full and an edited line fell to Direct -- the PO then
+// showed as pending goods that had arrived. It is told which bill is being
+// edited now, and leaves that bill out.
+describe('matching an edited bill to its POs', () => {
+  beforeEach(() => {
+    jest.resetModules();
+    document.body.innerHTML = PARTIAL('vendors.html') + PARTIAL('bill_ledger.html');
+    loadBill();
+    App.State.globalBills = [BILL];
+    App.State.filteredBills = [BILL];
+    global.Api = { call: jest.fn(async () => ({ success: true, data: [] })) };
+  });
+
+  afterEach(() => { delete global.Api; });
+
+  const pickVendor = name => {
+    const select = document.getElementById('billVendor');
+    if (![...select.options].some(o => o.value === name)) select.add(new Option(name, name));
+    select.value = name;
+  };
+  const askedWith = () => Api.call.mock.calls.find(c => c[0] === 'suggestPoAllocations');
+
+  test('tells the server which bill is being edited', async () => {
+    await App.Bill.openEditModal(0);
+    pickVendor('acme');
+
+    await App.Bill._runAutoMatchNow();
+
+    expect(askedWith()[4]).toEqual({ vendor: 'acme', billNumber: 'INV-4471' });
+  });
+
+  test('a new bill names none', async () => {
+    await App.Bill.openReceiveModal();
+    pickVendor('acme');
+    document.querySelector('#billItemsBody .b-item-name').value = 'Carton';
+    document.querySelector('#billItemsBody .b-item-qty').value = '5';
+
+    await App.Bill._runAutoMatchNow();
+
+    expect(askedWith()[4]).toBeNull();
+  });
+});

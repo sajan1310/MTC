@@ -466,6 +466,506 @@ def test_pending_qty_goes_negative_when_billed_beyond_ordered(erp_client):
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# closePO / reopenPO -- a status set by hand from the Status dropdown
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _po_with_receipt(client, ordered=10, received=4):
+    """A PO for `ordered` Pcs of one item at Rs 2, `received` of it billed."""
+    vendor = _unique_name("CloseVendor")
+    item = _unique_name("CloseItem")
+    po_number = _rpc(
+        client,
+        "savePO",
+        [
+            {
+                "vendor": vendor,
+                "poDate": "01/01/2026",
+                "items": [
+                    {
+                        "name": item,
+                        "size": "",
+                        "qty": ordered,
+                        "unit": "Pcs",
+                        "price": 2,
+                    }
+                ],
+            }
+        ],
+        mutation=True,
+    ).get_json()["data"]["poNumber"]
+    if received:
+        body = _rpc(
+            client,
+            "saveBill",
+            [
+                {
+                    "vendor": vendor,
+                    "billNumber": _unique_name("CloseBill"),
+                    "billDate": "02/01/2026",
+                    "items": [
+                        {
+                            "name": item,
+                            "size": "",
+                            "qty": received,
+                            "price": 2,
+                            "po": po_number,
+                        }
+                    ],
+                }
+            ],
+            mutation=True,
+        ).get_json()
+        assert body["success"] is True, body["message"]
+    return vendor, item, po_number
+
+
+def _po(client, po_number):
+    listed = _rpc(client, "getPOData").get_json()["data"]
+    return next(po for po in listed if po["poNumber"] == po_number)
+
+
+def test_close_po_completed_turns_the_balance_from_pending_to_short(erp_client):
+    _vendor, item, po_number = _po_with_receipt(erp_client)
+    assert _po(erp_client, po_number)["status"] == "Partially Received"
+
+    body = _rpc(
+        erp_client,
+        "closePO",
+        [po_number, "Completed", "Vendor will not send the rest"],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+    assert f"No longer pending: 6 Pcs {item}." in body["message"]
+    # The row the screen patches in place.
+    assert body["data"]["po"]["status"] == "Completed"
+
+    po = _po(erp_client, po_number)
+    assert po["status"] == "Completed"
+    assert po["closedAs"] == "Completed"
+    assert po["statusFromBills"] == "Partially Received"
+    assert po["closedBy"] == "ERP Test User"
+    assert po["closeNote"] == "Vendor will not send the rest"
+    assert po["closedAt"]
+    line = po["items"][0]
+    assert line["receivedQty"] == 4
+    assert line["pendingQty"] == 0
+    assert line["shortQty"] == 6
+
+
+def test_close_po_cancels_an_issued_or_a_partial_po(erp_client):
+    _vendor, _item, issued = _po_with_receipt(erp_client, received=0)
+    body = _rpc(erp_client, "closePO", [issued, "Cancelled"], mutation=True).get_json()
+    assert body["success"] is True, body["message"]
+    po = _po(erp_client, issued)
+    assert po["status"] == "Cancelled"
+    assert po["statusFromBills"] == "PO Issued"
+    assert po["items"][0]["pendingQty"] == 0
+    assert po["items"][0]["shortQty"] == 10
+
+    _vendor, _item, partial = _po_with_receipt(erp_client)
+    body = _rpc(erp_client, "closePO", [partial, "cancelled"], mutation=True).get_json()
+    assert body["success"] is True, body["message"]
+    assert _po(erp_client, partial)["status"] == "Cancelled"
+
+
+def test_close_po_refuses_what_the_bills_contradict(erp_client):
+    _vendor, _item, issued = _po_with_receipt(erp_client, received=0)
+    body = _rpc(erp_client, "closePO", [issued, "Completed"], mutation=True).get_json()
+    assert body["success"] is False
+    assert "Nothing has been received" in body["message"]
+    assert _po(erp_client, issued)["status"] == "PO Issued"
+
+    _vendor, _item, full = _po_with_receipt(erp_client, received=10)
+    for closed_as in ("Completed", "Cancelled"):
+        body = _rpc(erp_client, "closePO", [full, closed_as], mutation=True).get_json()
+        assert body["success"] is False
+        assert "received in full" in body["message"]
+
+    _vendor, _item, partial = _po_with_receipt(erp_client)
+    body = _rpc(
+        erp_client, "closePO", [partial, "Partially Received"], mutation=True
+    ).get_json()
+    assert body["success"] is False
+
+    assert (
+        _rpc(erp_client, "closePO", [partial, "Completed"], mutation=True).get_json()[
+            "success"
+        ]
+        is True
+    )
+    body = _rpc(erp_client, "closePO", [partial, "Cancelled"], mutation=True).get_json()
+    assert body["success"] is False
+    assert "already Completed" in body["message"]
+
+    body = _rpc(
+        erp_client, "closePO", [_unique_name("NoSuchPO"), "Cancelled"], mutation=True
+    ).get_json()
+    assert body["success"] is False
+    assert "not found" in body["message"]
+
+
+def test_reopen_po_hands_the_status_back_to_the_bills(erp_client):
+    _vendor, _item, po_number = _po_with_receipt(erp_client)
+    _rpc(erp_client, "closePO", [po_number, "Completed", "short"], mutation=True)
+
+    body = _rpc(erp_client, "reopenPO", [po_number], mutation=True).get_json()
+    assert body["success"] is True, body["message"]
+    assert "Partially Received again" in body["message"]
+    po = _po(erp_client, po_number)
+    assert po["status"] == "Partially Received"
+    assert (po["closedAs"], po["closedBy"], po["closedAt"], po["closeNote"]) == (
+        "",
+        "",
+        "",
+        "",
+    )
+    assert po["items"][0]["pendingQty"] == 6
+    assert po["items"][0]["shortQty"] == 0
+
+    body = _rpc(erp_client, "reopenPO", [po_number], mutation=True).get_json()
+    assert body["success"] is False
+
+
+def test_a_po_closed_by_hand_is_not_suggested_for_new_bills(erp_client):
+    vendor, item, po_number = _po_with_receipt(erp_client)
+    args = [vendor, [{"rowIndex": 0, "name": item, "qty": 3, "price": 2}], "03/01/2026"]
+    before = _rpc(erp_client, "suggestPoAllocations", args).get_json()["data"][0]
+    assert [a["poNumber"] for a in before["allocations"]] == [po_number]
+
+    _rpc(erp_client, "closePO", [po_number, "Completed"], mutation=True)
+    # The vendor has no open PO left -- the same answer as never having one.
+    assert _rpc(erp_client, "suggestPoAllocations", args).get_json()["data"] == []
+
+
+def test_a_po_closed_by_hand_leaves_the_dashboards_open_pos(erp_client):
+    _vendor, _item, po_number = _po_with_receipt(erp_client)
+
+    def kpis():
+        return _rpc(erp_client, "getDashboardData").get_json()["data"]["kpis"]
+
+    before = kpis()
+    _rpc(erp_client, "closePO", [po_number, "Cancelled"], mutation=True)
+    after = kpis()
+    assert after["openPoCount"] == before["openPoCount"] - 1
+    # 6 Pcs still owed at Rs 2.
+    assert after["openPoValue"] == round(before["openPoValue"] - 12, 2)
+
+
+def test_editing_a_po_keeps_the_status_set_by_hand(erp_client):
+    vendor, item, po_number = _po_with_receipt(erp_client)
+    _rpc(erp_client, "closePO", [po_number, "Cancelled", "order off"], mutation=True)
+
+    body = _rpc(
+        erp_client,
+        "savePO",
+        [
+            {
+                "existingPoNumber": po_number,
+                "vendor": vendor,
+                "items": [
+                    {"name": item, "size": "", "qty": 12, "unit": "Pcs", "price": 2}
+                ],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+    po = _po(erp_client, po_number)
+    assert po["status"] == "Cancelled"
+    assert po["closeNote"] == "order off"
+    assert po["items"][0]["shortQty"] == 8
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Identical lines on one PO share their bills (audit 2026-10-29)
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _twin_line_po(client, received=0):
+    """PO 1269's shape: one item and size ordered on two identical lines."""
+    vendor = _unique_name("TwinVendor")
+    item = _unique_name("TwinItem")
+    line = {"name": item, "size": "14 inch", "narration": "Wt 340", "qty": 1000}
+    body = _rpc(
+        client,
+        "savePO",
+        [
+            {
+                "vendor": vendor,
+                "poDate": "01/01/2026",
+                "items": [
+                    {**line, "unit": "Pcs", "price": 2},
+                    {**line, "unit": "Pcs", "price": 2},
+                ],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    po_number = body["data"]["poNumber"]
+    if received:
+        bill = {"name": item, "size": "14 inch", "narration": "Wt 340"}
+        _rpc(
+            client,
+            "saveBill",
+            [
+                {
+                    "vendor": vendor,
+                    "billNumber": _unique_name("TwinBill"),
+                    "billDate": "02/01/2026",
+                    "items": [{**bill, "qty": received, "price": 2, "po": po_number}],
+                }
+            ],
+            mutation=True,
+        )
+    return vendor, item, po_number, body["message"]
+
+
+def test_identical_po_lines_fill_in_order_from_one_bill(erp_client):
+    _vendor, _item, po_number, _msg = _twin_line_po(erp_client, received=1000)
+
+    po = _po(erp_client, po_number)
+    # One 1000-piece bill used to mark BOTH lines received -- Completed,
+    # with 1000 still to come.
+    assert po["status"] == "Partially Received"
+    first, second = po["items"]
+    assert (first["receivedQty"], first["pendingQty"]) == (1000, 0)
+    assert (second["receivedQty"], second["pendingQty"]) == (0, 1000)
+
+
+def test_the_last_identical_line_carries_an_overage(erp_client):
+    _vendor, _item, po_number, _msg = _twin_line_po(erp_client, received=2500)
+
+    po = _po(erp_client, po_number)
+    assert po["status"] == "Completed"
+    first, second = po["items"]
+    assert (first["receivedQty"], first["pendingQty"]) == (1000, 0)
+    assert (second["receivedQty"], second["pendingQty"]) == (1500, -500)
+
+
+def test_identical_lines_still_open_are_suggested_and_counted(erp_client):
+    vendor, item, po_number, _msg = _twin_line_po(erp_client, received=1000)
+
+    suggestion = _rpc(
+        erp_client,
+        "suggestPoAllocations",
+        [
+            vendor,
+            [{"rowIndex": 0, "name": item, "size": "14 inch", "qty": 300, "price": 2}],
+            "03/01/2026",
+        ],
+    ).get_json()["data"][0]
+    assert [(a["poNumber"], a["qty"]) for a in suggestion["allocations"]] == [
+        (po_number, 300)
+    ]
+
+    def kpis():
+        return _rpc(erp_client, "getDashboardData").get_json()["data"]["kpis"]
+
+    before = kpis()
+    _rpc(erp_client, "closePO", [po_number, "Completed"], mutation=True)
+    after = kpis()
+    # The open twin was counted: 1000 Pcs at Rs 2 leave the dashboard.
+    assert after["openPoCount"] == before["openPoCount"] - 1
+    assert after["openPoValue"] == round(before["openPoValue"] - 2000, 2)
+
+
+def test_save_po_says_when_a_line_is_repeated(erp_client):
+    _vendor, item, _po_number, message = _twin_line_po(erp_client)
+    assert f'Note: "{item} [14 inch]" is on this PO more than once' in message
+
+
+def test_over_receipt_warning_names_the_open_po_it_may_belong_to(erp_client):
+    vendor = _unique_name("MislinkVendor")
+    item = _unique_name("MislinkItem")
+
+    def po(date):
+        return _rpc(
+            erp_client,
+            "savePO",
+            [
+                {
+                    "vendor": vendor,
+                    "poDate": date,
+                    "items": [
+                        {"name": item, "size": "", "qty": 10, "unit": "Pcs", "price": 1}
+                    ],
+                }
+            ],
+            mutation=True,
+        ).get_json()["data"]["poNumber"]
+
+    older, newer = po("01/01/2026"), po("05/01/2026")
+    body = _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "vendor": vendor,
+                "billNumber": _unique_name("MislinkBill"),
+                "billDate": "06/01/2026",
+                "items": [
+                    {"name": item, "size": "", "qty": 15, "price": 1, "po": older}
+                ],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+    assert (
+        f"on PO {older} has now received 15 Pcs against 10 ordered (5 over). "
+        f"PO {newer} still has 10 Pcs of it pending -- was this meant for it?"
+    ) in body["message"]
+
+
+def test_editing_a_bill_matches_it_to_the_po_it_already_fills(erp_client):
+    """Bill 288 (2026-09-30): saved against PO 1187 for 500 cartons, edited
+    on the phone to 498. The match counted the bill's own 500 as already
+    received, found the PO full, and the line was saved Direct -- PO 1187
+    then showed 500 cartons pending that had arrived."""
+    vendor, item, po_number = _po_with_receipt(erp_client, ordered=500, received=0)
+    bill_number = _unique_name("EditBill")
+    line = {"name": item, "size": "", "qty": 500, "price": 2, "po": po_number}
+    _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "vendor": vendor,
+                "billNumber": bill_number,
+                "billDate": "02/01/2026",
+                "items": [line],
+            }
+        ],
+        mutation=True,
+    )
+    asked = [
+        vendor,
+        [{"rowIndex": 0, "name": item, "qty": 498, "price": 2}],
+        "02/01/2026",
+    ]
+
+    # As anyone else sees it, the PO is full.
+    others = _rpc(erp_client, "suggestPoAllocations", asked).get_json()["data"]
+    assert others[0]["allocations"] == []
+    # The bill being edited still fills it.
+    editing = {"vendor": vendor.upper(), "billNumber": bill_number}
+    result = _rpc(erp_client, "suggestPoAllocations", [*asked, editing]).get_json()
+    assert [(a["poNumber"], a["qty"]) for a in result["data"][0]["allocations"]] == [
+        (po_number, 498)
+    ]
+
+
+def _save_po(client, vendor, date, lines):
+    return _rpc(
+        client,
+        "savePO",
+        [{"vendor": vendor, "poDate": date, "items": lines}],
+        mutation=True,
+    ).get_json()["data"]["poNumber"]
+
+
+def test_a_bill_beyond_the_preferred_po_fills_the_vendors_other_open_po(erp_client):
+    """Bill 522 (2026-10-17): 2000 pairs, narration and rate matching only
+    PO 1271, which had 1000 left. The other 1000 went Direct while PO 1205,
+    older, at another rate and narration, still had 2000 pending."""
+    vendor, item = _unique_name("SpillVendor"), _unique_name("PEDAL")
+    older = _save_po(
+        erp_client,
+        vendor,
+        "19/08/2026",
+        [
+            {
+                "name": item,
+                "narration": "Big Head",
+                "qty": 2000,
+                "unit": "Pair",
+                "price": 19,
+            }
+        ],
+    )
+    newer = _save_po(
+        erp_client,
+        vendor,
+        "02/10/2026",
+        [
+            {
+                "name": item,
+                "narration": "Big Head, y2k",
+                "qty": 1000,
+                "unit": "Pair",
+                "price": 20.5,
+            }
+        ],
+    )
+    row = {
+        "rowIndex": 0,
+        "name": item,
+        "narration": "Big Head, y2k",
+        "qty": 2000,
+        "unit": "Pair",
+        "price": 20.5,
+    }
+    result = _rpc(
+        erp_client, "suggestPoAllocations", [vendor, [row], "17/10/2026"]
+    ).get_json()["data"][0]
+
+    # The matching PO first, then the older one -- nothing left for Direct.
+    assert [(a["poNumber"], a["qty"]) for a in result["allocations"]] == [
+        (newer, 1000),
+        (older, 1000),
+    ]
+    assert result["unmatchedQty"] == 0
+    # The older PO's different rate is flagged, not hidden.
+    assert result["allocations"][1]["rateConflict"]["poRate"] == 19
+
+
+def test_a_line_narration_tells_apart_is_never_filled_with_the_others_goods(
+    erp_client,
+):
+    """PO 1289 orders FREE-WHEEL twice, 16T and 18T. An 18T bill fills the
+    18T line, and what is left of it goes to another PO or Direct -- never
+    onto the 16T line."""
+    vendor, item = _unique_name("TwinNarrVendor"), _unique_name("FREEWHEEL")
+    po = _save_po(
+        erp_client,
+        vendor,
+        "01/10/2026",
+        [
+            {"name": item, "narration": "16T", "qty": 100, "price": 50},
+            {"name": item, "narration": "18T", "qty": 100, "price": 50},
+        ],
+    )
+    other = _save_po(
+        erp_client,
+        vendor,
+        "05/10/2026",
+        [{"name": item, "narration": "", "qty": 30, "price": 50}],
+    )
+    row = {"rowIndex": 0, "name": item, "narration": "18T", "qty": 150, "price": 50}
+    result = _rpc(
+        erp_client, "suggestPoAllocations", [vendor, [row], "10/10/2026"]
+    ).get_json()["data"][0]
+
+    assert [(a["poNumber"], a["qty"]) for a in result["allocations"]] == [
+        (po, 100),
+        (other, 30),
+    ]
+    assert result["unmatchedQty"] == 20
+
+
+def test_format_qty_never_writes_exponents():
+    from app.erp.services.units_service import format_qty
+
+    assert format_qty(1500000) == "1500000"
+    assert format_qty(97.92) == "97.92"
+    assert format_qty(50100.004799999995) == "50100.0048"
+    assert format_qty(10) == "10"
+    assert format_qty(-0.00001) == "0"
+    assert format_qty(None) == "0"
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # suggestPoAllocations (Phase 2e)
 # ─────────────────────────────────────────────────────────────────────────
 

@@ -20,11 +20,19 @@ suggestPoAllocations (Phase 2e) matches unlinked bill lines to open PO
 lines to support bill entry -- non-mutating (never writes) and fail-open
 (any internal error returns success with an empty list rather than
 blocking bill entry).
+
+closePO / reopenPO (migration 054): the PO Ledger's Status dropdown can mark
+a Partially Received PO Completed (the rest is never coming), or cancel a PO
+that is not fully received. A status set by hand supersedes the derived one
+(closedAs), and what each line is still owed is short (shortQty), not
+pending -- so it leaves every pending figure, and new bills are no longer
+suggested against it. Reopening hands the PO back to its bills.
 """
 
 from __future__ import annotations
 
 import json
+from collections import Counter
 from datetime import date
 
 import psycopg2.extras
@@ -34,7 +42,7 @@ from . import bill_service
 from . import items_service
 from . import units_service
 from . import vendors_service
-from .current_user import get_current_user_id
+from .current_user import get_current_user_id, get_current_user_name
 from .. import config_maps
 from .. import date_utils
 from ..envelope import build_response
@@ -132,21 +140,57 @@ def _normalize_items(cur, raw_items) -> list:
 # ─────────────────────────────────────────────────────────────────────────
 
 
+def _effective_base_qty(item: dict) -> float:
+    """A PO line's ordered quantity in base units. Legacy/unconverted rows
+    (baseQty 0) are 1:1 with the entered unit -- one value, used for both
+    the completion check and the qty conversion, so they can't drift apart.
+    """
+    return item["baseQty"] if item["baseQty"] > 0 else item["qty"]
+
+
+def _billed_base_by_line(po: dict, billed_map: dict) -> list:
+    """Billed base quantity per line of `po`, in line order.
+
+    Bills are matched to a PO line by item + size + narration, so two
+    identical lines on one PO share a single billed total. Each line used to
+    be handed that whole total: PO 1269 orders RIM---BLACK 14" twice, 1000
+    each, and its one 1000-piece bill marked both lines received -- the PO
+    read Completed with 1000 still to come. Identical lines now fill in
+    order instead, each up to what it ordered, and the last of them takes
+    whatever is left, an overage included.
+    """
+    keys = [
+        bill_service._build_po_line_key(
+            po["poNumber"], item["name"], item["size"], item["narration"]
+        )
+        for item in po["items"]
+    ]
+    lines_left = Counter(keys)
+    given: dict = {}
+    result = []
+    for item, key in zip(po["items"], keys):
+        lines_left[key] -= 1
+        available = billed_map.get(key, 0) - given.get(key, 0.0)
+        take = (
+            available
+            if lines_left[key] == 0
+            else min(available, _effective_base_qty(item))
+        )
+        take = max(take, 0.0)
+        given[key] = given.get(key, 0.0) + take
+        result.append(take)
+    return result
+
+
 def _attach_po_status(po: dict, billed_map: dict) -> None:
     items = po["items"]
     any_billed = False
     all_lines_complete = len(items) > 0
+    # Completed or cancelled by hand (closePO): nothing more is expected.
+    closed_as = po.get("closedAs") or ""
 
-    for item in items:
-        key = bill_service._build_po_line_key(
-            po["poNumber"], item["name"], item["size"], item["narration"]
-        )
-        billed_base_qty = billed_map.get(key, 0)
-
-        # Legacy/unconverted rows (baseQty 0) are treated as 1:1 with the
-        # entered unit -- one value, used for both the completion check and
-        # the qty conversion below, so they can't drift apart.
-        effective_base_qty = item["baseQty"] if item["baseQty"] > 0 else item["qty"]
+    for item, billed_base_qty in zip(items, _billed_base_by_line(po, billed_map)):
+        effective_base_qty = _effective_base_qty(item)
         ordered_base_qty = effective_base_qty or 0
 
         ratio = (item["qty"] / effective_base_qty) if effective_base_qty > 0 else 1
@@ -156,7 +200,12 @@ def _attach_po_status(po: dict, billed_map: dict) -> None:
         # over-billing warning). Every current reader of pendingQty already
         # filters to > 0.0001 before display, so this stays invisible in
         # "pending" lists but is now available to surface the overage.
-        item["pendingQty"] = item["qty"] - item["receivedQty"]
+        pending = item["qty"] - item["receivedQty"]
+        # On a PO closed by hand, what is still owed is never coming: it
+        # moves to shortQty, so every reader of pendingQty drops it as it
+        # drops a received line. An overage stays negative, as on any PO.
+        item["shortQty"] = max(pending, 0.0) if closed_as else 0.0
+        item["pendingQty"] = min(pending, 0.0) if closed_as else pending
 
         if billed_base_qty > 0.0001:
             any_billed = True
@@ -164,11 +213,14 @@ def _attach_po_status(po: dict, billed_map: dict) -> None:
             all_lines_complete = False
 
     if any_billed and all_lines_complete:
-        po["status"] = config_maps.PO_STATUS["COMPLETED"]
+        from_bills = config_maps.PO_STATUS["COMPLETED"]
     elif any_billed:
-        po["status"] = config_maps.PO_STATUS["PARTIAL"]
+        from_bills = config_maps.PO_STATUS["PARTIAL"]
     else:
-        po["status"] = config_maps.PO_STATUS["ISSUED"]
+        from_bills = config_maps.PO_STATUS["ISSUED"]
+    # What the bills alone say -- what a reopened PO goes back to.
+    po["statusFromBills"] = from_bills
+    po["status"] = closed_as or from_bills
 
 
 def _po_sort_num(po_number: str) -> int:
@@ -305,6 +357,7 @@ def _load_po_list(cur, billed_map: dict, only_po_number: str | None = None) -> l
     query = """
         SELECT h.po_number, h.po_date, h.vendor, h.contact, h.po_description,
                h.po_remarks, h.supplier_remarks,
+               h.closed_as, h.closed_at, h.closed_by_name, h.close_note,
                l.item_name, l.narration, l.size, l.qty, l.unit, l.price, l.base_qty, l.base_rate
         FROM erp.po_headers h
         JOIN erp.po_lines l ON l.header_id = h.id
@@ -336,6 +389,12 @@ def _load_po_list(cur, billed_map: dict, only_po_number: str | None = None) -> l
                 "poDescription": row["po_description"] or "",
                 "poRemarks": row["po_remarks"] or "",
                 "supplierRemarks": row["supplier_remarks"] or "",
+                # The status set by hand (closePO), "" when the bills decide
+                # -- see _attach_po_status.
+                "closedAs": row["closed_as"] or "",
+                "closedAt": date_utils.to_display_string(row["closed_at"]) or "",
+                "closedBy": row["closed_by_name"] or "",
+                "closeNote": row["close_note"] or "",
                 "items": [],
                 "grandTotal": 0.0,
                 "totalQty": 0.0,
@@ -585,6 +644,14 @@ def save_po(conn, cur, form_data):
         else f"PO #{po_number} ({vendor}) created successfully."
     )
 
+    repeated = _repeated_lines(items)
+    if repeated:
+        message += (
+            f" Note: {', '.join(repeated)} {'is' if len(repeated) == 1 else 'are'} on this "
+            "PO more than once with the same narration. Bills fill those lines in order -- "
+            "merge them, or tell them apart in Narration."
+        )
+
     # Read this PO's own just-written rows back so the client can patch it
     # into an already-loaded list in place instead of a full reload.
     fresh_billed_map = bill_service._aggregate_billed_base_qty_by_po(cur)
@@ -607,6 +674,25 @@ def save_po(conn, cur, form_data):
             )
 
     return build_response(True, {"poNumber": po_number, "po": fresh_po}, message)
+
+
+def _repeated_lines(items) -> list:
+    """Each item a PO orders on more than one line with nothing -- not even
+    narration -- telling those lines apart, as "NAME [size]"."""
+
+    def part(v) -> str:
+        return str(v if v is not None else "").strip().lower()
+
+    counts = Counter(
+        (part(i["name"]), part(i["size"]), part(i["narration"])) for i in items
+    )
+    labels = []
+    for item in items:
+        key = (part(item["name"]), part(item["size"]), part(item["narration"]))
+        label = f'"{item["name"]}{" [" + item["size"] + "]" if item["size"] else ""}"'
+        if counts[key] > 1 and label not in labels:
+            labels.append(label)
+    return labels
 
 
 def _attached_by_item(po_number, lines, billed_map) -> dict:
@@ -727,13 +813,148 @@ def delete_pos_bulk(conn, cur, po_numbers):
     )
 
 
+# Longer than the screen's reason box ever sends.
+_MAX_CLOSE_NOTE = 500
+
+
+def _lock_live_po_header(cur, po_number: str):
+    cur.execute(
+        """
+        SELECT id, po_number, closed_as FROM erp.po_headers
+        WHERE lower(po_number) = lower(%s) AND deleted_at IS NULL
+        FOR UPDATE
+        """,
+        (po_number,),
+    )
+    return cur.fetchone()
+
+
+def _load_one_po(cur, po_number: str):
+    listed = _load_po_list(
+        cur, bill_service._aggregate_billed_base_qty_by_po(cur), po_number
+    )
+    return listed[0] if listed else None
+
+
+@rpc_method("closePO", mutation=True)
+@database.transactional
+def close_po(conn, cur, po_number, closed_as, note=""):
+    """Sets a PO's status by hand: Completed or Cancelled.
+
+    Completed is for a Partially Received PO whose balance is never coming;
+    with nothing received yet there is nothing to complete, and the PO is
+    cancelled instead. Cancelled is for any PO not received in full -- what
+    did arrive stays received.
+    """
+    target = str(po_number or "").strip()
+    if not target:
+        raise ValueError("PO number must not be empty.")
+    completed = config_maps.PO_STATUS["COMPLETED"]
+    cancelled = config_maps.PO_STATUS["CANCELLED"]
+    wanted = {completed.lower(): completed, cancelled.lower(): cancelled}.get(
+        str(closed_as or "").strip().lower()
+    )
+    if wanted is None:
+        raise ValueError("A PO can be set to Completed or Cancelled by hand.")
+    note = str(note or "").strip()
+    if len(note) > _MAX_CLOSE_NOTE:
+        raise ValueError(f"Keep the reason under {_MAX_CLOSE_NOTE} characters.")
+
+    header = _lock_live_po_header(cur, target)
+    if header is None:
+        raise ValueError(f"PO #{target} not found.")
+    shown = header["po_number"]
+    if header["closed_as"]:
+        raise ValueError(
+            f"PO #{shown} is already {header['closed_as']}. Reopen it first."
+        )
+
+    po = _load_one_po(cur, shown)
+    from_bills = po["statusFromBills"] if po else None
+    if from_bills == completed:
+        raise ValueError(f"PO #{shown} has been received in full already.")
+    if wanted == completed and from_bills != config_maps.PO_STATUS["PARTIAL"]:
+        raise ValueError(
+            f"Nothing has been received against PO #{shown} yet, so there is "
+            "nothing to complete. Cancel it instead."
+        )
+    if po is None:
+        raise ValueError(f"PO #{shown} has no items.")
+
+    user_id = get_current_user_id()
+    cur.execute(
+        """
+        UPDATE erp.po_headers
+           SET closed_as = %s, closed_at = NOW(), closed_by = %s,
+               closed_by_name = %s, close_note = %s, updated_by = %s
+         WHERE id = %s
+        """,
+        (wanted, user_id, get_current_user_name(), note, user_id, header["id"]),
+    )
+
+    fresh = _load_one_po(cur, shown)
+    left = [
+        f"{units_service.format_qty(item['shortQty'])} {item['unit']} {item['name']}"
+        + (f" [{item['size']}]" if item["size"] else "")
+        for item in fresh["items"]
+        if item["shortQty"] > 0.0001
+    ]
+    message = (
+        f"PO #{shown} {'marked complete' if wanted == completed else 'cancelled'}."
+    )
+    if left:
+        message += f" No longer pending: {', '.join(left)}."
+    return build_response(True, {"poNumber": shown, "po": fresh}, message)
+
+
+@rpc_method("reopenPO", mutation=True)
+@database.transactional
+def reopen_po(conn, cur, po_number):
+    """Undoes closePO: the PO's status follows its bills again."""
+    target = str(po_number or "").strip()
+    if not target:
+        raise ValueError("PO number must not be empty.")
+
+    header = _lock_live_po_header(cur, target)
+    if header is None:
+        raise ValueError(f"PO #{target} not found.")
+    shown = header["po_number"]
+    if not header["closed_as"]:
+        raise ValueError(
+            f"PO #{shown} was not completed or cancelled by hand, "
+            "so there is nothing to reopen."
+        )
+
+    cur.execute(
+        """
+        UPDATE erp.po_headers
+           SET closed_as = NULL, closed_at = NULL, closed_by = NULL,
+               closed_by_name = NULL, close_note = '', updated_by = %s
+         WHERE id = %s
+        """,
+        (get_current_user_id(), header["id"]),
+    )
+
+    fresh = _load_one_po(cur, shown)
+    message = f"PO #{shown} reopened."
+    if fresh:
+        message += f" It is {fresh['status']} again."
+    return build_response(True, {"poNumber": shown, "po": fresh}, message)
+
+
 @rpc_method("suggestPoAllocations")
-def suggest_po_allocations(vendor, items, bill_date=None):
+def suggest_po_allocations(vendor, items, bill_date=None, editing=None):
     """Given a vendor + a set of unlinked bill line items, suggests which
     open PO line(s) each most likely belongs to. Never writes -- only
     proposes allocations for the UI to confirm/override before a bill save.
     Fails open: any internal error returns success with an empty list
     rather than blocking bill entry.
+
+    `editing` -- {"vendor", "billNumber"} of the bill being edited, if any --
+    leaves that bill's own saved lines out of what each PO has received.
+    Counted in, they made the PO look already received by the very bill
+    being matched: editing bill 288 from 500 to 498 cartons found PO 1187
+    full and saved the line Direct, and the 500 still showed as pending.
     """
     try:
         vendor_name = str(vendor or "").strip()
@@ -744,15 +965,26 @@ def suggest_po_allocations(vendor, items, bill_date=None):
             _conn,
             cur,
         ):
-            billed_map = bill_service._aggregate_billed_base_qty_by_po(cur)
+            editing = editing if isinstance(editing, dict) else {}
+            billed_map = bill_service._aggregate_billed_base_qty_by_po(
+                cur,
+                exclude_header_id=bill_service.find_live_bill_id(
+                    cur, editing.get("vendor"), editing.get("billNumber")
+                ),
+            )
             all_pos = _load_po_list(cur, billed_map)
             item_unit_map = items_service.get_item_unit_info_map(cur)
             # Inside the block: `cur` is closed once the `with` exits
             # (PERF-003 -- this used to open a second connection out here).
             units_map = units_service.get_units_map(cur)
 
+        # A PO completed or cancelled by hand expects nothing more, however
+        # much it is short.
         vendor_pos = [
-            po for po in all_pos if po["vendor"].strip().lower() == vendor_name.lower()
+            po
+            for po in all_pos
+            if po["vendor"].strip().lower() == vendor_name.lower()
+            and not po["closedAs"]
         ]
         if not vendor_pos:
             return build_response(True, [])
@@ -771,15 +1003,10 @@ def suggest_po_allocations(vendor, items, bill_date=None):
         # Flatten to open PO lines (remaining base qty > 0), oldest PO first.
         candidates = []
         for po in vendor_pos:
-            for po_item in po["items"]:
-                key = bill_service._build_po_line_key(
-                    po["poNumber"],
-                    po_item["name"],
-                    po_item["size"],
-                    po_item["narration"],
-                )
-                billed_base_qty = billed_map.get(key, 0)
-                remaining_base_qty = po_item["baseQty"] - billed_base_qty
+            for po_item, billed_base_qty in zip(
+                po["items"], _billed_base_by_line(po, billed_map)
+            ):
+                remaining_base_qty = _effective_base_qty(po_item) - billed_base_qty
                 if remaining_base_qty > 0.0001:
                     candidates.append(
                         {
@@ -856,30 +1083,38 @@ def suggest_po_allocations(vendor, items, bill_date=None):
                 if c["remainingBaseQty"] > 0.0001
             ]
 
-            # Narration/price are preferences, not hard requirements -- a
-            # missing/mismatched value never forces a fallback to unmatched.
+            # Narration and price decide which open PO is filled FIRST; they
+            # never shut the others out. As filters they did: the rest of a
+            # bill went Direct while an older order for the same item still
+            # waited -- bill 522 put 1000 pairs on PO 1271, the one PO with
+            # its exact narration, and sent 1000 Direct with PO 1205's 2000
+            # pending; the PO then read as owed goods that had arrived.
             narration = str(item.get("narration") or "").strip().lower()
-            narration_matched = (
-                [
-                    c
-                    for c in same_name_size
-                    if c["narration"].strip().lower() == narration
-                ]
-                if narration
-                else []
-            )
-            narration_pool = narration_matched if narration_matched else same_name_size
 
-            price_matched = (
-                [
-                    c
-                    for c in narration_pool
-                    if abs(c["baseRate"] - base_rate) <= _PO_PRICE_MATCH_EPSILON
-                ]
-                if price > 0
-                else []
+            def same_narration(c):
+                return bool(narration) and c["narration"].strip().lower() == narration
+
+            # The one exception: a PO ordering this item on several lines
+            # that narration tells apart (16T and 18T freewheels). Where one
+            # of them carries the bill's narration, that is the line meant,
+            # and the PO's others are different goods.
+            meant = {c["poNumber"] for c in same_name_size if same_narration(c)}
+            eligible = [
+                c
+                for c in same_name_size
+                if c["poNumber"] not in meant or same_narration(c)
+            ]
+            # Stable, so the oldest PO still comes first within each rank.
+            matching = sorted(
+                eligible,
+                key=lambda c: (
+                    not same_narration(c),
+                    not (
+                        price > 0
+                        and abs(c["baseRate"] - base_rate) <= _PO_PRICE_MATCH_EPSILON
+                    ),
+                ),
             )
-            matching = price_matched if price_matched else narration_pool
 
             base_qty_left = base_qty
             allocations = []

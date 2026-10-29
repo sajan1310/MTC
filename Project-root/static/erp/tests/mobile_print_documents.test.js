@@ -165,7 +165,8 @@ describe('the vendor ledger', () => {
     // And the comparison compared something.
     expect(phone).toContain('WB/2231');
     expect(phone).toContain('RET-31');
-    expect(phone).toContain('+2880 over');
+    // 420 Gross received against 400 ordered, said in the PO's own unit.
+    expect(phone).toContain('+20 over');
   });
 
   test('every ledger row has a cell under every heading', () => {

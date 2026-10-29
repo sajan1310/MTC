@@ -92,6 +92,7 @@ beforeAll(() => {
     'global.formatQty = formatQty;',
     'global.formatItemsPreview = formatItemsPreview;',
     'global.PO_STATUS = PO_STATUS;',
+    'global.poStatusChoices = poStatusChoices;',
     'global.parseRecordDate = parseRecordDate;',
     'global.normalizeDateForInput = normalizeDateForInput;',
     'global.todayIso = todayIso;'

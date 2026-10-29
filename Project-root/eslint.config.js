@@ -58,6 +58,7 @@ module.exports = [
         // loaded by index.html and mobile.html alike.
         PrintTemplates: 'writable',
         PO_STATUS: 'readonly',
+        poStatusChoices: 'writable',
         CACHE_NAME: 'writable',
         PRECACHE_URLS: 'writable',
         HTML_ESCAPE_MAP: 'readonly',
