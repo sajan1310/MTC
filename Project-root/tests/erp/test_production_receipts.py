@@ -253,7 +253,10 @@ def test_receipts_detail_lists_each_colour_with_its_balance(erp_client):
         _receive(
             erp_client,
             row,
-            [{"color": red, "size": "", "qty": 2}, {"color": blue, "size": "", "qty": 1}],
+            [
+                {"color": red, "size": "", "qty": 2},
+                {"color": blue, "size": "", "qty": 1},
+            ],
             remarks="first van",
         )["success"]
         is True
@@ -261,7 +264,11 @@ def test_receipts_detail_lists_each_colour_with_its_balance(erp_client):
 
     data = _rpc(erp_client, "getProductionReceipts", [row["rowIdx"]]).get_json()["data"]
     lines = {line["color"]: line for line in data["lines"]}
-    assert (lines[red]["qty"], lines[red]["received"], lines[red]["balance"]) == (6, 2, 4)
+    assert (lines[red]["qty"], lines[red]["received"], lines[red]["balance"]) == (
+        6,
+        2,
+        4,
+    )
     assert (lines[blue]["qty"], lines[blue]["received"], lines[blue]["balance"]) == (
         4,
         1,
@@ -328,8 +335,9 @@ def test_cancelling_keeps_what_was_received_and_drops_the_balance(erp_client):
         mutation=True,
     ).get_json()
     assert body["success"] is True, body["message"]
-    assert "The 4 received stay received; the 6 not received are dropped." in (
-        body["message"]
+    assert (
+        "The 4 received stay received; the 6 not received are dropped."
+        in (body["message"])
     )
 
     assert _pool(erp_client, output) == 4
@@ -446,7 +454,9 @@ def test_a_receipt_on_a_completed_lot_cannot_be_deleted(erp_client):
     first = _receive(erp_client, row, _whole(4))["data"]["receiptId"]
     assert _receive(erp_client, row, _whole(6))["success"] is True  # completes
 
-    body = _rpc(erp_client, "deleteProductionReceipt", [first], mutation=True).get_json()
+    body = _rpc(
+        erp_client, "deleteProductionReceipt", [first], mutation=True
+    ).get_json()
     assert body["success"] is False
     assert "Set it back to In Progress" in body["message"]
 
