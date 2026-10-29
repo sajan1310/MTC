@@ -282,6 +282,34 @@ describe('MApp.Bill PO allocation', () => {
     expect(items()[0].po).toBe('DIRECT');
   });
 
+  test('editing a bill tells the server which bill, so its own lines are not counted', async () => {
+    // Bill 288: saved against PO 1187 for 500 cartons, edited to 498. The
+    // server counted the bill's own 500 as received, found the PO full, and
+    // the line was saved Direct -- the 500 then showed as still pending.
+    api(async method => method === 'suggestPoAllocations'
+      ? { success: true, data: [{ rowIndex: 0, allocations: [{ poNumber: '1187', qty: 498 }], unmatchedQty: 0 }] }
+      : { success: true, data: [] });
+    MApp.Bill.editingBillNumber = '288';
+    MApp.Bill.editingBillVendor = 'Elite Packers';
+    MApp.Bill.lines = [{ name: 'CARTOON---S-R', size: '16 inch', qty: 498, price: 70, unit: 'Pcs', gst: 0,
+      allocs: [{ poNumber: '1187', qty: 500 }], savedLink: false }];
+
+    await MApp.Bill.saveBill();
+
+    const ask = MApp.Api.call.mock.calls.find(c => c[0] === 'suggestPoAllocations');
+    expect(ask[4]).toEqual({ vendor: 'Elite Packers', billNumber: '288' });
+    expect(items().map(i => [i.po, i.qty])).toEqual([['1187', 498]]);
+  });
+
+  test('a new bill names no bill being edited', async () => {
+    api(async () => ({ success: true, data: [] }));
+
+    await MApp.Bill.saveBill();
+
+    const ask = MApp.Api.call.mock.calls.find(c => c[0] === 'suggestPoAllocations');
+    expect(ask[4]).toBeNull();
+  });
+
   test('no vendor means no suggestion request at all', async () => {
     api(async () => ({ success: true, data: [] }));
     MApp.Bill.selection = { vendor: '' };

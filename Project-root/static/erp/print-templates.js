@@ -1448,8 +1448,9 @@ const PrintTemplates = {
     (bills || []).forEach(bill => {
       const billNumber = String(bill.billNumber || '').trim();
       (bill.items || []).forEach(bItem => {
+        // PO numbers compare case-insensitively, as the server's do.
         const parts = [
-          String(bItem.poNumber || '').trim(),
+          part(bItem.poNumber),
           part(bItem.name), part(bItem.size), part(bItem.narration)
         ];
         const key = parts.join('|');
@@ -1469,8 +1470,7 @@ const PrintTemplates = {
     const lineKeys = new Set();
     const narrationsOf = new Map();
     (pos || []).forEach(po => (po.items || []).forEach(line => {
-      const poNo = String(po.poNumber || '').trim();
-      const triple = [poNo, part(line.name), part(line.size)].join('|');
+      const triple = [part(po.poNumber), part(line.name), part(line.size)].join('|');
       lineKeys.add(`${triple}|${part(line.narration)}`);
       if (!narrationsOf.has(triple)) narrationsOf.set(triple, new Set());
       narrationsOf.get(triple).add(part(line.narration));
@@ -1499,7 +1499,7 @@ const PrintTemplates = {
   // cached one does not rebuild it per line.
   billedQty(index, poNumber, itemName, itemSize, itemNarration, excludeBillNumber) {
     const key = [
-      String(poNumber || '').trim(),
+      String(poNumber || '').trim().toLowerCase(),
       String(itemName || '').trim().toLowerCase(),
       String(itemSize || '').trim().toLowerCase(),
       String(itemNarration || '').trim().toLowerCase()
@@ -1521,11 +1521,38 @@ const PrintTemplates = {
     return base > 0 ? base : (Number((line || {}).qty) || 0);
   },
 
+  // Billed base units per line of `po`, in line order. Identical lines --
+  // same item, size and narration -- share one billed total, so they fill
+  // in order, each up to what it ordered, and the last of them takes
+  // whatever is left, an overage included: po_service._billed_base_by_line's
+  // rule. Handing each line the whole total marked PO 1269's second
+  // RIM---BLACK line received by the bill for its first.
+  billedByLine(index, po) {
+    const part = v => String(v == null ? '' : v).trim().toLowerCase();
+    const items = po.items || [];
+    const keys = items.map(line => [part(line.name), part(line.size), part(line.narration)].join('|'));
+    const left = new Map();
+    keys.forEach(key => left.set(key, (left.get(key) || 0) + 1));
+    const given = new Map();
+    return items.map((line, n) => {
+      const key = keys[n];
+      left.set(key, left.get(key) - 1);
+      const available = this.billedQty(index, po.poNumber, line.name, line.size, line.narration) -
+        (given.get(key) || 0);
+      const take = Math.max(left.get(key) === 0 ? available : Math.min(available, this._baseUnits(line)), 0);
+      given.set(key, (given.get(key) || 0) + take);
+      return take;
+    });
+  },
+
   pendingByItem(pos, bills) {
     const index = this.billedQtyIndex(bills, pos);
     const map = new Map();
     (pos || []).forEach(po => {
-      (po.items || []).forEach(line => {
+      // Completed or cancelled by hand (closePO): nothing more is coming.
+      if (po.closedAs) return;
+      const billedByLine = this.billedByLine(index, po);
+      (po.items || []).forEach((line, n) => {
         const name = String(line.name || '').trim();
         if (!name) return;
         const size = String(line.size || '').trim();
@@ -1535,8 +1562,7 @@ const PrintTemplates = {
         const ordered = this._baseUnits(line);
         if (ordered <= 0) return;
 
-        const billed = this.billedQty(index, po.poNumber, name, size, line.narration);
-        const pending = ordered - billed;
+        const pending = ordered - billedByLine[n];
         if (pending <= 0.0001) return;
 
         const key = `${name.toLowerCase()}|${size.toLowerCase()}`;
@@ -1815,26 +1841,43 @@ const PrintTemplates = {
     // Over-receipt is not netted away now -- it is counted separately and
     // shown, because a vendor who sent more than was ordered is something
     // to act on rather than something to subtract from another order.
+    //
+    // In each PO line's own unit, as the PO ledger shows it, one row per
+    // item, size and unit. In base units, spokes ordered as 450 Gross read
+    // "64800" here with nothing to say they were pieces, and a fractional
+    // Gross surfaced as 50100.004799999995.
     const billedIndex = this.billedQtyIndex(vendorBills, src.pos);
     vendorPOs.forEach(po => {
-      (po.items || []).forEach(i => {
-        const key = `${i.name}|${i.size || ''}`;
+      const billedByLine = this.billedByLine(billedIndex, po);
+      (po.items || []).forEach((i, n) => {
+        const unit = String(i.unit || 'Pcs').trim();
+        const key = `${i.name}|${i.size || ''}|${unit.toLowerCase()}`;
         if (!itemMap[key]) {
-          itemMap[key] = { name: i.name, size: i.size, ordered: 0, received: 0, over: 0 };
+          itemMap[key] = { name: i.name, size: i.size, unit, ordered: 0, received: 0, over: 0 };
         }
-        const ordered = this._baseUnits(i);
-        const billed = this.billedQty(
-          billedIndex, po.poNumber, i.name, i.size, i.narration);
-        itemMap[key].ordered += ordered;
+        const base = this._baseUnits(i);
+        const billed = billedByLine[n];
+        const perBase = base > 0 ? num(i.qty) / base : 1;
         // Capped, so ordered - received is exactly the pending figure the
         // PO ledger reports; the excess is carried in `over`.
-        itemMap[key].received += Math.min(billed, ordered);
-        itemMap[key].over += Math.max(0, billed - ordered);
+        const received = Math.min(billed, base) * perBase;
+        // A PO completed or cancelled by hand (closePO) is owed nothing
+        // more: it counts as ordered only what it received.
+        itemMap[key].ordered += po.closedAs ? received : num(i.qty);
+        itemMap[key].received += received;
+        itemMap[key].over += Math.max(0, billed - base) * perBase;
       });
     });
 
+    const round = v => Math.round(v * 10000) / 10000;
     const pendingList = Object.values(itemMap)
-      .map(item => ({ ...item, pending: item.ordered - item.received }))
+      .map(item => ({
+        ...item,
+        ordered: round(item.ordered),
+        received: round(item.received),
+        over: round(item.over),
+        pending: round(item.ordered - item.received)
+      }))
       .filter(item => item.pending > 0.0001 || item.over > 0.0001);
 
     return { ledger, pendingList };
@@ -1871,14 +1914,16 @@ const PrintTemplates = {
     let pendingHtml = '';
     pendingList.forEach(item => {
       const over = Number(item.over) || 0;
+      // Each figure in the PO's own unit (vendorLedger).
+      const unit = item.unit ? ` ${esc(item.unit)}` : '';
       pendingHtml += `<tr>
         <td style="padding:6px;border:1px solid #e5e5e5;font-weight:700;color:#0d6efd;">${esc(item.name)}</td>
         <td style="padding:6px;border:1px solid #e5e5e5;">${esc(item.size || '-')}</td>
-        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;">${item.ordered}</td>
-        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;">${item.received}${
+        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;">${item.ordered}${unit}</td>
+        <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;">${item.received}${unit}${
           over ? ` <span style="color:#198754;font-weight:700;">+${over} over</span>` : ''}</td>
         <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;font-weight:700;color:${item.pending > 0 ? '#dc3545' : '#198754'};">
-          ${item.pending}
+          ${item.pending}${unit}
         </td>
       </tr>`;
     });

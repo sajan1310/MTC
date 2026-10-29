@@ -3,7 +3,8 @@
 
 <div id="poLedger" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-poLedger">
 
-  <!-- STATUS BAR: literal PO_STATUS string values (config.js / api.js#PO_STATUS) -->
+  <!-- STATUS BAR: literal PO_STATUS string values (config.js / api.js#PO_STATUS).
+       Cancelled is only ever set by hand, from a PO's Status dropdown. -->
   <div class="d-flex flex-wrap gap-2 mb-3 align-items-center" id="poStatusBar" role="group" aria-label="Filter Purchase Orders by status">
     <button type="button" class="btn btn-outline-secondary btn-sm fw-500 po-status-filter-btn active" data-status="all" onclick="App.PO.filterByStatus('all')">
       All <span class="badge bg-secondary ms-1" id="poStatusCountAll">0</span>
@@ -16,6 +17,9 @@
     </button>
     <button type="button" class="btn btn-outline-success btn-sm fw-500 po-status-filter-btn" data-status="Completed" onclick="App.PO.filterByStatus('Completed')">
       <i class="bi bi-check-circle me-1"></i>Completed <span class="badge bg-success ms-1" id="poStatusCountCompleted">0</span>
+    </button>
+    <button type="button" class="btn btn-outline-danger btn-sm fw-500 po-status-filter-btn" data-status="Cancelled" onclick="App.PO.filterByStatus('Cancelled')">
+      <i class="bi bi-x-circle me-1"></i>Cancelled <span class="badge bg-danger ms-1" id="poStatusCountCancelled">0</span>
     </button>
     <button type="button" class="btn btn-outline-dark fw-bold shadow-sm ms-auto" id="btnPendingPOs" onclick="App.PO.openPendingPOsModal()">
       <i class="bi bi-hourglass-split"></i> Pending Orders <span class="badge bg-dark ms-1" id="poStatusCountPending">0</span>
@@ -251,6 +255,43 @@
         <div class="text-end mt-4">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
         </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Completed or Cancelled by hand, chosen from a PO's Status dropdown
+     (App.PO.onStatusSelect). Shows what stops counting as pending before
+     anything is saved. Opens over Pending Orders too (safeModalShow). -->
+<div class="modal fade" id="poCloseModal" tabindex="-1" aria-hidden="true" aria-labelledby="poCloseTitle">
+  <div class="modal-dialog modal-dialog-centered modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title" id="poCloseTitle">Mark PO complete</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2" id="poCloseIntro"></p>
+        <div class="table-responsive">
+          <table class="table table-sm table-bordered align-middle mb-2">
+            <thead class="table-light">
+              <tr>
+                <th scope="col">Item</th>
+                <th scope="col" class="text-center">Ordered</th>
+                <th scope="col" class="text-center">Received</th>
+                <th scope="col" class="text-center">No longer pending</th>
+              </tr>
+            </thead>
+            <tbody id="poCloseLines"></tbody>
+          </table>
+        </div>
+        <p class="small text-muted" id="poCloseEffect"></p>
+        <label class="form-label fw-bold" for="poCloseNote">Reason <span class="fw-normal text-muted">(optional)</span></label>
+        <input type="text" id="poCloseNote" class="form-control" maxlength="200" autocomplete="off">
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Go back</button>
+        <button type="button" class="btn btn-success" id="poCloseConfirmBtn" onclick="App.PO.confirmClose()">Mark complete</button>
       </div>
     </div>
   </div>

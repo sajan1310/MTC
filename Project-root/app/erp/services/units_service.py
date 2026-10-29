@@ -353,6 +353,13 @@ def get_units_map(cur=None) -> dict:
         return _units_map_from(own)
 
 
+def format_qty(qty) -> str:
+    """A quantity for a message: whole numbers bare, at most 4 decimals, and
+    never in exponent form -- f"{q:g}" turns 1,500,000 into "1.5e+06"."""
+    text = f"{round(float(qty or 0), 4):.4f}".rstrip("0").rstrip(".")
+    return "0" if text in ("", "-0") else text
+
+
 def lookup_unit(unit_name: str, fallback_family: str, units_map: dict) -> dict:
     """Defaults to factor 1 for an unknown unit, matching the source's
     typo-tolerant fallback (an unrecognized unit is treated as already being

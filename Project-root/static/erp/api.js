@@ -420,13 +420,37 @@ function formatQty(value) {
 
 // Mirrors config.js#PO_STATUS (server) exactly -- the one client-side copy
 // of the 3 status strings module_po.js#_attachPoStatus derives from the
-// Bill ledger. Ported from Script_ApiCore.html, which both desktop and
-// mobile shells load before their own module scripts.
+// Bill ledger, plus Cancelled, which only a person sets (closePO; a PO set
+// by hand carries it in po.closedAs). Ported from Script_ApiCore.html,
+// which both desktop and mobile shells load before their own module scripts.
 const PO_STATUS = Object.freeze({
   ISSUED: 'PO Issued',
   PARTIAL: 'Partially Received',
-  COMPLETED: 'Completed'
+  COMPLETED: 'Completed',
+  CANCELLED: 'Cancelled'
 });
+
+// What a PO's Status dropdown offers besides the status it has (closePO /
+// reopenPO): Completed once part has come and the rest never will,
+// Cancelled while it is not fully received, and Reopen to hand a PO set by
+// hand back to its bills. Empty for a fully received PO. Both shells' PO
+// lists build their dropdown from this, so they offer the same choices.
+function poStatusChoices(po) {
+  if (!po) return [];
+  if (po.closedAs) {
+    return [{ value: 'reopen', label: `Reopen (${po.statusFromBills || PO_STATUS.ISSUED})` }];
+  }
+  if (po.status === PO_STATUS.PARTIAL) {
+    return [
+      { value: PO_STATUS.COMPLETED, label: PO_STATUS.COMPLETED },
+      { value: PO_STATUS.CANCELLED, label: PO_STATUS.CANCELLED }
+    ];
+  }
+  if (po.status === PO_STATUS.ISSUED) {
+    return [{ value: PO_STATUS.CANCELLED, label: PO_STATUS.CANCELLED }];
+  }
+  return [];
+}
 
 // Renders a PO/Bill line-item list as an HTML preview string. Handles both
 // structured item objects and legacy plain-string item entries.

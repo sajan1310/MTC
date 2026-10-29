@@ -190,3 +190,51 @@ describe('Vendor Ledger running balance', () => {
     expect(rows[1].querySelectorAll('td')[7].textContent.trim()).toBe('-');
   });
 });
+
+
+// The Pending Orders tab and the vendor list's badge (audit 2026-10-29).
+// Figures are in each PO's own unit, labelled and rounded: in base units
+// with no unit, spokes ordered as 450 Gross read "64800", and a fractional
+// Gross surfaced as 50100.004799999995. The badge counts items, because
+// pieces, pairs and Gross of spokes added together meant nothing.
+describe('the vendor\'s pending orders', () => {
+  const SPOKES = { name: 'Spoke', size: '16 inch', narration: '', qty: 450, unit: 'Gross', baseQty: 64800 };
+  const RIMS = { name: 'Rim', size: '20 inch', narration: '', qty: 1000, unit: 'Pcs', baseQty: 1000 };
+
+  beforeEach(() => {
+    App.State.globalPOs = [{
+      vendor: VENDOR, poNumber: '1214', poDate: '26/08/2026',
+      items: [SPOKES, RIMS], grandTotal: 1
+    }];
+    App.State.globalBills = [{
+      vendor: VENDOR, billNumber: 'B-9', billDate: '30/08/2026', totalAmount: 1,
+      items: [
+        // 2.08 Gross, entered in pieces: a fraction of a Gross.
+        { name: 'Spoke', size: '16 inch', narration: '', qty: 299.52, unit: 'Pcs', baseQty: 299.52, poNumber: '1214' },
+        { name: 'Rim', size: '20 inch', narration: '', qty: 400, unit: 'Pcs', baseQty: 400, poNumber: '1214' }
+      ]
+    }];
+  });
+
+  test('are in each PO\'s own unit, labelled, with no float noise', () => {
+    document.body.innerHTML = '<table><tbody id="vendorPendingBody"></tbody></table>';
+    App.Vendor.populateLedgerAndPending(VENDOR);
+    const rows = [...document.querySelectorAll('#vendorPendingBody tr')]
+      .map(tr => [...tr.cells].map(td => td.textContent.replace(/\s+/g, ' ').trim()));
+    expect(rows).toEqual([
+      ['Spoke', '16 inch', '450 Gross', '2.08 Gross', '447.92 Gross'],
+      ['Rim', '20 inch', '1000 Pcs', '400 Pcs', '600 Pcs']
+    ]);
+  });
+
+  test('the vendor list counts items pending, not units', () => {
+    document.body.innerHTML = '<table><tbody id="vendorTableBody"></tbody></table>';
+    App.State.filteredVendors = [{ name: VENDOR }];
+    App.State.vendorCurrentPage = 1;
+    App.State.vendorRowsPerPage = 15;
+    App.State.selectedVendors = [];
+    App.Utils.renderPagination = () => {};
+    App.Vendor.renderTable();
+    expect(document.querySelector('#vendorTableBody .badge.bg-warning').textContent).toBe('2 Items Pending');
+  });
+});

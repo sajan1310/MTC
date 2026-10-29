@@ -54,11 +54,14 @@ SHEETS = {
     "ISSUE": "Issued Stock Log",
 }
 
-# module_po.js#_attachPoStatus's 3 derived status strings.
+# module_po.js#_attachPoStatus's 3 derived status strings, plus Cancelled,
+# which only a person sets (po_service.close_po; Completed can be set by
+# hand too). Both hand-set values are stored as-is in po_headers.closed_as.
 PO_STATUS = {
     "ISSUED": "PO Issued",
     "PARTIAL": "Partially Received",
     "COMPLETED": "Completed",
+    "CANCELLED": "Cancelled",
 }
 
 # Allowed values for PROCESS_COMPONENTS_COL.SOURCE_TYPE.

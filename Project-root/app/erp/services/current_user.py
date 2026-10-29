@@ -24,3 +24,12 @@ def get_current_user_role() -> str:
         return str(getattr(current_user, "role", "") or "")
     except Exception:
         return ""
+
+
+def get_current_user_name() -> str:
+    """The name to record beside an action, falling back to the email."""
+    try:
+        name = str(getattr(current_user, "name", "") or "").strip()
+    except Exception:
+        name = ""
+    return name or get_current_user_email()

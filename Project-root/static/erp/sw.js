@@ -482,7 +482,17 @@
 // v96: the inspection dialog lays out in three parts -- the lot's details,
 // the checklist, and "Needs admin review" in a panel of its own -- side by
 // side from 1200px. inspection.js and styles.css are both precached.
-const CACHE_NAME = 'erp-shell-v96';
+// v97: a PO's status is a dropdown in the PO Ledger and Pending Orders --
+// Completed for a partly received PO whose rest is never coming, Cancelled,
+// and Reopen -- and each row shows what every item still has pending. A
+// PO set by hand leaves Item Master's and the vendor's pending figures and
+// the overdue-PO alert. With the PO audit: identical lines on one PO share
+// their bills in order, a PO in two units totals each, and the vendor's
+// pending list is in each PO's own unit, labelled. Editing a bill no longer
+// loses its PO link: the match leaves the bill's own lines out (bill.js).
+// po.js, api.js, core.js, vendors.js, bill.js and print-templates.js are
+// precached.
+const CACHE_NAME = 'erp-shell-v97';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

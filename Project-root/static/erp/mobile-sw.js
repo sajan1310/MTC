@@ -188,7 +188,14 @@
 // was waiting to sync (this worker now only says so when something was).
 // And toasts are readable on a tablet: from 640px wide every toast sat
 // 224px off the left edge. mobile.js, mobile_styles.css and this file.
-const CACHE_NAME = 'erp-mobile-shell-v88';
+// v89: a PO card's status is a dropdown, as on desktop -- Completed for a
+// partly received PO whose rest is never coming, Cancelled, and Reopen --
+// and a PO set by hand says what it never got and who set it. Pending lines
+// name the size, a PO in two units totals each, and the vendor's pending
+// list is in each PO's own unit, labelled. Editing a bill on the phone no
+// longer turns its PO-linked lines Direct. mobile.js, api.js and
+// print-templates.js carry it.
+const CACHE_NAME = 'erp-mobile-shell-v89';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

@@ -78,23 +78,29 @@ describe('quantities are counted in base units', () => {
     expect(PrintTemplates._baseUnits({})).toBe(0);
   });
 
-  test('vendor pending subtracts base from base, not gross from gross', () => {
+  // Vendor pending subtracts base from base, and reports the answer in the
+  // PO's own unit, labelled. It used to report base units with no unit at
+  // all: on the 2026-10-29 audit, spokes ordered as 450 Gross read "64800"
+  // and a fractional Gross surfaced as 50100.004799999995.
+  test('vendor pending subtracts base from base, and says it in the PO\'s unit', () => {
     const { pendingList } = PrintTemplates.vendorLedger('Acme', {
       pos: [{ poNumber: 'PO-1', vendor: 'Acme', poDate: '01/08/2026', items: [GROSS] }],
       // poNumber matters: a bill is matched to the PO LINE it was raised
       // against, so a direct purchase does not quietly fulfil an order.
+      // 7200 pieces, entered in pieces against an order in Gross.
       bills: [{ billNumber: 'B-1', vendor: 'Acme', billDate: '05/08/2026',
-        items: [{ ...GROSS, qty: 50, baseQty: 7200, poNumber: 'PO-1' }] }],
+        items: [{ ...GROSS, qty: 7200, unit: 'Pcs', baseQty: 7200, poNumber: 'PO-1' }] }],
       returns: [], issues: []
     }, DEPS);
 
     const row = pendingList.find(p => p.name === 'Spoke');
-    expect(row.ordered).toBe(28800);
-    expect(row.received).toBe(7200);
-    expect(row.pending).toBe(21600);   // 150 Gross, said in pieces
+    expect(row.unit).toBe('Gross');
+    expect(row.ordered).toBe(200);
+    expect(row.received).toBe(50);
+    expect(row.pending).toBe(150);
   });
 
-  test('and it agrees with the Item Ledger, which is the point', () => {
+  test('and it agrees with the Item Ledger once both are in pieces', () => {
     const pos = [{ poNumber: 'PO-1', vendor: 'Acme', poDate: '01/08/2026', items: [GROSS] }];
     const bills = [{ billNumber: 'B-1', vendor: 'Acme', billDate: '05/08/2026',
       items: [{ ...GROSS, qty: 50, baseQty: 7200, poNumber: 'PO-1' }] }];
@@ -103,7 +109,7 @@ describe('quantities are counted in base units', () => {
       { pos, bills, returns: [], issues: [] }, DEPS);
     const byItem = PrintTemplates.pendingByItem(pos, bills);
 
-    expect(pendingList[0].pending)
+    expect(pendingList[0].pending * (GROSS.baseQty / GROSS.qty))
       .toBe(byItem.get('spoke|20 inch').qty);
   });
 });

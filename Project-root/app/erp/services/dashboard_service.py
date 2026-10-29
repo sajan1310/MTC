@@ -174,18 +174,15 @@ def _get_open_po_summary(cur) -> dict:
     open_count = 0
     open_value = 0.0
     for po in pos:
-        has_open_line = False
-        for item in po["items"]:
-            key = bill_service._build_po_line_key(
-                po["poNumber"], item["name"], item["size"], item["narration"]
-            )
-            billed_base_qty = billed_map.get(key, 0)
-            remaining_base_qty = item["baseQty"] - billed_base_qty
-            if remaining_base_qty > 0.0001:
-                has_open_line = True
-                open_value += remaining_base_qty * item["baseRate"]
-        if has_open_line:
+        # The PO Ledger's own pendingQty: in each line's unit, identical lines
+        # sharing their bills, nothing on a PO completed or cancelled by hand.
+        # Valued at the line's own price for that unit -- a stored base rate
+        # can be off by the unit's factor (a line saved while its unit was
+        # missing holds Rs 100 a Gross as Rs 100 a piece).
+        open_lines = [item for item in po["items"] if item["pendingQty"] > 0.0001]
+        if open_lines:
             open_count += 1
+            open_value += sum(item["pendingQty"] * item["price"] for item in open_lines)
 
     return {"count": open_count, "value": _round2(open_value)}
 
