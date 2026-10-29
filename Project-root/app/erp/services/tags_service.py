@@ -385,6 +385,14 @@ def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
                     ),
                 )
 
+    # A receipt line names the lot colour it was received against
+    # (migration 055), spelled as the lot's colour_breakdown spells it, and
+    # is renamed by the same token rule so the two keep matching. Left
+    # stale, the lot would show nothing received of the renamed colour and
+    # its receipts would credit nothing.
+    if table := config_maps.TABLE_NAMES.get("PRODUCTION_RECEIPT_LINES"):
+        _rename_color_token_in_column(cur, table, "color", old, new)
+
     # Warehouse Pool bucket colors are always DERIVED (rebuilt from scratch
     # by _recalculate_warehouse_pool) from the sheets just renamed above --
     # recalc now so the bucket keys pick up the new name immediately,

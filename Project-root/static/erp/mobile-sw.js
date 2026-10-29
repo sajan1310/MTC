@@ -195,7 +195,11 @@
 // list is in each PO's own unit, labelled. Editing a bill on the phone no
 // longer turns its PO-linked lines Direct. mobile.js, api.js and
 // print-templates.js carry it.
-const CACHE_NAME = 'erp-mobile-shell-v89';
+// v90: a production lot can be received in parts. A lot card shows what
+// has come back and the balance, and its Receive button records a
+// delivery colour by colour; Completed or Cancelled on a partly received
+// lot asks first. mobile.js and mobile_styles.css carry it.
+const CACHE_NAME = 'erp-mobile-shell-v90';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

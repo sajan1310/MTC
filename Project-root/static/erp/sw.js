@@ -492,7 +492,11 @@
 // loses its PO link: the match leaves the bill's own lines out (bill.js).
 // po.js, api.js, core.js, vendors.js, bill.js and print-templates.js are
 // precached.
-const CACHE_NAME = 'erp-shell-v97';
+// v98: a production lot can be received in parts. The Production Log shows
+// each open lot's received and balance quantities, and a Receive button
+// records what came back, colour by colour; marking a partly received lot
+// Completed or Cancelled asks first. production.js is precached.
+const CACHE_NAME = 'erp-shell-v98';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

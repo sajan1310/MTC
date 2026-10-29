@@ -5743,6 +5743,7 @@ MApp.Production = {
         const output = l.outputItemName && process && !MApp.LotModel.sameText(l.outputItemName, process.outputItemName)
           ? l.outputItemName : '';
         const extras = [
+          this._receivedText(l) ? `<span class="mapp-lot-extra mapp-lot-received">${MApp.Util.escapeHtml(this._receivedText(l))}</span>` : '',
           colors ? `<span class="mapp-lot-colors-text">${MApp.Util.escapeHtml(colors)}</span>` : '',
           l.productName ? `<span class="mapp-lot-extra">For ${MApp.Util.escapeHtml(l.productName)}</span>` : '',
           output ? `<span class="mapp-lot-extra">Output: ${MApp.Util.escapeHtml(output)}</span>` : '',
@@ -5773,6 +5774,7 @@ MApp.Production = {
                 <span class="mapp-lot-date">${MApp.Util.escapeHtml(MApp.Util.formatDateDisplay(l.dateRaw) || '—')}</span>
               </div>
               <div class="mapp-lot-actions">
+                ${this._receiveActionHtml(l, i)}
                 <button type="button" class="mapp-lot-action" title="Edit lot" aria-label="Edit lot" data-lot-action="edit" data-lot-index="${i}">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
                 </button>
@@ -5820,6 +5822,7 @@ MApp.Production = {
           if (!lot) return;
           if (btn.dataset.lotAction === 'edit') this.openEditSheet(lot);
           else if (btn.dataset.lotAction === 'sheet') MApp.ProductionSheet.open(lot);
+          else if (btn.dataset.lotAction === 'receive') this.openReceiveSheet(lot);
           else this.deleteLot(lot);
         });
       });
@@ -5945,6 +5948,9 @@ MApp.Production = {
   // true once the server has saved it, false for anything else.
   async changeStatus(lot, newStatus) {
     if (!newStatus || newStatus === lot.status) return false;
+    // A partly received lot asks first -- the same question desktop asks.
+    const note = this._statusChangeNote(lot, newStatus);
+    if (note && !window.confirm(note)) return false;
 
     try {
       const res = await Api.mutateWithId(
@@ -5962,6 +5968,244 @@ MApp.Production = {
       MApp.Toast.error(err.message || 'Could not reach the server. Please try again.');
       return false;
     }
+  },
+
+  // ── Receive against a lot (migration 055) ──────────────────────────────
+  // A lot that comes back in parts records each delivery, colour by colour.
+  // What came back goes into the Warehouse Pool when it is received and
+  // uses up its share of the lot's materials; the rest is the lot's
+  // balance, and receiving the last of it completes the lot. The same
+  // getProductionReceipts / saveProductionReceipt / deleteProductionReceipt
+  // desktop uses. Online only, like a status change: a receipt is checked
+  // against the lot's balance as it stands on the server.
+
+  _isOpenStatus(status) {
+    const s = String(status || '').trim().toLowerCase();
+    return s === '' || s === 'pending' || s === 'in progress';
+  },
+
+  // The card's "Received 4 · Balance 6" line: shown while a lot is open,
+  // and on a cancelled lot that received something before it was dropped.
+  _receivedText(lot) {
+    const q = n => MApp.Util.formatQty(Number(n) || 0);
+    const received = Number(lot.receivedQty) || 0;
+    if (this._isOpenStatus(lot.status)) {
+      return `${received > 0 ? `Received ${q(received)} · ` : ''}Balance ${q(lot.balanceQty)}`;
+    }
+    if (received > 0 && this._statusOption(lot.status) === 'Cancelled') return `Received ${q(received)}`;
+    return '';
+  },
+
+  _receiveActionHtml(lot, i) {
+    const open = this._isOpenStatus(lot.status) && Number(lot.qty) > 0;
+    if (!open && !(Number(lot.receiptCount) > 0)) return '';
+    const label = open ? 'Receive' : 'Receipts';
+    return `<button type="button" class="mapp-lot-action" title="${label}" aria-label="${label}" data-lot-action="receive" data-lot-index="${i}">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11"/><path d="M7 9l5 5 5-5"/><path d="M4 15v5h16v-5"/></svg>
+                </button>`;
+  },
+
+  _statusChangeNote(lot, newStatus) {
+    const q = n => MApp.Util.formatQty(Number(n) || 0);
+    const received = Number(lot.receivedQty) || 0;
+    const balance = Number(lot.balanceQty) || 0;
+    if (!(received > 0 && balance > 0)) return null;
+    const head = `Lot ${lot.lotNumber} has received ${q(received)} of ${q(lot.qty)}.`;
+    if (newStatus === 'Completed') {
+      return `${head}\n\nMarking it Completed counts the ${q(balance)} not received yet as received now: they go into the Warehouse Pool and use up their materials.`;
+    }
+    if (newStatus === 'Cancelled') {
+      return `${head}\n\nCancelling keeps the ${q(received)} received and drops the ${q(balance)} not received.`;
+    }
+    return null;
+  },
+
+  async openReceiveSheet(lot) {
+    this._receiveLot = lot;
+    this._receiveData = null;
+    const body = document.getElementById('receive-lot-body');
+    if (body) body.innerHTML = '<div class="mb-field-hint">Loading…</div>';
+    const footer = document.getElementById('receive-lot-footer');
+    if (footer) footer.hidden = true;
+    const title = document.getElementById('receive-lot-title');
+    if (title) title.textContent = `Receive · ${lot.lotNumber}`;
+    MApp.Sheet.open('sheet-receive-lot');
+    await this.loadReceipts();
+  },
+
+  closeReceiveSheet() {
+    MApp.Sheet.close('sheet-receive-lot');
+  },
+
+  async loadReceipts() {
+    const lot = this._receiveLot;
+    if (!lot) return;
+    const body = document.getElementById('receive-lot-body');
+    try {
+      const res = await MApp.Api.call('getProductionReceipts', lot.rowIdx);
+      if (!res || !res.success) throw new Error((res && res.message) || 'Could not load the receipts.');
+      this._receiveData = res.data;
+      this.renderReceiveSheet();
+    } catch (err) {
+      if (body) {
+        body.innerHTML = `<div class="mb-offline-banner" style="background:var(--mb-enamel-red-bg);color:var(--mb-enamel-red-ink);display:block;">${MApp.Util.escapeHtml(err.message || 'Could not load the receipts.')}</div>`;
+      }
+    }
+  },
+
+  _receiptLineLabel(line) {
+    if (!line.color) return 'Whole lot';
+    return line.size ? `${line.color} (${line.size})` : line.color;
+  },
+
+  renderReceiveSheet() {
+    const data = this._receiveData;
+    const body = document.getElementById('receive-lot-body');
+    if (!data || !body) return;
+    const e = MApp.Util.escapeHtml;
+    const q = n => e(MApp.Util.formatQty(Number(n) || 0));
+    const { lot, lines, receipts, canReceive } = data;
+    const process = this.processById[lot.processId];
+
+    let closed = '';
+    if (lot.status === 'Completed') closed = 'This lot is Completed, so all of it counts as received.';
+    else if (lot.status === 'Cancelled') closed = 'This lot is Cancelled. What was received stays received; the rest was dropped.';
+    else if (!canReceive) closed = 'Nothing is left to receive on this lot.';
+
+    const today = MApp.Util.todayInputValue();
+    const lineFields = canReceive ? lines.map((line, i) => {
+      const open = line.balance > 0;
+      return `<div class="mb-field">
+          <label for="receive-line-${i}">${e(this._receiptLineLabel(line))}</label>
+          <div class="mapp-receive-line">
+            <input type="number" id="receive-line-${i}" class="mapp-receive-qty" data-line="${i}" inputmode="decimal" step="any" min="0"
+              max="${line.balance}" placeholder="0" ${open ? '' : 'disabled'}>
+            <button type="button" class="mb-btn mb-btn-secondary mapp-receive-all" data-line="${i}" ${open ? '' : 'disabled'}>All</button>
+          </div>
+          <div class="mb-field-hint">Lot ${q(line.qty)} · Received ${q(line.received)} · Balance ${q(line.balance)}</div>
+        </div>`;
+    }).join('') : '';
+
+    const history = (receipts || []).length
+      ? receipts.map(r => `
+          <div class="mb-card">
+            <div class="mb-card-row">
+              <div>
+                <div class="mb-card-title">${e(r.date)}</div>
+                <div class="mb-card-sub">${r.lines.map(l => (l.color ? `${e(this._receiptLineLabel(l))} ${q(l.qty)}` : q(l.qty))).join(' · ')}</div>
+                ${r.remarks ? `<div class="mb-card-sub">${e(r.remarks)}</div>` : ''}
+                ${r.byName ? `<div class="mb-card-sub">By ${e(r.byName)}</div>` : ''}
+              </div>
+              <div style="text-align:right;">
+                <div class="mb-card-number">${q(r.qty)}</div>
+                ${this._isOpenStatus(lot.status) ? `<button type="button" class="mb-btn-text mapp-receipt-delete" data-receipt-id="${Number(r.id)}">Delete</button>` : ''}
+              </div>
+            </div>
+          </div>`).join('')
+      : '<div class="mb-field-hint">Nothing received against this lot yet.</div>';
+
+    body.innerHTML = `
+      <div class="mb-card">
+        <div class="mb-card-row">
+          <div>
+            <div class="mb-card-title">${e(lot.lotNumber)}</div>
+            <div class="mb-card-sub">${e(process ? process.processName : lot.processId)}</div>
+            <div class="mb-card-sub">${e(MApp.Util.formatNameCase(lot.assignedTo) || '—')}</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="mb-card-number">${q(lot.balanceQty)}</div>
+            <div class="mb-card-sub">balance of ${q(lot.qty)}</div>
+            <div class="mb-card-sub">received ${q(lot.receivedQty)}</div>
+          </div>
+        </div>
+      </div>
+      ${closed ? `<div class="mb-offline-banner mb-mt-2" style="background:var(--mb-safety-faint);color:var(--mb-ink);display:block;">${e(closed)}</div>` : ''}
+      ${canReceive ? `
+        <div class="mapp-section-label mb-mt-4">Receiving now</div>
+        ${lineFields}
+        <div class="mb-field">
+          <label for="receive-lot-date">Received on</label>
+          <input type="date" id="receive-lot-date" value="${e(today)}" min="${e(lot.dateRaw || '')}" max="${e(today)}">
+        </div>
+        <div class="mb-field">
+          <label for="receive-lot-remarks">Remarks</label>
+          <textarea id="receive-lot-remarks" rows="2" maxlength="500" placeholder="e.g. challan no., vehicle, who brought it"></textarea>
+        </div>` : ''}
+      <div class="mapp-section-label mb-mt-4">Received so far</div>
+      ${history}`;
+
+    const footer = document.getElementById('receive-lot-footer');
+    if (footer) footer.hidden = !canReceive;
+
+    body.querySelectorAll('.mapp-receive-all').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const line = lines[Number(btn.dataset.line)];
+        const input = body.querySelector(`.mapp-receive-qty[data-line="${btn.dataset.line}"]`);
+        if (line && input) input.value = line.balance;
+      });
+    });
+    body.querySelectorAll('.mapp-receipt-delete').forEach(btn => {
+      btn.addEventListener('click', () => this.deleteReceipt(Number(btn.dataset.receiptId)));
+    });
+  },
+
+  async saveReceipt() {
+    const lot = this._receiveLot;
+    const data = this._receiveData;
+    const body = document.getElementById('receive-lot-body');
+    if (!lot || !data || !body) return;
+
+    const entered = [];
+    body.querySelectorAll('.mapp-receive-qty').forEach(input => {
+      const line = data.lines[Number(input.dataset.line)];
+      const qty = parseFloat(input.value);
+      if (line && isFinite(qty) && qty > 0) entered.push({ line, qty });
+    });
+    if (entered.length === 0) {
+      MApp.Toast.error('Enter how many came back.');
+      return;
+    }
+    const over = entered.find(x => x.qty > x.line.balance + 1e-9);
+    if (over) {
+      MApp.Toast.error(`Only ${MApp.Util.formatQty(over.line.balance)} of ${this._receiptLineLabel(over.line)} ${over.line.balance === 1 ? 'is' : 'are'} still to come.`);
+      return;
+    }
+
+    const btn = document.getElementById('receive-lot-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      const res = await Api.mutateWithId('saveProductionReceipt', Api.newMutationId(), {
+        rowIdx: lot.rowIdx,
+        date: (document.getElementById('receive-lot-date') || {}).value || '',
+        remarks: ((document.getElementById('receive-lot-remarks') || {}).value || '').trim(),
+        lines: entered.map(x => ({ color: x.line.color, size: x.line.size, qty: x.qty }))
+      });
+      if (!res || !res.success) {
+        MApp.Toast.error((res && res.message) || 'Could not save the receipt.');
+        return;
+      }
+      // The server's own message: what is still to come, a completion, or
+      // a pool warning.
+      MApp.Toast.success(res.message || 'Receipt saved.');
+      this.closeReceiveSheet();
+      this.load({ keep: true });
+    } catch (err) {
+      MApp.Toast.error(err.message || 'Could not reach the server. Please try again.');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Save receipt'; }
+    }
+  },
+
+  async deleteReceipt(receiptId) {
+    const data = this._receiveData;
+    const receipt = data && data.receipts.find(r => Number(r.id) === Number(receiptId));
+    if (!receipt) return;
+    if (!window.confirm(`Delete the receipt of ${MApp.Util.formatQty(receipt.qty)} dated ${receipt.date}? Its items come back out of the Warehouse Pool and its materials go back into stock.`)) return;
+    const res = await MApp.Util.mutateSimple('deleteProductionReceipt', [Number(receiptId)], null);
+    if (!res || !res.success) return;
+    MApp.Toast.success(res.message || 'Receipt deleted.');
+    await this.loadReceipts();
+    this.load({ keep: true });
   },
 
   // Desktop's delete: the lot's product and quantity go along so the

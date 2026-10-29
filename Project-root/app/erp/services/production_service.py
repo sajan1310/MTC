@@ -60,10 +60,11 @@ import database
 from . import contractors_service
 from . import items_service
 from . import locks
+from . import lot_receipts
 from . import process_service
 from . import tags_service
 from . import warehouse_service
-from .current_user import get_current_user_id
+from .current_user import get_current_user_id, get_current_user_name
 from .. import config_maps
 from .. import date_utils
 from ..envelope import build_response
@@ -519,6 +520,52 @@ def _dropped_component_warning(dropped: list) -> str | None:
     )
 
 
+def _receipt_line_label(color, size) -> str:
+    color = str(color or "").strip() or "(no colour)"
+    size = str(size or "").strip()
+    return f"{color} ({size})" if size else color
+
+
+def _check_lot_keeps_its_receipts(color_breakdown, qty, receipts) -> None:
+    """Refuses a lot edit that would leave something it already received
+    with no home: a colour taken off the lot, or cut below what came back
+    of it. The receipts stay true -- the goods did arrive -- so the edit is
+    what has to give, or the receipt is deleted first."""
+    received = lot_receipts.received_amounts(receipts)
+    if not any(qty_in > 0 for qty_in in received.values()):
+        return
+    labels = {
+        lot_receipts.line_key(line["color"], line["size"]): _receipt_line_label(
+            line["color"], line["size"]
+        )
+        for receipt in receipts or []
+        for line in receipt["lines"]
+    }
+    shape = lot_receipts.LotShape(color_breakdown, qty)
+    colourless = lot_receipts.line_key("", "")
+    for key, got in received.items():
+        if got <= 0:
+            continue
+        have = shape.qty_by_key.get(key)
+        got_text = lot_receipts.fmt_qty(got)
+        if have is None:
+            if key == colourless:
+                raise ValueError(
+                    f"This lot has {got_text} received without a colour, so it can't "
+                    "be split into colours now. Delete its receipts first."
+                )
+            raise ValueError(
+                f"{labels.get(key, key)} has {got_text} received, so it can't be "
+                "taken off this lot. Delete its receipts first."
+            )
+        if have < got - 1e-9:
+            what = "This lot" if key == colourless else labels.get(key, key)
+            raise ValueError(
+                f"{what} has {got_text} received, so its quantity can't go below "
+                f"{got_text}. Delete a receipt first if fewer really came back."
+            )
+
+
 def _build_pool_needed_map(components: list) -> dict:
     pool_needed: dict = {}
     for c in components or []:
@@ -642,8 +689,27 @@ _PRODUCTION_SELECT_COLS = """
 """
 
 
-def _row_to_production_record(row) -> dict:
+def _receipt_fields(row, receipts) -> dict:
+    """What a lot has received so far, and what it still has to come.
+
+    The balance is only ever outstanding on an open lot. A Completed lot has
+    no balance -- Completed counts the whole lot as received -- and a
+    Cancelled one dropped its balance."""
+    receipts = receipts or []
+    balance = 0.0
+    if lot_receipts.is_open(row["status"]):
+        shape = lot_receipts.LotShape(row["color_breakdown"], row["qty"])
+        balance = sum(shape.balance(lot_receipts.received_amounts(receipts)).values())
     return {
+        "receivedQty": sum(r["qty"] for r in receipts),
+        "balanceQty": balance,
+        "receiptCount": len(receipts),
+    }
+
+
+def _row_to_production_record(row, receipts=None) -> dict:
+    return {
+        **_receipt_fields(row, receipts),
         "rowIdx": row["id"],
         "date": date_utils.to_display_string(row["production_date"]) or "",
         "dateRaw": date_utils.to_iso_string(row["production_date"]) or "",
@@ -679,8 +745,11 @@ def get_production_data():
             f"SELECT {_PRODUCTION_SELECT_COLS} FROM erp.production WHERE deleted_at IS NULL"
         )
         rows = cur.fetchall()
+        receipts_by_lot = lot_receipts.load_receipts(cur)
 
-    records = [_row_to_production_record(row) for row in rows]
+    records = [
+        _row_to_production_record(row, receipts_by_lot.get(row["id"])) for row in rows
+    ]
     records.sort(key=lambda r: (r["dateRaw"] or "", r["rowIdx"]), reverse=True)
     return build_response(True, records)
 
@@ -694,7 +763,10 @@ def _fetch_production_record(cur, row_idx):
         (row_idx,),
     )
     row = cur.fetchone()
-    return _row_to_production_record(row) if row else None
+    if not row:
+        return None
+    receipts = lot_receipts.load_receipts(cur, [row["id"]]).get(row["id"])
+    return _row_to_production_record(row, receipts)
 
 
 @rpc_method("getProcessWipData")
@@ -1185,7 +1257,11 @@ def save_production(conn, cur, form_data):
             row_idx, "Invalid production record selected for edit."
         )
         cur.execute(
-            "SELECT id, process_id, lot_number, status, components_consumed, custom_components FROM erp.production WHERE id = %s AND deleted_at IS NULL",
+            # FOR UPDATE: a receipt saved against this lot mid-edit must wait,
+            # or the edit could take a colour below what just came back.
+            "SELECT id, process_id, lot_number, status, components_consumed, custom_components, "
+            "qty, color_breakdown FROM erp.production WHERE id = %s AND deleted_at IS NULL "
+            "FOR UPDATE",
             (target_id,),
         )
         existing = cur.fetchone()
@@ -1206,10 +1282,27 @@ def save_production(conn, cur, form_data):
 
     pool_needed = _build_pool_needed_map(clean_components)
 
+    # A lot received in part (migration 055) can still be edited, just not
+    # below what already came back.
+    lot_received: dict = {}
+    if is_edit and existing is not None:
+        lot_receipt_rows = lot_receipts.load_receipts(cur, [existing["id"]]).get(
+            existing["id"]
+        )
+        lot_received = lot_receipts.received_amounts(lot_receipt_rows)
+        _check_lot_keeps_its_receipts(color_breakdown, qty, lot_receipt_rows)
+
     original_pool_consumed: dict = {}
     if is_edit and existing is not None:
         previous_status = str(existing["status"] or "").strip().lower()
-        if previous_status == "completed":
+        # What this lot has already drawn from the pool: all of it once
+        # Completed, its receipts' share before that.
+        previous_shape = (
+            None
+            if previous_status == "completed"
+            else lot_receipts.LotShape(existing["color_breakdown"], existing["qty"])
+        )
+        if previous_status == "completed" or lot_received:
             for c in existing["components_consumed"] or []:
                 c = c or {}
                 if str(c.get("sourceType") or "").strip().upper() != "POOL":
@@ -1220,9 +1313,10 @@ def save_production(conn, cur, form_data):
                 # a different bucket than the one it is about to re-claim.
                 color_group = _pool_bucket_color(c)
                 key = _poolneed_key(item_name_lower, color_group)
-                original_pool_consumed[key] = original_pool_consumed.get(
-                    key, 0
-                ) + float(c.get("qty") or 0)
+                drawn = float(c.get("qty") or 0)
+                if previous_shape is not None:
+                    drawn = previous_shape.component_qty(c, drawn, lot_received)
+                original_pool_consumed[key] = original_pool_consumed.get(key, 0) + drawn
 
     # Only run the pool-availability check when this save will leave the
     # lot Completed -- a Pending save never touches the pool, so checking
@@ -1520,7 +1614,8 @@ def update_production_status(conn, cur, row_idx, expected_qty, new_status):
         raise ValueError(f'Invalid status "{status}".')
 
     cur.execute(
-        "SELECT qty, status, components_consumed, lot_number FROM erp.production WHERE id = %s AND deleted_at IS NULL",
+        "SELECT qty, status, components_consumed, lot_number, color_breakdown "
+        "FROM erp.production WHERE id = %s AND deleted_at IS NULL FOR UPDATE",
         (target_id,),
     )
     row = cur.fetchone()
@@ -1533,11 +1628,26 @@ def update_production_status(conn, cur, row_idx, expected_qty, new_status):
             "Data mismatch: The record has been modified or shifted. Please refresh."
         )
 
+    # A lot received in part (migration 055): its receipts have already
+    # moved their share, so completing it moves only the balance, and the
+    # message says what happens to that balance.
+    receipts = lot_receipts.load_receipts(cur, [target_id]).get(target_id)
+    shape = lot_receipts.LotShape(row["color_breakdown"], row["qty"])
+    received = lot_receipts.received_amounts(receipts)
+    balance = shape.balance(received)
+
     previous_status = str(row["status"] or "").strip().lower()
     pool_warning = None
     if status.lower() == "completed" and previous_status != "completed":
+        components = row["components_consumed"] or []
+        if receipts:
+            components = [
+                {**c, "qty": shape.component_qty(c, (c or {}).get("qty"), balance)}
+                for c in components
+                if isinstance(c, dict)
+            ]
         pool_warning = _validate_pool_availability(
-            cur, _build_pool_needed_map(row["components_consumed"] or [])
+            cur, _build_pool_needed_map(components)
         )
 
     cur.execute(
@@ -1549,9 +1659,288 @@ def update_production_status(conn, cur, row_idx, expected_qty, new_status):
     warehouse_service._recalculate_warehouse_pool(cur)
 
     message = f'Lot #{row["lot_number"]} status updated to "{status}".'
+    balance_qty = sum(balance.values())
+    if receipts and balance_qty > 0 and previous_status != status.lower():
+        balance_text = lot_receipts.fmt_qty(balance_qty)
+        if status == "Completed":
+            message = (
+                f"{message} The {balance_text} not received yet are counted as "
+                "received now."
+            )
+        elif status == "Cancelled":
+            message = (
+                f"{message} The {lot_receipts.fmt_qty(sum(r['qty'] for r in receipts))} "
+                f"received stay received; the {balance_text} not received are dropped."
+            )
     if pool_warning:
         message = f"{message} Warning: {pool_warning} Warehouse Pool stock will now show negative for this item."
-    return build_response(True, {"status": status}, message)
+    return build_response(
+        True,
+        {"status": status, "row": _fetch_production_record(cur, target_id)},
+        message,
+    )
+
+
+@rpc_method("getProductionReceipts")
+def get_production_receipts(row_idx):
+    """One lot's receivable lines -- each colour with its quantity, what has
+    come back and what is still to come -- and its receipts, newest first."""
+    target_id = _coerce_row_id(row_idx, "Invalid production record selected.")
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
+        cur.execute(
+            f"SELECT {_PRODUCTION_SELECT_COLS} FROM erp.production "
+            "WHERE id = %s AND deleted_at IS NULL",
+            (target_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise ValueError("Invalid production record selected.")
+        receipts = lot_receipts.load_receipts(cur, [target_id]).get(target_id) or []
+    return build_response(True, _receipt_view(row, receipts))
+
+
+def _receipt_view(row, receipts) -> dict:
+    shape = lot_receipts.LotShape(row["color_breakdown"], row["qty"])
+    received = lot_receipts.received_amounts(receipts)
+    is_open = lot_receipts.is_open(row["status"])
+    lines = [
+        {
+            "color": line["color"],
+            "size": line["size"],
+            "qty": line["qty"],
+            "received": received.get(line["key"], 0.0),
+            "balance": max(line["qty"] - received.get(line["key"], 0.0), 0.0)
+            if is_open
+            else 0.0,
+        }
+        for line in shape.lines
+    ]
+    return {
+        "lot": _row_to_production_record(row, receipts),
+        "lines": lines,
+        "canReceive": is_open and any(line["balance"] > 0 for line in lines),
+        "receipts": [
+            {
+                "id": r["id"],
+                "date": date_utils.to_display_string(r["date"]) or "",
+                "dateRaw": date_utils.to_iso_string(r["date"]) or "",
+                "qty": r["qty"],
+                "remarks": r["remarks"],
+                "byName": r["byName"],
+                "lines": r["lines"],
+            }
+            for r in reversed(receipts)
+        ],
+    }
+
+
+@rpc_method("saveProductionReceipt", mutation=True)
+@database.transactional
+def save_production_receipt(conn, cur, form_data):
+    """Receives processed items against a lot, colour by colour.
+
+    form_data: {rowIdx, date, remarks, lines: [{color, size, qty}]}. A line
+    names one of the lot's counting colours (blank for a lot without
+    colours); a blank or zero quantity is skipped.
+
+    The goods go into the Warehouse Pool at the moment they are received and
+    use up their share of the lot's materials -- see lot_receipts. A lot
+    that has now received everything becomes Completed; a Pending one
+    becomes In Progress on its first receipt."""
+    form_data = form_data or {}
+    target_id = _coerce_row_id(
+        form_data.get("rowIdx"), "Invalid production record selected."
+    )
+
+    # FOR UPDATE: two people receiving the same lot at once must not both
+    # pass the balance check below.
+    cur.execute(
+        f"SELECT {_PRODUCTION_SELECT_COLS} FROM erp.production "
+        "WHERE id = %s AND deleted_at IS NULL FOR UPDATE",
+        (target_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        raise ValueError("Invalid production record selected.")
+
+    lot_number = row["lot_number"]
+    status = str(row["status"] or "").strip()
+    if lot_receipts.is_completed(status):
+        raise ValueError(
+            f"Lot #{lot_number} is Completed, so all of it already counts as received."
+        )
+    if not lot_receipts.is_open(status):
+        raise ValueError(
+            f"Lot #{lot_number} is {status}. Set it back to In Progress to receive against it."
+        )
+
+    shape = lot_receipts.LotShape(row["color_breakdown"], row["qty"])
+    if shape.total <= 0:
+        raise ValueError(f"Lot #{lot_number} has no quantity to receive.")
+    receipts = lot_receipts.load_receipts(cur, [target_id]).get(target_id) or []
+    balance = shape.balance(lot_receipts.received_amounts(receipts))
+    line_by_key = {line["key"]: line for line in shape.lines}
+
+    wanted: dict = {}
+    for raw in _coerce_json_list(
+        form_data.get("lines"), "Invalid receipt data format."
+    ):
+        raw = raw or {}
+        qty = _validate_number(raw.get("qty"), 0, 10000000)
+        if not qty:
+            continue
+        key = lot_receipts.line_key(raw.get("color"), raw.get("size"))
+        if key not in line_by_key:
+            raise ValueError(
+                f'"{_receipt_line_label(raw.get("color"), raw.get("size"))}" is not one '
+                f"of Lot #{lot_number}'s colours. Refresh and try again."
+            )
+        wanted[key] = wanted.get(key, 0.0) + qty
+    if not wanted:
+        raise ValueError("Enter how many came back.")
+
+    for key, qty in wanted.items():
+        if qty > balance[key] + 1e-9:
+            line = line_by_key[key]
+            what = (
+                f"of {_receipt_line_label(line['color'], line['size'])} "
+                if line["color"]
+                else ""
+            )
+            raise ValueError(
+                f"Only {lot_receipts.fmt_qty(balance[key])} {what}"
+                f"{'is' if balance[key] == 1 else 'are'} still to come on Lot #{lot_number}."
+            )
+
+    receipt_date = date_utils.to_safe_date(form_data.get("date")) or date.today()
+    if row["production_date"] and receipt_date < row["production_date"]:
+        raise ValueError(
+            "A receipt can't be dated before its lot "
+            f"({date_utils.to_display_string(row['production_date'])})."
+        )
+    if receipt_date > date.today():
+        raise ValueError("A receipt can't be dated in the future.")
+    remarks = str(form_data.get("remarks") or "").strip()[:500]
+    total = sum(wanted.values())
+
+    # The pool components this receipt uses up, checked the way completing
+    # a lot is: a draw that will go negative warns and still saves.
+    pool_warning = _validate_pool_availability(
+        cur,
+        _build_pool_needed_map(
+            [
+                {**c, "qty": shape.component_qty(c, c.get("qty"), wanted)}
+                for c in row["components_consumed"] or []
+                if isinstance(c, dict)
+            ]
+        ),
+    )
+
+    user_id = get_current_user_id()
+    cur.execute(
+        """
+        INSERT INTO erp.production_receipts
+            (production_id, receipt_date, qty, remarks, created_by, created_by_name)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (
+            target_id,
+            receipt_date,
+            total,
+            remarks,
+            user_id,
+            (get_current_user_name() or "")[:150] or None,
+        ),
+    )
+    receipt_id = cur.fetchone()["id"]
+    for line in shape.lines:
+        if wanted.get(line["key"]):
+            cur.execute(
+                "INSERT INTO erp.production_receipt_lines (receipt_id, color, size, qty) "
+                "VALUES (%s, %s, %s, %s)",
+                (receipt_id, line["color"], line["size"], wanted[line["key"]]),
+            )
+
+    still_to_come = sum(
+        max(balance[key] - wanted.get(key, 0.0), 0.0) for key in balance
+    )
+    new_status = None
+    if still_to_come <= 1e-9:
+        new_status = "Completed"
+    elif status.lower() in ("pending", ""):
+        new_status = "In Progress"
+    if new_status:
+        cur.execute(
+            f"UPDATE erp.production SET status = %s, completed_at = {_COMPLETED_AT_SQL}, "
+            "updated_by = %s WHERE id = %s",
+            (new_status, new_status == "Completed", user_id, target_id),
+        )
+
+    warehouse_service._recalculate_warehouse_pool(cur)
+
+    message = f"Received {lot_receipts.fmt_qty(total)} against Lot #{lot_number}."
+    if new_status == "Completed":
+        message = f"{message} Everything has come back, so the lot is now Completed."
+    else:
+        message = f"{message} {lot_receipts.fmt_qty(still_to_come)} still to come."
+    if pool_warning:
+        message = f"{message} Warning: {pool_warning} Warehouse Pool stock will now show negative for this item."
+
+    return build_response(
+        True,
+        {"receiptId": receipt_id, "row": _fetch_production_record(cur, target_id)},
+        message,
+    )
+
+
+@rpc_method("deleteProductionReceipt", mutation=True)
+@database.transactional
+def delete_production_receipt(conn, cur, receipt_id):
+    """Deletes a receipt entered by mistake: its goods come back out of the
+    Warehouse Pool and its share of the materials goes back into stock.
+    Only while the lot is open -- on a Completed lot the whole lot counts as
+    received either way, so deleting a receipt there would change nothing
+    the user could see except when the goods were counted."""
+    target_id = _coerce_row_id(receipt_id, "Invalid receipt selected.")
+    cur.execute(
+        """
+        SELECT r.id, r.qty, r.receipt_date, p.id AS lot_id, p.lot_number, p.status
+          FROM erp.production_receipts r
+          JOIN erp.production p ON p.id = r.production_id
+         WHERE r.id = %s AND r.deleted_at IS NULL AND p.deleted_at IS NULL
+         FOR UPDATE OF r, p
+        """,
+        (target_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        raise ValueError(
+            "That receipt was not found. It may already have been deleted."
+        )
+    status = str(row["status"] or "").strip()
+    if not lot_receipts.is_open(status):
+        raise ValueError(
+            f"Lot #{row['lot_number']} is {status}. Set it back to In Progress "
+            "before deleting one of its receipts."
+        )
+
+    cur.execute(
+        "UPDATE erp.production_receipts SET deleted_at = NOW(), deleted_by = %s WHERE id = %s",
+        (get_current_user_id(), target_id),
+    )
+    warehouse_service._recalculate_warehouse_pool(cur)
+
+    return build_response(
+        True,
+        {"row": _fetch_production_record(cur, row["lot_id"])},
+        f"Receipt of {lot_receipts.fmt_qty(row['qty'])} dated "
+        f"{date_utils.to_display_string(row['receipt_date'])} deleted from "
+        f"Lot #{row['lot_number']}.",
+    )
 
 
 @rpc_method("saveProductionSheet", mutation=True)

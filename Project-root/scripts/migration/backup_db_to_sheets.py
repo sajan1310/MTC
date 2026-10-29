@@ -113,6 +113,11 @@ TABLES = [
     # Business records, small: one row per lot and one per checked item.
     "erp.lot_inspections",
     "erp.lot_inspection_checks",
+    # What came back against each lot, colour by colour (055). The pool and
+    # Stock are worked out from these, so they are business data a restore
+    # needs.
+    "erp.production_receipts",
+    "erp.production_receipt_lines",
     "erp.dispatch_headers",
     "erp.dispatch_lines",
     "erp.dispatch_plan_lines",

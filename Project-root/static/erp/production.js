@@ -371,6 +371,22 @@ App.Production = {
     const previousStatus = p.status;
     if (newStatus === previousStatus) return;
 
+    // A partly received lot asks first: Completed counts its balance as
+    // received, Cancelled drops it. The select shows the old status until
+    // the user agrees, so dismissing the question changes nothing.
+    const note = this.statusChangeNote(p, newStatus);
+    if (note) {
+      selectEl.value = previousStatus;
+      App.Utils.confirmAction(note, () => {
+        selectEl.value = newStatus;
+        this._saveStatus(selectEl, p, newStatus, previousStatus);
+      });
+      return;
+    }
+    await this._saveStatus(selectEl, p, newStatus, previousStatus);
+  },
+
+  async _saveStatus(selectEl, p, newStatus, previousStatus) {
     selectEl.disabled = true;
     try {
       const res = await Api.mutate('updateProductionStatus', p.rowIdx, p.qty, newStatus);
@@ -378,6 +394,8 @@ App.Production = {
       if (res.success) {
         p.status = newStatus;
         selectEl.setAttribute('style', this.statusSelectStyle(newStatus));
+        // The row's received/balance figures follow the status.
+        if (res.data && res.data.row) this.patchRowInPlace(res.data.row);
       } else {
         selectEl.value = previousStatus;
       }
@@ -387,6 +405,22 @@ App.Production = {
     } finally {
       selectEl.disabled = false;
     }
+  },
+
+  // What changing a partly received lot's status does to the part that has
+  // not come back -- null when there is nothing to ask about.
+  statusChangeNote(p, newStatus) {
+    const received = Number(p.receivedQty) || 0;
+    const balance = Number(p.balanceQty) || 0;
+    if (!(received > 0 && balance > 0)) return null;
+    const lot = `Lot #${p.lotNumber} has received ${this.formatQty(received)} of ${this.formatQty(p.qty)}.`;
+    if (newStatus === 'Completed') {
+      return `${lot}\n\nMarking it Completed counts the ${this.formatQty(balance)} not received yet as received now: they go into the Warehouse Pool and use up their materials.\n\nContinue?`;
+    }
+    if (newStatus === 'Cancelled') {
+      return `${lot}\n\nCancelling keeps the ${this.formatQty(received)} received and drops the ${this.formatQty(balance)} not received.\n\nContinue?`;
+    }
+    return null;
   },
 
   async loadData() {
@@ -1284,13 +1318,14 @@ App.Production = {
     <td><strong>${escapeHtml(processLabel)}</strong><br><span class="badge bg-secondary">${escapeHtml(p.lotNumber || '-')}</span></td>
     <td>${escapeHtml(p.outputItemName || '-')}${colorBadges ? `<br>${colorBadges}` : ''}</td>
     <td>${p.productId ? `<span class="badge bg-dark fs-6 shadow-sm">${escapeHtml(p.productId)}</span><br>${escapeHtml(p.productName || '')}` : '<span class="text-muted">—</span>'}</td>
-    <td class="text-center fw-bold">${escapeHtml(this.formatQty(p.qty))} Units</td>
+    <td class="text-center fw-bold">${this.qtyCellHtml(p)}</td>
     <td>${escapeHtml(App.Utils.formatNameCase(p.assignedBy) || '-')}</td>
     <td>${escapeHtml(App.Utils.formatNameCase(p.assignedTo) || '-')}${p.contractorPayable ? `<br><span class="badge bg-light text-dark border">${formatCurrency(p.contractorPayable)}</span>` : ''}${p.extraChargeType ? `<br><span class="badge" style="background-color:#ffc107;color:#000;" title="Extra charge included in Total Payable above">${escapeHtml(p.extraChargeType)}</span>` : ''}</td>
     <td class="text-center">
       <select class="form-select form-select-sm fw-bold border-0 shadow-sm" style="${this.statusSelectStyle(p.status)}" data-row-idx="${idx}" onchange="App.Production.updateStatus(this)" title="Change status directly without opening Edit Lot">${statusOptions}</select>
     </td>
     <td>
+      ${this.receiveButtonHtml(p, idx)}
       <button class="btn btn-sm btn-outline-dark btn-action w-100 mb-1" onclick="App.Production.viewProductionSheet('${idx}')">Production Sheet</button>
       <button class="btn btn-sm btn-outline-primary btn-action w-100 mb-1" onclick="App.Production.openEditModal('${idx}')">Edit Lot</button>
       <button class="btn btn-sm btn-danger btn-action w-100" onclick="App.Production.delete('${idx}')">Delete</button>
@@ -1331,6 +1366,284 @@ App.Production = {
     const idx = App.State.globalProduction.indexOf(existing);
     tr.outerHTML = this.rowHtml(existing, idx);
     return true;
+  },
+
+  // ── Receiving processed items against a lot (migration 055) ──────────
+  // A lot that comes back in parts records each delivery, colour by colour.
+  // What came back goes into the Warehouse Pool on the day it is received
+  // and uses up its share of the lot's materials; the rest is the lot's
+  // balance. Receiving the last of it marks the lot Completed.
+
+  isOpenStatus(status) {
+    const s = String(status || '').trim().toLowerCase();
+    return s === '' || s === 'pending' || s === 'in progress';
+  },
+
+  // The Lot Qty cell: the lot, then -- while it is open -- what is still to
+  // come, and what has come back once anything has.
+  qtyCellHtml(p) {
+    const fmt = n => escapeHtml(this.formatQty(n));
+    const received = Number(p.receivedQty) || 0;
+    let html = `${fmt(p.qty)} Units`;
+    if (this.isOpenStatus(p.status)) {
+      if (received > 0) html += `<div class="small fw-normal text-success">Received ${fmt(received)}</div>`;
+      html += `<div class="small text-danger">Balance ${fmt(p.balanceQty)}</div>`;
+    } else if (received > 0 && p.status === 'Cancelled') {
+      html += `<div class="small fw-normal text-muted">Received ${fmt(received)}</div>`;
+    }
+    return html;
+  },
+
+  // Receive on an open lot; on a closed one that was received in parts,
+  // the way back to its receipts.
+  receiveButtonHtml(p, idx) {
+    if (this.isOpenStatus(p.status) && Number(p.qty) > 0) {
+      return `<button class="btn btn-sm btn-success btn-action w-100 mb-1" onclick="App.Production.openReceiveModal('${idx}')" title="Record processed items that came back against this lot">Receive</button>`;
+    }
+    if (Number(p.receiptCount) > 0) {
+      return `<button class="btn btn-sm btn-outline-success btn-action w-100 mb-1" onclick="App.Production.openReceiveModal('${idx}')">Receipts</button>`;
+    }
+    return '';
+  },
+
+  async openReceiveModal(idx) {
+    const p = App.State.globalProduction[Number(idx)];
+    if (!p) return;
+    this._receiveLot = p;
+    this._receiveData = null;
+
+    const summary = document.getElementById('receiveLotSummary');
+    if (summary) summary.innerHTML = '<div class="text-muted">Loading…</div>';
+    ['receiveLotLines', 'receiveLotHistory', 'receiveLotTotal'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = '';
+    });
+    const remarks = document.getElementById('receiveLotRemarks');
+    if (remarks) remarks.value = '';
+    const dateEl = document.getElementById('receiveLotDate');
+    if (dateEl) dateEl.value = this._todayISO();
+
+    const modalEl = document.getElementById('receiveLotModal');
+    if (modalEl && typeof bootstrap !== 'undefined') {
+      bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
+    await this.loadReceipts();
+  },
+
+  _todayISO() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  },
+
+  async loadReceipts() {
+    const p = this._receiveLot;
+    if (!p) return;
+    try {
+      const res = await Api.call('getProductionReceipts', p.rowIdx);
+      if (!res.success) throw new Error(res.message || 'Could not load the receipts.');
+      this._receiveData = res.data;
+      this.renderReceiveModal();
+    } catch (err) {
+      const summary = document.getElementById('receiveLotSummary');
+      if (summary) summary.innerHTML = `<div class="alert alert-danger mb-0">${escapeHtml(err.message || 'Could not load the receipts.')}</div>`;
+      const form = document.getElementById('receiveLotForm');
+      if (form) form.style.display = 'none';
+    }
+  },
+
+  _lineLabel(line) {
+    if (!line.color) return 'Whole lot';
+    return line.size ? `${line.color} (${line.size})` : line.color;
+  },
+
+  renderReceiveModal() {
+    const data = this._receiveData;
+    if (!data) return;
+    const { lot, lines, receipts, canReceive } = data;
+    const fmt = n => escapeHtml(this.formatQty(n));
+
+    const process = (App.State.globalProcesses || []).find(pr => pr.processId === lot.processId);
+    const title = document.getElementById('receiveLotTitle');
+    if (title) title.textContent = `Receive — Lot #${lot.lotNumber}`;
+
+    const summary = document.getElementById('receiveLotSummary');
+    if (summary) {
+      summary.innerHTML = `
+        <div class="card border-0 shadow-sm"><div class="card-body py-2">
+          <div class="row g-2">
+            <div class="col-6 col-md-3"><span class="text-muted small text-uppercase">Process</span><div class="fw-bold">${escapeHtml(process ? process.processName : lot.processId)}</div></div>
+            <div class="col-6 col-md-3"><span class="text-muted small text-uppercase">Output Item</span><div class="fw-bold">${escapeHtml(lot.outputItemName || '-')}</div></div>
+            <div class="col-6 col-md-2"><span class="text-muted small text-uppercase">Contractor</span><div class="fw-bold">${escapeHtml(App.Utils.formatNameCase(lot.assignedTo) || '-')}</div></div>
+            <div class="col-6 col-md-4"><span class="text-muted small text-uppercase">Lot · Received · Balance</span>
+              <div class="fw-bold">${fmt(lot.qty)} · <span class="text-success">${fmt(lot.receivedQty)}</span> · <span class="text-danger">${fmt(lot.balanceQty)}</span></div></div>
+          </div>
+        </div></div>`;
+    }
+
+    const note = document.getElementById('receiveLotClosedNote');
+    if (note) {
+      let text = '';
+      if (lot.status === 'Completed') text = 'This lot is Completed, so all of it counts as received.';
+      else if (lot.status === 'Cancelled') text = 'This lot is Cancelled. What was received stays received; the rest was dropped.';
+      else if (!canReceive) text = 'Nothing is left to receive on this lot.';
+      note.textContent = text;
+      note.style.display = text ? '' : 'none';
+    }
+
+    const form = document.getElementById('receiveLotForm');
+    if (form) form.style.display = canReceive ? '' : 'none';
+
+    const body = document.getElementById('receiveLotLines');
+    if (body) {
+      body.innerHTML = lines.map((line, i) => {
+        const open = line.balance > 0;
+        return `<tr>
+          <td>${escapeHtml(this._lineLabel(line))}</td>
+          <td class="text-end">${fmt(line.qty)}</td>
+          <td class="text-end text-success">${fmt(line.received)}</td>
+          <td class="text-end text-danger fw-bold">${fmt(line.balance)}</td>
+          <td>
+            <div class="input-group input-group-sm">
+              <input type="number" class="form-control receive-line-qty" data-line="${i}" min="0" max="${line.balance}" step="any"
+                inputmode="decimal" placeholder="0" aria-label="Receiving now: ${escapeHtml(this._lineLabel(line))}"
+                ${open ? '' : 'disabled'} oninput="App.Production.updateReceiveTotal()">
+              <button type="button" class="btn btn-outline-success" ${open ? '' : 'disabled'}
+                onclick="App.Production.receiveAll(${i})" title="Fill in the whole balance">All</button>
+            </div>
+          </td>
+        </tr>`;
+      }).join('');
+    }
+
+    const dateEl = document.getElementById('receiveLotDate');
+    if (dateEl) {
+      if (lot.dateRaw) dateEl.min = lot.dateRaw;
+      dateEl.max = this._todayISO();
+    }
+    this.updateReceiveTotal();
+    this.renderReceiptHistory(receipts, this.isOpenStatus(lot.status));
+  },
+
+  renderReceiptHistory(receipts, canDelete) {
+    const host = document.getElementById('receiveLotHistory');
+    if (!host) return;
+    if (!receipts || receipts.length === 0) {
+      host.innerHTML = '<p class="text-muted small mb-0">Nothing received against this lot yet.</p>';
+      return;
+    }
+    const fmt = n => escapeHtml(this.formatQty(n));
+    host.innerHTML = `<div class="table-responsive"><table class="table table-sm table-bordered bg-white align-middle mb-0">
+      <thead class="table-light"><tr>
+        <th scope="col">Date</th><th scope="col" class="text-end">Qty</th><th scope="col">Colours</th>
+        <th scope="col">Remarks</th><th scope="col">By</th>${canDelete ? '<th scope="col"><span class="visually-hidden">Delete</span></th>' : ''}
+      </tr></thead>
+      <tbody>${receipts.map(r => `<tr>
+        <td>${escapeHtml(r.date)}</td>
+        <td class="text-end fw-bold">${fmt(r.qty)}</td>
+        <td>${r.lines.map(l => (l.color ? `${escapeHtml(this._lineLabel(l))}: ${fmt(l.qty)}` : fmt(l.qty))).join('<br>')}</td>
+        <td>${escapeHtml(r.remarks || '')}</td>
+        <td>${escapeHtml(r.byName || '')}</td>
+        ${canDelete ? `<td class="text-center"><button type="button" class="btn btn-sm btn-outline-danger" onclick="App.Production.deleteReceipt(${Number(r.id)})" aria-label="Delete this receipt"><i class="bi bi-trash"></i></button></td>` : ''}
+      </tr>`).join('')}</tbody></table></div>`;
+  },
+
+  receiveAll(i) {
+    const line = this._receiveData && this._receiveData.lines[i];
+    const input = document.querySelector(`#receiveLotLines .receive-line-qty[data-line="${i}"]`);
+    if (!line || !input) return;
+    input.value = line.balance;
+    this.updateReceiveTotal();
+  },
+
+  // The receipt as entered: [{color, size, qty}] for every line with a
+  // quantity. Anything not a positive number counts as blank.
+  _enteredReceiptLines() {
+    const lines = (this._receiveData && this._receiveData.lines) || [];
+    const out = [];
+    document.querySelectorAll('#receiveLotLines .receive-line-qty').forEach(input => {
+      const line = lines[Number(input.dataset.line)];
+      const qty = parseFloat(input.value);
+      if (line && isFinite(qty) && qty > 0) out.push({ color: line.color, size: line.size, qty, balance: line.balance, label: this._lineLabel(line) });
+    });
+    return out;
+  },
+
+  updateReceiveTotal() {
+    const el = document.getElementById('receiveLotTotal');
+    if (!el) return;
+    const total = this._enteredReceiptLines().reduce((s, l) => s + l.qty, 0);
+    el.textContent = total > 0 ? `Receiving ${this.formatQty(total)} now` : '';
+  },
+
+  async submitReceipt(event) {
+    if (event) event.preventDefault();
+    const p = this._receiveLot;
+    if (!p || !this._receiveData) return;
+
+    const entered = this._enteredReceiptLines();
+    if (entered.length === 0) {
+      App.Utils.showToast('Enter how many came back.', true);
+      return;
+    }
+    const over = entered.find(l => l.qty > l.balance + 1e-9);
+    if (over) {
+      App.Utils.showToast(`Only ${this.formatQty(over.balance)} of ${over.label} ${over.balance === 1 ? 'is' : 'are'} still to come.`, true);
+      return;
+    }
+    const date = (document.getElementById('receiveLotDate') || {}).value || '';
+    if (!date) {
+      App.Utils.showToast('Enter the date the items were received.', true);
+      return;
+    }
+
+    const btn = document.getElementById('receiveLotSubmitBtn');
+    if (btn) btn.disabled = true;
+    try {
+      const res = await Api.mutate('saveProductionReceipt', {
+        rowIdx: p.rowIdx,
+        date,
+        remarks: ((document.getElementById('receiveLotRemarks') || {}).value || '').trim(),
+        lines: entered.map(l => ({ color: l.color, size: l.size, qty: l.qty }))
+      });
+      App.Utils.showToast(res.message, !res.success);
+      if (!res.success) return;
+      this._applyFreshRow(res.data && res.data.row);
+      const modalEl = document.getElementById('receiveLotModal');
+      if (modalEl && typeof bootstrap !== 'undefined') bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to save the receipt', true);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  },
+
+  deleteReceipt(receiptId) {
+    const data = this._receiveData;
+    const receipt = data && data.receipts.find(r => Number(r.id) === Number(receiptId));
+    if (!receipt) return;
+    App.Utils.confirmAction(
+      `Delete the receipt of ${this.formatQty(receipt.qty)} dated ${receipt.date}?\n\nIts items come back out of the Warehouse Pool and its materials go back into stock.`,
+      async () => {
+        try {
+          const res = await Api.mutate('deleteProductionReceipt', Number(receiptId));
+          App.Utils.showToast(res.message, !res.success);
+          if (!res.success) return;
+          this._applyFreshRow(res.data && res.data.row);
+          await this.loadReceipts();
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to delete the receipt', true);
+        }
+      }
+    );
+  },
+
+  // A lot the server just changed: patch its row, or reload when it is not
+  // on the page. Keeps _receiveLot pointing at the live record.
+  _applyFreshRow(row) {
+    if (!row) return;
+    if (!this.patchRowInPlace(row)) this.loadData();
+    const live = (App.State.globalProduction || []).find(r => String(r.rowIdx) === String(row.rowIdx));
+    if (live) this._receiveLot = live;
   },
 
   toggleSelectAll(masterChk) {
