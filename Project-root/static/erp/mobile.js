@@ -6254,6 +6254,7 @@ MApp.Production = {
     this.selectedExtraChargeAmount = 0;
     this._materialsOpen = false;
     this._rateCache = {};
+    MApp.LotRef.reset();
   },
 
   // ── Log Lot sheet ──────────────────────────────────────────────────
@@ -6290,6 +6291,7 @@ MApp.Production = {
     // Closing abandons an in-flight process load as well, so it cannot
     // keep writing to this.model and this.selection behind a shut sheet.
     this._procSelectSeq++;
+    MApp.LotRef.closeDetail();
     MApp.Sheet.close('sheet-log-lot');
   },
 
@@ -6434,6 +6436,7 @@ MApp.Production = {
 
       <div id="lot-qty-section" class="mb-mb-4"></div>
       <div id="lot-alloc-section"></div>
+      <div id="lot-refs-section"></div>
       <div id="lot-materials-section"></div>
 
       <div class="mb-field">
@@ -6697,6 +6700,7 @@ MApp.Production = {
     // readout (_cascadeShown), painted here rather than once the loads land.
     this.selection.processId = processId;
     this.selection.process = process;
+    MApp.LotRef.load(processId, opts.lot ? opts.lot.rowIdx : null);
     if (!opts.lot) {
       this.selection.productId = '';
       this.selection.productName = '';
@@ -7500,6 +7504,11 @@ MApp.Production = {
 
     if (this.editingLot) formData.rowIdx = this.editingLot.rowIdx;
 
+    // Left out unless references loaded: the server then keeps what the lot
+    // is connected to, so an edit made offline can't wipe it.
+    const lotRefs = MApp.LotRef.payload();
+    if (lotRefs !== null) formData.lotRefs = lotRefs;
+
     // Phase 6: mutation-id generated once, reused for both this live
     // attempt and any later outbox replay (see MApp.Stock.submitAdjust's
     // own comment for why -- same reasoning applies to every mutation).
@@ -7631,6 +7640,251 @@ MApp.Production = {
     this._renderLotSections();
     this._showContractorRate();
     this._applyCascadeEnabledStates();
+  }
+};
+
+// ================================================================
+// LOT REFERENCE — the optional field on Log Lot, and one lot shown read-only
+// beside it (migration 057). Desktop's is App.LotRef / App.LotPanel in
+// lot-reference.js; which lots are related, and which date a lot shows, are
+// decided in lot_reference_service.py, so both agree.
+// ================================================================
+MApp.LotRef = {
+  _seq: 0,
+  _detailSeq: 0,
+  // getRelatedLots' reply for the chosen process.
+  _data: null,
+  // 'idle' (no process yet), 'failed' (offline), or 'ready'.
+  _state: 'idle',
+  // The connected lots, in the order they were connected.
+  _picked: [],
+  // The lots walked through in the detail sheet, newest last.
+  _trail: [],
+
+  reset() {
+    this._seq++;
+    this._data = null;
+    this._state = 'idle';
+    this._picked = [];
+    this.closeDetail();
+    this._render();
+  },
+
+  // Fire and forget from onProcessSelected: the field is optional, so it
+  // must never hold the form up. Offline it just says so.
+  async load(processId, rowIdx) {
+    this.reset();
+    const seq = this._seq;
+    let res;
+    try {
+      res = await MApp.Api.call('getRelatedLots', processId, rowIdx || null);
+    } catch {
+      res = null;
+    }
+    if (seq !== this._seq) return;
+    if (!res || !res.success) {
+      this._state = 'failed';
+    } else if (res.data && res.data.applicable) {
+      this._data = res.data;
+      this._picked = res.data.references.slice();
+      this._state = 'ready';
+    }
+    this._render();
+  },
+
+  // What saveLot sends, or null to send nothing: the server then leaves the
+  // lot's connections alone. Only a list that loaded can say what to keep.
+  payload() {
+    return this._state === 'ready' ? JSON.stringify(this._picked.map(lot => lot.rowIdx)) : null;
+  },
+
+  _available() {
+    const picked = new Set(this._picked.map(lot => lot.rowIdx));
+    return this._data.lots.filter(lot => !picked.has(lot.rowIdx));
+  },
+
+  _dateText(lot) {
+    return `${lot.dateLabel} ${lot.date}`;
+  },
+
+  async add() {
+    const items = this._available().map(lot => ({
+      value: lot.rowIdx,
+      label: lot.lotNumber,
+      sublabel: [lot.outputItemName, lot.status === 'Completed' ? '' : lot.status].filter(Boolean).join(' · '),
+      // Not searched: typing a lot number must not match a date.
+      detail: this._dateText(lot)
+    }));
+    const picked = await MApp.Picker.open({ title: this._scope(), items });
+    if (!picked) return;
+    const lot = this._data.lots.find(l => l.rowIdx === picked.value);
+    if (lot && !this._picked.includes(lot)) this._picked.push(lot);
+    this._render();
+  },
+
+  remove(rowIdx) {
+    this._picked = this._picked.filter(lot => lot.rowIdx !== rowIdx);
+    this._render();
+  },
+
+  _scope() {
+    const { sequence, model, size } = this._data;
+    return `Stage ${sequence} lots for ${[model, size].filter(v => v && v !== 'General').join(' ')}`;
+  },
+
+  _render() {
+    const section = document.getElementById('lot-refs-section');
+    if (!section) return;
+    const e = MApp.Util.escapeHtml;
+    if (this._state === 'idle') {
+      section.innerHTML = '';
+      return;
+    }
+    if (this._state === 'failed') {
+      section.innerHTML = `
+        <div class="mb-field">
+          <label>Lot reference (optional)</label>
+          <div class="mb-field-hint">Lot references need a connection. The lot can still be saved.</div>
+        </div>`;
+      return;
+    }
+    const left = this._available().length;
+    let placeholder = 'No more lots to add';
+    if (left) placeholder = 'Search by lot number…';
+    else if (this._data.lots.length === 0) placeholder = `No ${this._scope()}`;
+    // Each picked lot is only a link to it, as on desktop: the sheet opens
+    // when it is tapped, and the form gives its details no room of its own.
+    const links = this._picked.map(lot => `
+      <span class="mapp-lot-ref-chip">
+        ${lot.deleted
+          ? `<span class="mapp-lot-ref-link mapp-lot-ref-deleted">${e(lot.lotNumber)}</span>`
+          : `<button type="button" class="mapp-lot-ref-link" data-view="${Number(lot.rowIdx)}">${e(lot.lotNumber)}</button>`}
+        <button type="button" class="mapp-lot-ref-remove" data-remove="${Number(lot.rowIdx)}" aria-label="Remove ${e(lot.lotNumber)}">×</button>
+      </span>`).join('');
+    section.innerHTML = `
+      <div class="mb-field">
+        <label>Lot reference (optional)</label>
+        <button type="button" class="mb-picker-field mb-placeholder" id="lot-ref-add"${left ? '' : ' disabled'}>${e(placeholder)}</button>
+        ${links ? `<div class="mapp-lot-ref-chips">${links}</div>` : ''}
+      </div>`;
+    section.querySelector('#lot-ref-add')?.addEventListener('click', () => this.add());
+    section.querySelectorAll('[data-view]').forEach(btn => {
+      btn.addEventListener('click', () => this.view(Number(btn.dataset.view)));
+    });
+    section.querySelectorAll('[data-remove]').forEach(btn => {
+      btn.addEventListener('click', () => this.remove(Number(btn.dataset.remove)));
+    });
+  },
+
+  // ── One lot, read-only ─────────────────────────────────────────────
+  view(rowIdx) {
+    this._trail = [rowIdx];
+    MApp.Sheet.open('sheet-lot-detail');
+    this._showDetail();
+  },
+
+  // To a lot listed in the sheet, keeping the way back.
+  walk(rowIdx) {
+    this._trail.push(rowIdx);
+    this._showDetail();
+  },
+
+  back() {
+    if (this._trail.length < 2) return;
+    this._trail.pop();
+    this._showDetail();
+  },
+
+  closeDetail() {
+    this._detailSeq++;
+    if (MApp.Sheet.isOpen('sheet-lot-detail')) MApp.Sheet.close('sheet-lot-detail');
+  },
+
+  async _showDetail() {
+    const rowIdx = this._trail[this._trail.length - 1];
+    const seq = ++this._detailSeq;
+    const body = document.getElementById('lot-detail-body');
+    const title = document.getElementById('lot-detail-title');
+    const backBtn = document.getElementById('lot-detail-back');
+    if (!body) return;
+    title.textContent = 'Lot';
+    backBtn.style.display = this._trail.length > 1 ? '' : 'none';
+    body.innerHTML = '<div class="mb-skel mb-skel-card" style="height:56px;"></div>';
+    body.scrollTop = 0;
+
+    let res;
+    try {
+      res = await MApp.Api.call('getLotDetail', rowIdx);
+    } catch {
+      res = { success: false, message: 'This lot needs a connection to view.' };
+    }
+    if (seq !== this._detailSeq) return;
+    if (!res || !res.success) {
+      body.innerHTML = `<div class="mb-field-hint">${MApp.Util.escapeHtml((res && res.message) || 'This lot could not be loaded.')}</div>`;
+      return;
+    }
+    title.textContent = res.data.lot.lotNumber;
+    body.innerHTML = this._detailHtml(res.data);
+    body.querySelectorAll('[data-walk]').forEach(btn => {
+      btn.addEventListener('click', () => this.walk(Number(btn.dataset.walk)));
+    });
+  },
+
+  _fact(label, value) {
+    const e = MApp.Util.escapeHtml;
+    return value === '' || value === null || value === undefined
+      ? ''
+      : `<div><dt>${e(label)}</dt><dd>${e(value)}</dd></div>`;
+  },
+
+  _lotCard(lot) {
+    const e = MApp.Util.escapeHtml;
+    const sub = [lot.processType || lot.processName, lot.status === 'Completed' ? '' : lot.status, this._dateText(lot)]
+      .filter(Boolean).join(' · ');
+    return lot.deleted
+      ? `<div class="mb-card"><div class="mb-card-title">${e(lot.lotNumber)}</div><div class="mb-card-sub">Deleted · ${e(sub)}</div></div>`
+      : `<button type="button" class="mb-card mb-card-tappable" data-walk="${Number(lot.rowIdx)}"><div class="mb-card-title">${e(lot.lotNumber)}</div><div class="mb-card-sub">${e(sub)}</div></button>`;
+  },
+
+  _detailHtml({ lot, receipts, references }) {
+    const e = MApp.Util.escapeHtml;
+    const q = n => MApp.Util.formatQty(Number(n) || 0);
+    const chip = `mb-chip-${String(lot.status).toLowerCase().replace(/\s+/g, '')}`;
+    const facts = [
+      this._fact('Process', lot.processName),
+      this._fact('Stage', lot.sequence),
+      this._fact('Lot date', lot.lotDate),
+      this._fact('Completed', lot.completedOn),
+      this._fact('Assigned to', MApp.Util.formatNameCase(lot.assignedTo)),
+      this._fact('Quantity', q(lot.qty)),
+      lot.receivedQty ? this._fact('Received', q(lot.receivedQty)) : '',
+      lot.balanceQty ? this._fact('Balance', q(lot.balanceQty)) : '',
+      this._fact('Colours', lot.colors.join(', '))
+    ].join('');
+    const section = (label, html) => (html ? `<div class="mapp-section-label mb-mt-4">${e(label)}</div>${html}` : '');
+    return `
+      <div class="mb-mb-4"><span class="mb-chip ${chip}">${e(lot.status)}</span></div>
+      <div class="mb-card-sub">${e(lot.outputItemName)}</div>
+      <dl class="mapp-lot-facts">${facts}</dl>
+      ${section('Connected lots', references.map(l => this._lotCard(l)).join(''))}
+      ${section('Received', receipts.map(r => `
+        <div class="mb-card">
+          <div class="mb-card-row">
+            <div><div class="mb-card-title">${e(r.date)}</div>${r.byName ? `<div class="mb-card-sub">By ${e(r.byName)}</div>` : ''}</div>
+            <div class="mb-card-title">${e(q(r.qty))}</div>
+          </div>
+        </div>`).join(''))}
+      ${section('Materials', lot.materials.map(m => `
+        <div class="mb-card">
+          <div class="mb-card-row">
+            <div>
+              <div class="mb-card-title">${e([m.itemName, m.size].filter(Boolean).join(' '))}</div>
+              ${m.color && m.color !== 'COMMON' ? `<div class="mb-card-sub">${e(m.color)}</div>` : ''}
+            </div>
+            <div class="mb-card-title">${e([q(m.qty), m.unit].filter(Boolean).join(' '))}</div>
+          </div>
+        </div>`).join(''))}
+      ${section('Remarks', lot.remarks ? `<div class="mb-card-sub">${e(lot.remarks)}</div>` : '')}`;
   }
 };
 // ================================================================

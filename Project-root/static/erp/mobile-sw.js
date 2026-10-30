@@ -208,7 +208,10 @@
 // v93: a bill line that added to the Warehouse Pool says so, and a pool entry
 // that came from a bill can only be changed on the bill. mobile.js and api.js
 // carry it.
-const CACHE_NAME = 'erp-mobile-shell-v93';
+// v94: Log Lot has an optional Lot Reference: a searchable list of the related
+// lots at the sequence before, and a read-only sheet to view one. mobile.js,
+// mobile_styles.css and the template carry it.
+const CACHE_NAME = 'erp-mobile-shell-v94';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

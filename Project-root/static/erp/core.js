@@ -156,6 +156,28 @@ document.addEventListener('keydown', (e) => {
   App.Nav.go(modalEl.id, delta);
 });
 
+// Two things Select2 4.1 gets wrong on jQuery 3.6, in every dropdown in the
+// app, so they are put right here once rather than at each of its 29 setups.
+//
+// Opening a list leaves focus on the closed box, so what is typed straight
+// after goes nowhere until the search box is clicked.
+window.jQuery?.(document)?.on?.('select2:open', () => {
+  document.querySelector('.select2-container--open .select2-search__field')?.focus();
+});
+
+// Escape closes the list and then carries on up to the dialog around it,
+// which closes too and takes whatever was typed into the form with it. Caught
+// on the way down, so that Escape closes the list and nothing else. With no
+// list open it reaches the dialog as it always has.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const open = document.querySelector('select.select2-hidden-accessible + .select2-container--open');
+  if (!open) return;
+  e.stopPropagation();
+  e.preventDefault();
+  window.jQuery(open.previousElementSibling).select2('close');
+}, true);
+
 const App = {
   companyLogo: null,
 

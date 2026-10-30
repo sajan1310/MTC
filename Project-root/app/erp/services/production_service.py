@@ -61,6 +61,7 @@ from . import contractors_service
 from . import items_service
 from . import locks
 from . import lot_receipts
+from . import lot_reference_service
 from . import process_service
 from . import tags_service
 from . import warehouse_service
@@ -1529,6 +1530,11 @@ def save_production(conn, cur, form_data):
         )
         new_row_idx = cur.fetchone()["id"]
 
+    # Optional, and information only: nothing below reads it.
+    lot_refs_note = lot_reference_service.replace_lot_refs(
+        cur, new_row_idx, form_data.get("lotRefs")
+    )
+
     warehouse_service._recalculate_warehouse_pool(cur)
 
     message = f"Lot #{lot_number} updated." if is_edit else f"Lot #{lot_number} saved."
@@ -1536,6 +1542,8 @@ def save_production(conn, cur, form_data):
         message = f"{message} Its Production Sheet now shows these changes, replacing the sheet's earlier edits."
     if dropped_colour_warning:
         message = f"{message} {dropped_colour_warning}"
+    if lot_refs_note:
+        message = f"{message} {lot_refs_note}"
     if pool_warning:
         message = f"{message} Warning: {pool_warning} Warehouse Pool stock will now show negative for this item."
 
