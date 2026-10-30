@@ -124,7 +124,7 @@ def _findings(check=None, item=None):
         conn,
         cur,
     ):
-        cur.execute("SET TRANSACTION READ ONLY")
+        cur.execute(audit_service._SNAPSHOT_SQL)
         found, errors = audit_service.compute_findings(cur)
         conn.rollback()
     assert errors == []
@@ -848,7 +848,7 @@ def test_a_run_says_what_it_checked(erp_admin_client):
         conn,
         cur,
     ):
-        cur.execute("SET TRANSACTION READ ONLY")
+        cur.execute(audit_service._SNAPSHOT_SQL)
         audit_service.compute_findings(cur, stats=stats)
         conn.rollback()
     found, errors = audit_service.compute_external_findings(stats)
@@ -1055,7 +1055,7 @@ def _tampered(check, *drop_types):
         conn,
         cur,
     ):
-        cur.execute("SET TRANSACTION READ ONLY")
+        cur.execute(audit_service._SNAPSHOT_SQL)
         ctx = audit_service._Context(cur)
         ctx.all_events = [e for e in ctx.all_events if e["type"] not in drop_types]
         found = check(ctx)
@@ -1105,7 +1105,7 @@ def test_a_lot_must_land_on_its_pool_buckets(erp_admin_client):
         conn,
         cur,
     ):
-        cur.execute("SET TRANSACTION READ ONLY")
+        cur.execute(audit_service._SNAPSHOT_SQL)
         ctx = audit_service._Context(cur)
         for e in ctx.all_events:
             if e["type"] == "Production Credit" and e["ref"] == lot:
@@ -2104,6 +2104,136 @@ def test_a_completed_lot_with_no_completion_time_is_a_code_bug(erp_admin_client)
         )
     [f] = _mentioning("lot_completed_at_missing", lot)
     assert f["kind"] == "integrity"
+
+
+# ── The audit's own reading ────────────────────────────────────────────────
+
+
+def test_a_run_reads_one_snapshot_and_writes_nothing(monkeypatch):
+    seen = {}
+    real = audit_service.compute_findings
+
+    def spying(cur, today=None, stats=None):
+        cur.execute("SHOW transaction_isolation")
+        seen["isolation"] = cur.fetchone()["transaction_isolation"]
+        cur.execute("SHOW transaction_read_only")
+        seen["readOnly"] = cur.fetchone()["transaction_read_only"]
+        return real(cur, today, stats)
+
+    monkeypatch.setattr(audit_service, "compute_findings", spying)
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "INSERT INTO erp.audit_runs (trigger) VALUES ('button') RETURNING id"
+        )
+        run_id = cur.fetchone()[0]
+    audit_service._execute_run(run_id)
+    assert seen == {"isolation": "repeatable read", "readOnly": "on"}
+
+
+def test_a_pool_component_in_another_unit_is_compared_in_the_pools_unit(
+    erp_admin_client,
+):
+    client = erp_admin_client
+    unit = _unique("Crate")
+    _ok(
+        _rpc(
+            client,
+            "saveUnit",
+            [{"unitName": unit, "family": "Count", "factorToBase": 12}],
+            mutation=True,
+        )
+    )
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "INSERT INTO erp.units (unit_name, family, factor_to_base) "
+            "SELECT 'Pcs', 'Count', 1 WHERE NOT EXISTS "
+            "(SELECT 1 FROM erp.units WHERE lower(unit_name) = 'pcs' AND deleted_at IS NULL)"
+        )
+    up_name, _up_id, down_id = _stage(client, 500)
+    lot = _lot_with(
+        client,
+        down_id,
+        2,
+        [{"itemName": up_name, "qty": 2, "unit": unit, "sourceType": "POOL"}],
+    )
+    assert _mentioning("lot_pool_debit_mismatch", lot) == []
+
+
+def test_a_write_off_on_a_reordered_composite_colour_still_reached_the_pool(
+    erp_admin_client,
+):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        conn,
+        cur,
+    ):
+        cur.execute(audit_service._SNAPSHOT_SQL)
+        ctx = audit_service._Context(cur)
+        ctx.all_events = [
+            {
+                "type": "Wastage",
+                "ref": "WST-X",
+                "bucketKey": ("frame", "", "blue-white / black / grey"),
+                "inQty": 0.0,
+                "outQty": 3.0,
+            }
+        ]
+
+        class Rows:
+            connection = cur.connection
+
+            def execute(self, sql, *args):
+                self.items = "erp.items" in sql
+
+            def fetchall(self):
+                if self.items:
+                    return []
+                return [
+                    {
+                        "wastage_id": "WST-X",
+                        "wastage_date": date(2026, 1, 1),
+                        "vendor": "",
+                        "item_name": "Frame",
+                        "size": "",
+                        "qty": 3,
+                        "base_qty": 3,
+                        "source_type": "POOL",
+                        "product_tag": "",
+                        "color": "Blue-White / Grey / Black",
+                    }
+                ]
+
+        ctx.cur = Rows()
+        found = audit_entries._check_wastage_entries(ctx)
+        conn.rollback()
+    assert [f for f in found if f["check"] == "wastage_not_in_pool"] == []
+
+
+def test_a_second_look_at_an_item_ledger_reads_everything_afresh(
+    erp_admin_client, monkeypatch
+):
+    item = _item(erp_admin_client)
+    _bill(erp_admin_client, [{"name": item, "qty": 9, "price": 5, "unit": "Pcs"}])
+    real = items_service.build_item_ledger
+    calls = []
+
+    def stale_then_fresh(name, production=None, terms=None):
+        res = real(name, production, terms)
+        if name == item:
+            calls.append(terms is None)
+            if terms is not None:
+                res["data"]["reconciliation"][0]["balanced"] = False
+        return res
+
+    monkeypatch.setattr(items_service, "build_item_ledger", stale_then_fresh)
+    found = audit_service._external_item_ledgers({})
+    assert calls == [False, True]
+    assert _mentioning("item_ledger_disagrees", item, found) == []
+
+
+def test_a_large_figure_keeps_its_digits():
+    assert audit_service._fmt(1234567.5) == "1234567.5"
+    assert audit_service._fmt(2010000) == "2010000"
+    assert audit_service._fmt(0.0048) == "0.0048"
 
 
 # ── What is missing ────────────────────────────────────────────────────────

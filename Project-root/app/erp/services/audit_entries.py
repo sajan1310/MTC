@@ -762,7 +762,10 @@ def _check_lot_entries(ctx) -> list:
             if name and pool != (_k(name) in outputs):
                 wrong_source[label].append((name, pool))
             if name and pool:
-                pool_use[name] += lot_receipts._num(comp.get("qty"))
+                # In the unit the pool debits: Pass 2 converts, with no size.
+                pool_use[name] += _to_base(
+                    ctx, comp.get("qty"), comp.get("unit"), name, ""
+                )
         for name, want_qty in pool_use.items():
             got = debited.get((label, _k(name)), 0.0)
             if abs(got - want_qty) > _STOCK_TOLERANCE:
@@ -1417,10 +1420,14 @@ def _check_wastage_entries(ctx) -> list:
     in_master = {_k(r["item_name"]) for r in cur.fetchall()}
     outputs = {_k(p.get("outputItemName")) for p in ctx.processes}
 
+    # By note, item and tag, not colour: Pass 2b finds a composite bucket
+    # whatever order its segments are spelled in, so the colour on the line
+    # need not be the bucket's own spelling.
     reached: dict = defaultdict(float)
     for e in ctx.all_events:
         if e["type"] == "Wastage":
-            reached[(str(e["ref"]), e["bucketKey"])] += e["outQty"] - e["inQty"]
+            key = (str(e["ref"]), e["bucketKey"][0], e["bucketKey"][1])
+            reached[key] += e["outQty"] - e["inQty"]
 
     taken: dict = defaultdict(lambda: [0.0, None])
     wrong_source: dict = defaultdict(list)
@@ -1430,10 +1437,7 @@ def _check_wastage_entries(ctx) -> list:
             lots_as_vendor[r["wastage_id"]] = r
         name = _k(r["item_name"])
         if _k(r["source_type"]) == "pool":
-            key = (
-                str(r["wastage_id"]),
-                (name, _k(r["product_tag"]), _k(r["color"])),
-            )
+            key = (str(r["wastage_id"]), name, _k(r["product_tag"]))
             taken[key][0] += float(r["base_qty"] or 0) or float(r["qty"] or 0)
             taken[key][1] = r
         elif name in outputs and name not in in_master:

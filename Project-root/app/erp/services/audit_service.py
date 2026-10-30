@@ -160,6 +160,12 @@ ENTRY_DATE_GAP_DAYS = 45
 # worker recycled mid-run never reaches its own finally).
 STALE_RUN_AFTER = timedelta(minutes=15)
 
+# One snapshot for the whole in-transaction part of a run. READ ONLY alone
+# stays READ COMMITTED, where each statement sees the latest commit: a lot
+# saved between the pool's replay and the read of the stored pool would look
+# like a stale pool, and a code bug. Must be the transaction's first statement.
+_SNAPSHOT_SQL = "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+
 # Distinct from ledger_audit_service (918_273_645) and backup_service
 # (918_273_646).
 _AUDIT_LOCK_KEY = 918_273_647
@@ -3589,8 +3595,10 @@ def _external_item_ledgers(stats: dict) -> list:
             {r["item_name"].strip() for r in audit_entries._stock_rows_of(cur)}
         )
 
-    def problems_in(name) -> list:
-        data = items_service.build_item_ledger(name, production, terms)["data"]
+    def problems_in(name, shared=True) -> list:
+        data = items_service.build_item_ledger(
+            name, production if shared else None, terms if shared else None
+        )["data"]
         top: dict = {}
         for entry in data["entries"]:  # newest first
             if entry.get("balance") is not None:
@@ -3613,13 +3621,12 @@ def _external_item_ledgers(stats: dict) -> list:
         return found
 
     out = []
-    sizes = 0
     for name in names:
         found = problems_in(name)
         if found:
-            # A save landing between two reads looks like a disagreement.
-            found = problems_in(name)
-        sizes += len(found)
+            # A save landing after the shared read looks like a disagreement,
+            # so the second look reads everything afresh.
+            found = problems_in(name, shared=False)
         for size, what, shown, current in found:
             out.append(
                 _finding(
@@ -4007,7 +4014,7 @@ def compute_findings(
             # A failed statement aborts the transaction; start a clean one so
             # the remaining checks can still read.
             cur.connection.rollback()
-            cur.execute("SET TRANSACTION READ ONLY")
+            cur.execute(_SNAPSHOT_SQL)
     if stats is not None:
         stats.update(ctx.stats)
     return findings, errors
@@ -4243,7 +4250,7 @@ def _execute_run(run_id: int) -> None:
             conn,
             cur,
         ):
-            cur.execute("SET TRANSACTION READ ONLY")
+            cur.execute(_SNAPSHOT_SQL)
             stats: dict = {}
             findings, errors = compute_findings(cur, stats=stats)
             conn.rollback()  # nothing was written; end the read-only transaction
