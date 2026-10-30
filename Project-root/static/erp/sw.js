@@ -500,7 +500,11 @@
 // click shows it large (App.PhotoViewer, core.js), and an inspector can add
 // or change the photo from the checklist. inspection.js, core.js and
 // styles.css are precached.
-const CACHE_NAME = 'erp-shell-v99';
+// v100: the Audit report checks every module, each a chip that filters the
+// findings to it; traces every ledger to where its entries must land; and
+// lists the calculations and logic it found missing. dashboard.js is
+// precached.
+const CACHE_NAME = 'erp-shell-v100';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

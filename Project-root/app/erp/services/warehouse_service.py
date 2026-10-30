@@ -2936,6 +2936,16 @@ def get_warehouse_pool_ledger(output_item_name, product_tag=None, color=None):
                 cur, include_opening=True, events=absorbed_events, apply_anchors=False
             )
 
+    return build_response(
+        True, pool_ledger_lines(want, anchor, events, absorbed_events)
+    )
+
+
+def pool_ledger_lines(want, anchor, events, absorbed_events) -> list:
+    """One bucket's ledger, newest first, from the pool's own replay: `events`
+    with its recounts in force, `absorbed_events` with them lifted (only read
+    when `anchor`, the bucket's newest recount, is given). Apart so the audit
+    can draw every bucket's ledger from one replay instead of two per bucket."""
     live = [e for e in events if e["bucketKey"] == want]
 
     # Settlement lines (the COMMON and Dispatch drains) are an allocation
@@ -3058,7 +3068,7 @@ def get_warehouse_pool_ledger(output_item_name, product_tag=None, color=None):
         records.append(emit(e, e["inQty"], e["outQty"], balance, False))
 
     records.reverse()  # newest first, as the modal renders it
-    return build_response(True, records)
+    return records
 
 
 @rpc_method("getPoolAvailableQty")

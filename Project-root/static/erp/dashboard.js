@@ -479,8 +479,13 @@ App.Dashboard = {
   // latest run, starts a new one, records the user's review decisions, and
   // hands the ticked findings to Claude Code as a Markdown brief.
   _audit: null,
+  // The module chip the list is filtered to ('' = every module).
+  _auditArea: '',
+  // The run the two panels were drawn for: filtering redraws the list, and
+  // must not close a panel the user has opened.
+  _auditPanelsRun: null,
   AUDIT_POLL_INTERVAL_MS: 2000,
-  AUDIT_POLL_MAX: 90,
+  AUDIT_POLL_MAX: 300,
 
   AUDIT_BANDS: {
     P1: { label: 'P1 · act now', cls: 'bg-danger' },
@@ -517,8 +522,9 @@ App.Dashboard = {
       const started = await Api.mutate('runAudit');
       const runId = started?.data?.runId;
       if (!runId) throw new Error(started?.message || 'The audit did not start.');
-      // A run takes seconds, not minutes, but it runs on a background thread
-      // like the backup does, so poll rather than wait inline.
+      // A run reads every ledger: under a minute here, longer on a busy
+      // server. It runs on a background thread like the backup does, so poll
+      // rather than wait inline.
       for (let i = 0; i < this.AUDIT_POLL_MAX; i++) {
         await new Promise(r => setTimeout(r, this.AUDIT_POLL_INTERVAL_MS));
         const st = await Api.callFresh('getAuditStatus', runId);
@@ -538,12 +544,15 @@ App.Dashboard = {
   renderAuditReport() {
     const meta = document.getElementById('auditRunMeta');
     const summaryEl = document.getElementById('auditSummary');
+    const coverageEl = document.getElementById('auditCoverage');
     const body = document.getElementById('auditBody');
     const run = this._audit;
     if (!body) return;
     if (!run) {
       if (meta) meta.textContent = 'No audit has been run yet.';
       if (summaryEl) summaryEl.innerHTML = '';
+      if (coverageEl) coverageEl.innerHTML = '';
+      this._renderAuditPanels(null);
       body.innerHTML = '<div class="text-muted small">Press <strong>Run audit now</strong> to check everything.</div>';
       return;
     }
@@ -564,10 +573,39 @@ App.Dashboard = {
           ? `<span class="badge bg-dark">${s.checkErrors.length} check(s) could not run</span>` : '');
     }
 
+    // What was checked, module by module (runs from before the coverage
+    // line existed have none, and show no strip). A module with nothing to
+    // report says so, so it reads as checked rather than forgotten.
+    const coverage = s.coverage || [];
+    const areaLabel = {};
+    coverage.forEach(c => { areaLabel[c.area] = c.label; });
+    if (!areaLabel[this._auditArea]) this._auditArea = '';
+    if (coverageEl) {
+      const chip = (area, text, cls) => {
+        const on = this._auditArea === area;
+        return `<button type="button" class="btn btn-sm py-0 px-2 ${on ? 'btn-dark' : `btn-outline-${cls}`}" ` +
+          `aria-pressed="${on}" onclick="App.Dashboard.filterAuditArea('${escapeHtml(area)}')">${text}</button>`;
+      };
+      coverageEl.innerHTML = coverage.length
+        ? '<span class="text-muted me-1">Checked:</span>' + chip('', 'All modules', 'secondary') +
+          coverage.map(c => {
+            const label = escapeHtml(c.label);
+            if (c.failed) return chip(c.area, `<i class="bi bi-exclamation-octagon me-1"></i>${label} · ${c.failed} could not run`, 'dark');
+            if (!c.findings) return chip(c.area, `<i class="bi bi-check2 me-1"></i>${label}`, 'success');
+            return chip(c.area, `${label} · ${c.findings}`, c.integrity ? 'danger' : 'secondary');
+          }).join('')
+        : '';
+    }
+
+    if (this._auditPanelsRun !== run.runId) this._renderAuditPanels(run);
+
     const showDismissed = document.getElementById('auditShowDismissed')?.checked;
-    const findings = (run.findings || []).filter(f => showDismissed || f.review !== 'dismissed');
+    const findings = (run.findings || []).filter(f =>
+      (showDismissed || f.review !== 'dismissed') && (!this._auditArea || f.area === this._auditArea));
     if (!findings.length) {
-      body.innerHTML = '<div class="text-muted small">Nothing to review.</div>';
+      body.innerHTML = this._auditArea
+        ? `<div class="text-muted small">Nothing to review in ${escapeHtml(areaLabel[this._auditArea])}.</div>`
+        : '<div class="text-muted small">Nothing to review.</div>';
       return;
     }
 
@@ -577,6 +615,9 @@ App.Dashboard = {
     const kindBadge = k => k === 'integrity' ? '<span class="badge bg-danger-subtle text-danger-emphasis">calculation</span>'
       : k === 'info' ? '<span class="badge bg-light text-muted border">expected</span>'
       : '<span class="badge bg-light text-dark border">entry</span>';
+    const missingLine = m => m
+      ? `<div class="small mt-1"><span class="fw-semibold text-warning-emphasis">Missing ${escapeHtml(m.type)}:</span> ${escapeHtml(m.text)}</div>`
+      : '';
 
     body.innerHTML = Object.keys(this.AUDIT_BANDS).map(band => {
       const rows = findings.filter(f => f.priority === band);
@@ -587,18 +628,72 @@ App.Dashboard = {
           <button type="button" class="btn btn-link btn-sm p-0 ms-2" onclick="App.Dashboard.tickAuditBand('${band}')">tick all</button></h6>
         <div class="list-group">${rows.map(f => `
           <label class="list-group-item d-flex gap-2 align-items-start">
-            <input class="form-check-input mt-1 audit-tick" type="checkbox" value="${escapeHtml(f.fingerprint)}" data-band="${band}">
+            <input class="form-check-input mt-1 p-0 flex-shrink-0 audit-tick" type="checkbox" value="${escapeHtml(f.fingerprint)}" data-band="${band}">
             <div class="flex-grow-1">
-              <div class="fw-semibold">${escapeHtml(f.title)} ${kindBadge(f.kind)}${reviewBadge(f.review)}</div>
+              <div class="fw-semibold">${escapeHtml(f.title)} ${kindBadge(f.kind)}${reviewBadge(f.review)}${
+                areaLabel[f.area] ? ` <span class="badge bg-light text-muted border fw-normal">${escapeHtml(areaLabel[f.area])}</span>` : ''}</div>
               <div class="small text-body-secondary">${escapeHtml(f.detail)}</div>
+              ${missingLine(f.missing)}
               ${(f.refs || []).length ? `<div class="small mt-1">${f.refs.slice(0, 8).map(r => `<span class="badge bg-light text-dark border me-1">${escapeHtml(r)}</span>`).join('')}</div>` : ''}
             </div>
           </label>`).join('')}</div>`;
     }).join('');
   },
 
+  // Runs from before these panels existed have neither list, and show none.
+  _renderAuditPanels(run) {
+    const ledgersEl = document.getElementById('auditLedgers');
+    const missingEl = document.getElementById('auditMissing');
+    this._auditPanelsRun = run ? run.runId : null;
+    const s = (run && run.summary) || {};
+    if (ledgersEl) {
+      const ledgers = s.ledgers || [];
+      const misplaced = ledgers.reduce((sum, l) => sum + l.misplaced, 0);
+      const wrong = ledgers.reduce((sum, l) => sum + l.wrongFigures, 0);
+      const statement = s.stockStatement;
+      const recipe = s.recipeCheck;
+      const notes = [
+        statement ? `Stock rebuilt from every bill, lot, issue, return and wastage line: ${statement.items.toLocaleString()} items, ` +
+          (statement.disagree ? `${statement.disagree} disagree with the Stock page.` : 'all agree with the Stock page.') : '',
+        recipe ? `Lots: ${recipe.judged.toLocaleString()} checked against their recipes, ${(recipe.byNeighbours || 0).toLocaleString()} older ones against the lots around them; ${recipe.notJudged.toLocaleString()} had too little to compare with.` : '',
+      ].filter(Boolean);
+      ledgersEl.innerHTML = ledgers.length ? `
+        <details open>
+          <summary class="small fw-semibold">Ledgers traced: ${ledgers.length} · ${misplaced} landing finding(s) · ${wrong} wrong figure(s)</summary>
+          <div class="table-responsive mt-1"><table class="table table-sm small align-middle mb-1">
+            <thead><tr><th>Ledger</th><th>Checked</th><th>Each entry must land on</th><th class="text-end">Landing findings</th><th class="text-end">Wrong figures</th></tr></thead>
+            <tbody>${ledgers.map(l => `
+              <tr role="button" onclick="App.Dashboard.filterAuditArea('${escapeHtml(l.area)}')">
+                <td class="fw-semibold">${escapeHtml(l.label)}</td>
+                <td>${escapeHtml(l.checked)}</td>
+                <td class="text-body-secondary">${escapeHtml(l.lands)}</td>
+                <td class="text-end">${l.misplaced ? `<span class="badge bg-warning text-dark">${l.misplaced}</span>` : '<i class="bi bi-check2 text-success"></i>'}</td>
+                <td class="text-end">${l.wrongFigures ? `<span class="badge bg-danger">${l.wrongFigures}</span>` : '<i class="bi bi-check2 text-success"></i>'}</td>
+              </tr>`).join('')}</tbody>
+          </table></div>
+          ${notes.map(n => `<div class="small text-body-secondary">${escapeHtml(n)}</div>`).join('')}
+        </details>` : '';
+    }
+    if (missingEl) {
+      const missing = s.missing || [];
+      const calculations = missing.filter(m => m.type === 'calculation').length;
+      missingEl.innerHTML = missing.length ? `
+        <details>
+          <summary class="small fw-semibold">Missing: ${calculations} calculation(s), ${missing.length - calculations} piece(s) of logic</summary>
+          <ul class="list-unstyled small mt-1 mb-0">${missing.map(m => `
+            <li class="mb-1"><span class="badge ${m.type === 'calculation' ? 'bg-warning text-dark' : 'bg-light text-dark border'}">${escapeHtml(m.type)}</span>
+              ${escapeHtml(m.text)} <span class="text-muted">(${m.findings} finding(s))</span></li>`).join('')}</ul>
+        </details>` : '';
+    }
+  },
+
   tickAuditBand(band) {
     document.querySelectorAll(`#auditBody .audit-tick[data-band="${band}"]`).forEach(el => { el.checked = true; });
+  },
+
+  filterAuditArea(area) {
+    this._auditArea = this._auditArea === area ? '' : (area || '');
+    this.renderAuditReport();
   },
 
   _tickedAuditFindings() {
