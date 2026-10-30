@@ -2100,6 +2100,75 @@ def test_a_completed_lot_with_no_completion_time_is_a_code_bug(erp_admin_client)
     assert f["kind"] == "integrity"
 
 
+# ── A Labor bill's goods in the pool ───────────────────────────────────────
+
+
+def _labor_bill(client, add):
+    payload, _proc_id = _process(client)
+    number = _unique("LAB")
+    _ok(
+        _rpc(
+            client,
+            "saveBill",
+            [
+                {
+                    "billType": "LABOR",
+                    "vendor": _unique("Heato"),
+                    "billNumber": number,
+                    "billDate": _today(),
+                    "addToPool": "1" if add else "0",
+                    "items": [
+                        {"processName": payload["processName"], "qty": 4, "price": 5}
+                    ],
+                }
+            ],
+            mutation=True,
+        )
+    )
+    return payload, number
+
+
+def test_a_labor_bill_that_added_to_the_pool_needs_no_lot(erp_admin_client):
+    _payload, number = _labor_bill(erp_admin_client, True)
+    assert _mentioning("labor_bill_without_lot", number) == []
+
+
+def test_a_ledger_only_labor_bill_with_no_lot_says_both_ways_out(erp_admin_client):
+    _payload, number = _labor_bill(erp_admin_client, False)
+    [f] = _mentioning("labor_bill_without_lot", number)
+    assert "Log the lot" in f["detail"]
+    assert "choose Add to Warehouse Pool" in f["detail"]
+
+
+def test_a_bill_out_of_step_with_its_pool_entries_is_a_code_bug(erp_admin_client):
+    payload, number = _labor_bill(erp_admin_client, True)
+    assert _mentioning("bill_pool_entry_mismatch", number) == []
+
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "UPDATE erp.warehouse_pool_opening SET qty = 3 WHERE output_item_name = %s",
+            (payload["outputItemName"],),
+        )
+
+    [f] = _mentioning("bill_pool_entry_mismatch", number)
+    assert f["kind"] == "integrity"
+    assert "4 should be in the Warehouse Pool, 3 is" in f["title"]
+    assert f["qty"] == 1
+
+
+def test_goods_left_behind_by_a_deleted_bill_are_a_code_bug(erp_admin_client):
+    _payload, number = _labor_bill(erp_admin_client, True)
+
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "UPDATE erp.bill_headers SET deleted_at = NOW() WHERE bill_number = %s",
+            (number,),
+        )
+
+    [f] = _mentioning("bill_pool_entry_mismatch", number)
+    assert "(deleted): 0 should be in the Warehouse Pool, 4 is" in f["title"]
+
+
 # ── The audit's own reading ────────────────────────────────────────────────
 
 

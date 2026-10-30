@@ -205,7 +205,10 @@
 // none). mobile.js and mobile_styles.css carry it.
 // v92: editing a lot keeps the rate it was saved with, so the rate hint shows
 // that rate, and says so when the rate card differs. mobile.js carries it.
-const CACHE_NAME = 'erp-mobile-shell-v92';
+// v93: a bill line that added to the Warehouse Pool says so, and a pool entry
+// that came from a bill can only be changed on the bill. mobile.js and api.js
+// carry it.
+const CACHE_NAME = 'erp-mobile-shell-v93';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

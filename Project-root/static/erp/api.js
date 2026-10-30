@@ -463,7 +463,9 @@ function formatItemsPreview(items) {
           // Only Labor Job Bill items carry this field -- undefined for
           // Goods Bill/PO/Return items, so this is a no-op for them.
           (i.color ? ` <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">${escapeHtml(i.color)}</span>` : '') +
-          (i.affectsStock === false ? ' <span class="badge bg-warning text-dark">Ledger only</span>' : '')
+          (i.addsToPool
+            ? ' <span class="badge bg-success">Added to pool</span>'
+            : (i.affectsStock === false ? ' <span class="badge bg-warning text-dark">Ledger only</span>' : ''))
         : escapeHtml(i)
     )
     .join('<br>');

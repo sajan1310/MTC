@@ -507,7 +507,10 @@
 // v101: editing a lot or a dispatch keeps the rate it was saved with, so the
 // Payable and Logistics Cost hints show that rate, and say so when the rate
 // card differs. core.js, production.js and dispatch.js are precached.
-const CACHE_NAME = 'erp-shell-v101';
+// v102: a Labor Job bill asks whether to add its goods to the Warehouse Pool
+// or keep it Ledger only, and the ledger shows which. bill.js, api.js and
+// stock.js are precached.
+const CACHE_NAME = 'erp-shell-v102';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

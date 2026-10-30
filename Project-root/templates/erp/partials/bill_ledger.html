@@ -153,6 +153,16 @@
                 <label class="btn btn-outline-dark" for="billTypeLabor">Labor Job Bill</label>
               </div>
             </div>
+            <div class="col-12 labor-only-field">
+              <label class="form-label fw-bold d-block">Warehouse Pool *</label>
+              <div class="btn-group" role="group" aria-label="Warehouse Pool">
+                <input type="radio" class="btn-check" name="addToPool" id="billPoolAdd" value="1">
+                <label class="btn btn-outline-dark" for="billPoolAdd">Add to Warehouse Pool</label>
+                <input type="radio" class="btn-check" name="addToPool" id="billPoolLedger" value="0">
+                <label class="btn btn-outline-dark" for="billPoolLedger">Ledger only</label>
+              </div>
+              <div class="form-text">Add to Warehouse Pool adds these quantities to what is already in stock, for goods that came finished and that no lot will record. Keep it Ledger only if a Production lot records them, or the bill is only for the work.</div>
+            </div>
           </div>
           <div class="row g-3 mb-4">
             <input type="hidden" name="contact" id="billContact">

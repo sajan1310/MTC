@@ -1958,7 +1958,7 @@ App.Stock = {
     <td class="text-end fw-bold">${App.Production.formatQty(r.qty)}</td>
     <td><small>${escapeHtml(r.remarks || '-')}</small></td>
     <td class="text-center">
-      <button type="button" class="btn btn-sm btn-outline-danger" onclick="App.Stock.deleteWarehouseOpeningEntry(${r.rowIdx})"><i class="bi bi-trash"></i></button>
+      ${r.fromBill ? '<small class="text-muted">On the bill</small>' : `<button type="button" class="btn btn-sm btn-outline-danger" onclick="App.Stock.deleteWarehouseOpeningEntry(${r.rowIdx})"><i class="bi bi-trash"></i></button>`}
     </td>
   </tr>`).join('');
   },
@@ -1986,6 +1986,7 @@ App.Stock = {
   // presentation choice and stays here.
   POOL_LEDGER_BADGES: {
     'Opening Stock': 'bg-info',
+    Bill: 'bg-success',
     // A recount OPENS the ledger -- it states the shelf at a moment and
     // everything before it is already inside that figure (migration 045).
     // Read as a stocktake line, not as an adjustment inside the running
@@ -2110,8 +2111,8 @@ App.Stock = {
   },
 
   // Only a manual line carries an entryId -- opening stock, a correction or
-  // a recount. A lot, a dispatch or a write-off is deleted where it was
-  // entered, so its row has nothing here.
+  // a recount. A lot, a dispatch, a write-off or a bill is deleted where it
+  // was entered, so its row has nothing here.
   poolLedgerDeleteButton(e) {
     if (e.entryId === null || e.entryId === undefined) return '';
     return `<button type="button" class="btn btn-sm btn-outline-danger" title="Delete this manual entry"

@@ -449,7 +449,7 @@ def _lot_freeze_at(row, lot_at):
 def _get_warehouse_pool_opening_rows(cur, exclude_ids=frozenset()) -> list:
     cur.execute(
         "SELECT id, output_item_name, process_id, product_tag, color, qty, "
-        "opening_date, opening_at, counted_qty, created_at, remarks "
+        "opening_date, opening_at, counted_qty, created_at, remarks, bill_header_id "
         "FROM erp.warehouse_pool_opening "
         # Entry order, not date order. Where a date is wrong -- migration 045
         # documents 17 rows whose day and month were transposed by an import
@@ -486,6 +486,7 @@ def _get_warehouse_pool_opening_rows(cur, exclude_ids=frozenset()) -> list:
                 "at": _naive_local(row["opening_at"])
                 or _effective_at(row["opening_date"], row["created_at"]),
                 "id": row["id"],
+                "fromBill": row["bill_header_id"] is not None,
             }
         )
     return rows
@@ -494,13 +495,16 @@ def _get_warehouse_pool_opening_rows(cur, exclude_ids=frozenset()) -> list:
 _CORRECTION_PREFIX = "Correction: "
 
 
-def _opening_entry_type(counted_qty, remarks) -> str:
+def _opening_entry_type(counted_qty, remarks, from_bill=False) -> str:
     """What an erp.warehouse_pool_opening row is, as the ledger names it.
 
     A row carrying counted_qty is a recount whichever path reads it.
     adjustWarehousePoolManually marks the rest of what it writes with a
-    "Correction: " remark; anything else is opening stock.
+    "Correction: " remark; a Labor bill's goods are a Bill; anything else is
+    opening stock.
     """
+    if from_bill:
+        return "Bill"
     if counted_qty is not None:
         return "Recount"
     if str(remarks or "").startswith(_CORRECTION_PREFIX):
@@ -947,12 +951,14 @@ def _build_warehouse_pool_buckets(
                 # anchor-free replay, lands here and moves the balance by its
                 # delta -- but it is still a count, and naming it a plain
                 # correction would misreport what the operator did.
-                _opening_entry_type(r["countedQty"], r["remarks"]),
-                "",
-                reason,
+                _opening_entry_type(r["countedQty"], r["remarks"], r["fromBill"]),
+                reason if r["fromBill"] else "",
+                "" if r["fromBill"] else reason,
                 r["qty"],
                 at=r["at"],
-                source_id=r["id"],
+                # No entry id on a bill's line: it is changed on the bill,
+                # like a lot's on the lot. See _opening_entry_effect.
+                source_id=None if r["fromBill"] else r["id"],
             )
 
     if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
@@ -2032,6 +2038,17 @@ def _get_real_history_colors_by_process(cur) -> dict:
         if bucket["producedQty"] == 0 and bucket["consumedQty"] == 0:
             continue
         result.setdefault(process_id, set()).add(color)
+
+    # A Labor bill's goods are a Pass 0 row but no manual entry: excluding the
+    # colour would purge them from under the bill.
+    cur.execute(
+        "SELECT process_id, color FROM erp.warehouse_pool_opening "
+        "WHERE bill_header_id IS NOT NULL AND btrim(COALESCE(color, '')) <> ''"
+    )
+    for row in cur.fetchall():
+        result.setdefault(row["process_id"].strip().lower(), set()).add(
+            row["color"].strip().lower()
+        )
     return result
 
 
@@ -2228,7 +2245,8 @@ def get_warehouse_pool_opening_data():
         }
         cur.execute(
             """
-            SELECT id, output_item_name, process_id, product_tag, color, qty, opening_date, remarks
+            SELECT id, output_item_name, process_id, product_tag, color, qty, opening_date, remarks,
+                   bill_header_id
             FROM erp.warehouse_pool_opening
             """
         )
@@ -2252,11 +2270,146 @@ def get_warehouse_pool_opening_data():
                 "date": date_utils.to_display_string(row["opening_date"]) or "",
                 "dateRaw": date_utils.to_iso_string(row["opening_date"]) or "",
                 "remarks": row["remarks"] or "",
+                "fromBill": row["bill_header_id"] is not None,
             }
         )
 
     records.sort(key=lambda r: (r["dateRaw"] or "", r["rowIdx"]), reverse=True)
     return build_response(True, records)
+
+
+def _known_pool_colors(cur, process_id: str) -> list:
+    """The colours a process keeps its stock under: the list the opening
+    stock form's own Color dropdown shows. Empty for a colourless process."""
+    components = process_service._fetch_process_components(cur, process_id)
+    pool_rows_for_axes = process_service._get_all_warehouse_pool_rows_for_color_axes(
+        cur
+    )
+    color_links = process_service._get_all_process_color_links(cur)
+    overrides = process_service._get_all_process_color_overrides(cur).get(
+        process_id.lower()
+    )
+    logged_colors = list(
+        process_service._get_production_logged_colors_by_process(cur, process_id).get(
+            process_id.lower(), []
+        )
+    )
+    return process_service._compute_known_colors_for_process(
+        process_id,
+        components,
+        pool_rows_for_axes,
+        color_links,
+        logged_colors,
+        overrides,
+    )["colors"]
+
+
+def bill_line_pool_color(cur, process: dict, color: str, known_by_process: dict) -> str:
+    """The colour a Labor bill line's goods go into the pool under, spelled
+    as the process spells it. The line's colour is typed on the bill, and in
+    the pool a typing slip is not a label: it opens a bucket of its own that
+    no lot draws on. `known_by_process` is the caller's, so a bill reads each
+    process's colours once."""
+    process_id = process["processId"]
+    known = known_by_process.get(process_id)
+    if known is None:
+        known = known_by_process[process_id] = _known_pool_colors(cur, process_id)
+    if not known:
+        return ""
+    if not color:
+        raise ValueError(
+            f'"{process["processName"]}" keeps its stock by colour. '
+            "Choose a Color on each line to add it to the Warehouse Pool."
+        )
+    for name in known:
+        if name.lower() == color.lower():
+            return name
+    raise ValueError(
+        f'"{color}" is not a colour of "{process["processName"]}", so it can\'t go '
+        "into the Warehouse Pool. Pick one of its colours, or add it to the process first."
+    )
+
+
+def set_bill_pool_entries(
+    cur, header_id: int, entries: list, reference: str, bill_date, booked_at
+) -> None:
+    """Makes what a Labor bill holds in the pool match `entries`, each
+    {process, color, qty}. Rewritten whole, as the bill's own lines are, so an
+    edit can never add its goods a second time.
+
+    The moment comes from the bill, never from this save. Stamped "now", an
+    edit would land after a recount that already includes these goods and
+    count them twice. It is the rule a lot follows, and for the same reason.
+    """
+    cur.execute(
+        "DELETE FROM erp.warehouse_pool_opening WHERE bill_header_id = %s",
+        (header_id,),
+    )
+    had_entries = cur.rowcount > 0
+
+    merged: dict = {}
+    for entry in entries:
+        process = entry["process"]
+        key = (process["processId"], entry["color"].lower())
+        merged.setdefault(key, {**entry, "qty": 0.0})["qty"] += entry["qty"]
+    merged = {key: e for key, e in merged.items() if e["qty"]}
+    if not merged and not had_entries:
+        return
+
+    user_id = get_current_user_id()
+    entry_at = _effective_at(bill_date, booked_at)
+    for entry in merged.values():
+        process = entry["process"]
+        cur.execute(
+            """
+            INSERT INTO erp.warehouse_pool_opening
+                (output_item_name, process_id, process_master_id, product_tag, color, qty,
+                 opening_date, opening_at, remarks, created_by, bill_header_id)
+            VALUES (%s, %s, %s, '', %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                process["outputItemName"],
+                process["processId"],
+                _find_process_master_id(cur, process["processId"]),
+                entry["color"],
+                entry["qty"],
+                bill_date,
+                entry_at,
+                reference,
+                user_id,
+                header_id,
+            ),
+        )
+    _recalculate_warehouse_pool(cur)
+
+
+def drop_bill_pool_entries(cur, header_id: int) -> str | None:
+    """Takes a deleted bill's goods back out of the pool. Returns the warning
+    deleting a lot gives when they have already been used, or None."""
+    cur.execute(
+        "SELECT output_item_name, color, SUM(qty) AS qty "
+        "FROM erp.warehouse_pool_opening WHERE bill_header_id = %s "
+        "GROUP BY output_item_name, color",
+        (header_id,),
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return None
+    by_output: dict = {}
+    for row in rows:
+        by_output.setdefault(row["output_item_name"], []).append(
+            {"color": row["color"] or "", "qty": float(row["qty"])}
+        )
+    warnings = [
+        _check_pool_credit_removal_warning(cur, name, credits, 0)
+        for name, credits in by_output.items()
+    ]
+    cur.execute(
+        "DELETE FROM erp.warehouse_pool_opening WHERE bill_header_id = %s",
+        (header_id,),
+    )
+    _recalculate_warehouse_pool(cur)
+    return " ".join(w for w in warnings if w) or None
 
 
 @rpc_method("saveWarehousePoolOpening", mutation=True)
@@ -2308,28 +2461,7 @@ def save_warehouse_pool_opening(conn, cur, form_data):
     # own Color dropdown (getProcessColorGroups) is populated from, so
     # "the dropdown showed choices" and "a color is required" always agree.
     if not color:
-        components = process_service._fetch_process_components(cur, process_id)
-        pool_rows_for_axes = (
-            process_service._get_all_warehouse_pool_rows_for_color_axes(cur)
-        )
-        color_links = process_service._get_all_process_color_links(cur)
-        overrides = process_service._get_all_process_color_overrides(cur).get(
-            process_id.lower()
-        )
-        logged_colors = list(
-            process_service._get_production_logged_colors_by_process(
-                cur, process_id
-            ).get(process_id.lower(), [])
-        )
-        known = process_service._compute_known_colors_for_process(
-            process_id,
-            components,
-            pool_rows_for_axes,
-            color_links,
-            logged_colors,
-            overrides,
-        )
-        if known["colors"]:
+        if _known_pool_colors(cur, process_id):
             raise ValueError(
                 f'Process "{process["processName"]}" tracks stock per-color -- choose a Color for this opening balance.'
             )
@@ -2417,12 +2549,17 @@ def _opening_entry_effect(cur, entry_id: int, predict_after: bool = True) -> dic
     """
     cur.execute(
         "SELECT id, output_item_name, product_tag, color, qty, counted_qty, "
-        "opening_date, remarks FROM erp.warehouse_pool_opening WHERE id = %s",
+        "opening_date, remarks, bill_header_id FROM erp.warehouse_pool_opening "
+        "WHERE id = %s",
         (entry_id,),
     )
     row = cur.fetchone()
     if row is None:
         raise ValueError("That entry no longer exists. Refresh and try again.")
+    if row["bill_header_id"] is not None:
+        raise ValueError(
+            f"This stock came from {row['remarks']}. Edit or delete the bill instead."
+        )
 
     keys: dict = {}
     before = _build_warehouse_pool_buckets(cur, opening_keys=keys)

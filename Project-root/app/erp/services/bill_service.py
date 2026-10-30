@@ -28,6 +28,7 @@ from . import items_service
 from . import process_service
 from . import units_service
 from . import vendors_service
+from . import warehouse_service
 from .current_user import get_current_user_id
 from .. import date_utils
 from ..envelope import build_response
@@ -424,7 +425,7 @@ def _load_bill_list(cur, only_header_id=None) -> list:
                h.issuing_party, h.manufacturing_vendor,
                l.po_number, l.item_name, l.size, l.narration, l.unit, l.qty, l.price,
                l.gst_rate_pct, l.base_qty, l.base_rate, l.affects_stock,
-               l.bill_type, l.process_name, l.color
+               l.bill_type, l.process_name, l.color, l.adds_to_pool
         FROM erp.bill_headers h
         JOIN erp.bill_lines l ON l.header_id = h.id
         WHERE h.deleted_at IS NULL
@@ -463,6 +464,9 @@ def _load_bill_list(cur, only_header_id=None) -> list:
                 # header too so the ledger can badge a row without inspecting
                 # every line. Set from the first line below.
                 "billType": "GOODS",
+                # Whether this Labor Job bill put its goods in the Warehouse
+                # Pool. Set from its lines below, for the form to reopen on.
+                "addToPool": False,
                 "items": [],
                 "totalQty": 0.0,
                 "totalAmount": 0.0,
@@ -487,6 +491,8 @@ def _load_bill_list(cur, only_header_id=None) -> list:
         )
         if line_bill_type == "LABOR":
             bill["billType"] = "LABOR"
+        if row["adds_to_pool"]:
+            bill["addToPool"] = True
 
         unit = row["unit"] or "Pcs"
         bill["items"].append(
@@ -513,6 +519,7 @@ def _load_bill_list(cur, only_header_id=None) -> list:
                     units_map,
                 ),
                 "affectsStock": bool(row["affects_stock"]),
+                "addsToPool": bool(row["adds_to_pool"]),
                 "billType": line_bill_type,
                 # Labor Job lines only -- which Process this line's job-work
                 # was for, and the color processed (both blank on GOODS rows).
@@ -671,6 +678,16 @@ def save_bill(conn, cur, form_data):
     # count. An edit rewrites every line below, and existing stock must not
     # move because somebody corrected a rate, so such a bill keeps counting
     # the way it always has.
+    #
+    # Whether the goods reach the pool without a lot is for whoever saves the
+    # bill to say. A maker bills a finished frame, so no lot of ours will
+    # ever record it; a job worker's goods come back through a lot, and adding
+    # them here as well would count them twice. Absent means Ledger only.
+    add_to_pool = bill_type == "LABOR" and str(
+        form_data.get("addToPool") or ""
+    ).strip().lower() in ("1", "true", "yes")
+    pool_entries: list = []
+    known_pool_colors: dict = {}
     labor_counts_toward_stock = False
     if bill_type == "LABOR" and is_edit:
         cur.execute(
@@ -774,6 +791,10 @@ def save_bill(conn, cur, form_data):
             line_process_name = process["processName"]
             name = process["outputItemName"]
             line_color = str(item.get("color") or "").strip()
+            if add_to_pool:
+                pool_color = warehouse_service.bill_line_pool_color(
+                    cur, process, line_color, known_pool_colors
+                )
 
         if not name:
             continue
@@ -821,15 +842,20 @@ def save_bill(conn, cur, form_data):
 
         item_key = f"{name.lower()}|{size.lower()}"
         affects_stock = item_key not in exclude_set and (
-            bill_type != "LABOR" or labor_counts_toward_stock
+            bill_type != "LABOR" or (labor_counts_toward_stock and not add_to_pool)
         )
+        if add_to_pool:
+            pool_entries.append(
+                {"process": process, "color": pool_color, "qty": base_qty}
+            )
 
         item_id = _find_item_id(cur, name, size)
         cur.execute(
             """
             INSERT INTO erp.bill_lines (header_id, po_number, item_name, size, narration, qty, unit, price,
-                gst_rate_pct, base_qty, base_rate, affects_stock, item_id, bill_type, process_name, color)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                gst_rate_pct, base_qty, base_rate, affects_stock, item_id, bill_type, process_name, color,
+                adds_to_pool)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 header_id,
@@ -848,6 +874,7 @@ def save_bill(conn, cur, form_data):
                 bill_type,
                 line_process_name,
                 line_color,
+                add_to_pool,
             ),
         )
 
@@ -861,6 +888,20 @@ def save_bill(conn, cur, form_data):
                 "baseRate": base_rate,
                 "poNumber": item_po_number,
             }
+        )
+
+    # On any edit too: a bill turned back to Goods takes its goods with it.
+    if bill_type == "LABOR" or is_edit:
+        cur.execute(
+            "SELECT created_at FROM erp.bill_headers WHERE id = %s", (header_id,)
+        )
+        warehouse_service.set_bill_pool_entries(
+            cur,
+            header_id,
+            pool_entries,
+            f"Bill {bill_number} ({vendor})",
+            bill_date,
+            cur.fetchone()["created_at"],
         )
 
     # Auto-extract vendor/items/rates -- same as PO's autoExtractFromPoOrBill.
@@ -902,6 +943,9 @@ def save_bill(conn, cur, form_data):
         if is_edit
         else f"Bill #{bill_number} ({vendor}) recorded successfully."
     )
+    if pool_entries:
+        pooled = units_service.format_qty(sum(e["qty"] for e in pool_entries))
+        message = f"{message} {pooled} added to the Warehouse Pool."
 
     overage_warnings = _compute_bill_overage_warnings(cur, extraction_items)
     if overage_warnings:
@@ -939,9 +983,11 @@ def delete_bill(conn, cur, vendor, bill_number):
         "UPDATE erp.bill_headers SET deleted_at = NOW(), updated_by = %s WHERE id = %s",
         (get_current_user_id(), row["id"]),
     )
-    return build_response(
-        True, None, f"Bill #{valid_bill_number} deleted successfully."
-    )
+    pool_warning = warehouse_service.drop_bill_pool_entries(cur, row["id"])
+    message = f"Bill #{valid_bill_number} deleted successfully."
+    if pool_warning:
+        message = f"{message} {pool_warning}"
+    return build_response(True, None, message)
 
 
 @rpc_method("deleteBillsBulk", mutation=True)
@@ -960,6 +1006,7 @@ def delete_bills_bulk(conn, cur, bills):
 
     user_id = get_current_user_id()
     deleted_keys = []
+    pool_warnings = []
     for vendor, bill_number in pairs:
         cur.execute(
             "SELECT id FROM erp.bill_headers WHERE lower(vendor) = lower(%s) AND lower(bill_number) = lower(%s) AND deleted_at IS NULL",
@@ -972,9 +1019,14 @@ def delete_bills_bulk(conn, cur, bills):
             "UPDATE erp.bill_headers SET deleted_at = NOW(), updated_by = %s WHERE id = %s",
             (user_id, row["id"]),
         )
+        pool_warning = warehouse_service.drop_bill_pool_entries(cur, row["id"])
+        if pool_warning:
+            pool_warnings.append(pool_warning)
         deleted_keys.append({"vendor": vendor, "billNumber": bill_number})
 
     message = (
         f"Deleted {len(deleted_keys)} bill(s) ({len(deleted_keys)} row(s) removed)."
     )
+    if pool_warnings:
+        message = f"{message} " + " ".join(pool_warnings)
     return build_response(True, {"deletedKeys": deleted_keys}, message)
