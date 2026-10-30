@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import uuid
 
+import pytest
+
 import database
 
 
@@ -456,6 +458,18 @@ def test_unit_rename_cascades_into_items_base_and_purchase_unit(erp_client):
     match = next(i for i in listed if i["name"] == item_name)
     assert match["baseUnit"] == new_unit
     assert match["purchaseUnit"] == new_unit
+
+
+def _soft_delete_item(name: str, size: str = "") -> None:
+    """An item gone from Items Master with entries still naming it. deleteItem
+    refuses that now; rows from before it did are what the drift report and
+    its repair exist for."""
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "UPDATE erp.items SET deleted_at = NOW() WHERE lower(item_name) = lower(%s) "
+            "AND lower(size) = lower(%s) AND deleted_at IS NULL",
+            (name, size),
+        )
 
 
 def _soft_delete_stock_row(name: str, size: str) -> None:
@@ -921,12 +935,9 @@ def test_get_item_identity_drift_report_finds_stale_bill_reference(erp_client):
         ],
         mutation=True,
     )
-    # Auto-extraction creates the item in Items Master on save -- delete it
-    # (not blocked: delete_item's in-use guard only covers BOM/Process
-    # Components, not Bill/PO/Return/Wastage/Issue/Production) to
-    # manufacture a genuine stale reference.
-    delete_resp = _rpc(erp_client, "deleteItem", [item, ""], mutation=True)
-    assert delete_resp.get_json()["success"] is True
+    # Auto-extraction creates the item in Items Master on save -- remove it
+    # to manufacture a genuine stale reference.
+    _soft_delete_item(item)
 
     drift = _rpc(erp_client, "getItemIdentityDriftReport").get_json()["data"]
     match = next(d for d in drift if d["itemName"] == item)
@@ -946,7 +957,7 @@ def test_get_item_identity_drift_report_finds_stale_po_reference(erp_client):
     ).get_json()
     po_number = create["data"]["poNumber"]
 
-    _rpc(erp_client, "deleteItem", [item, ""], mutation=True)
+    _soft_delete_item(item)
 
     drift = _rpc(erp_client, "getItemIdentityDriftReport").get_json()["data"]
     match = next(d for d in drift if d["itemName"] == item)
@@ -1084,7 +1095,7 @@ def test_fix_item_identity_drift_reference_repoints_bill_ledger_row(erp_client):
         ],
         mutation=True,
     )
-    _rpc(erp_client, "deleteItem", [stale_item, ""], mutation=True)
+    _soft_delete_item(stale_item)
     _rpc(erp_client, "saveItem", [{"itemName": target_item}], mutation=True)
 
     fix = _rpc(
@@ -1128,3 +1139,343 @@ def test_fix_item_identity_drift_reference_requires_stale_name(erp_client):
     body = resp.get_json()
     assert body["success"] is False
     assert "required" in body["message"]
+
+
+# ── An item with entries stays, and keeps its Base Unit ────────────────────
+
+
+def _ok(resp):
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+    return body
+
+
+def _with_bill(client, item):
+    _ok(
+        _rpc(
+            client,
+            "saveBill",
+            [
+                {
+                    "vendor": _unique_name("Vendor"),
+                    "billNumber": _unique_name("BILL"),
+                    "billDate": "01/01/2026",
+                    "items": [{"name": item, "qty": 9, "price": 5, "unit": "Pcs"}],
+                }
+            ],
+            mutation=True,
+        )
+    )
+
+
+def _with_po(client, item):
+    _ok(
+        _rpc(
+            client,
+            "savePO",
+            [
+                {
+                    "vendor": _unique_name("Vendor"),
+                    "items": [{"name": item, "qty": 1, "price": 10, "unit": "Pcs"}],
+                }
+            ],
+            mutation=True,
+        )
+    )
+
+
+def _with_return(client, item):
+    _ok(
+        _rpc(
+            client,
+            "saveReturn",
+            [
+                {
+                    "vendor": _unique_name("Vendor"),
+                    "returnDate": "01/01/2026",
+                    "items": [{"name": item, "qty": 1, "price": 5}],
+                }
+            ],
+            mutation=True,
+        )
+    )
+
+
+def _with_issue(client, item):
+    _ok(
+        _rpc(
+            client,
+            "saveIssueStock",
+            [
+                {
+                    "issuedTo": "Line 1",
+                    "date": "01/01/2026",
+                    "items": [{"name": item, "qty": 1, "unit": "Pcs"}],
+                }
+            ],
+            mutation=True,
+        )
+    )
+
+
+def _with_wastage(client, item):
+    _ok(
+        _rpc(
+            client,
+            "saveWastage",
+            [
+                {
+                    "date": "01/01/2026",
+                    "items": [
+                        {"name": item, "qty": 1, "unit": "Pcs", "reason": "Bent"}
+                    ],
+                }
+            ],
+            mutation=True,
+        )
+    )
+
+
+def _with_lot(client, item):
+    process = _ok(
+        _rpc(
+            client,
+            "saveProcess",
+            [
+                {
+                    "processName": _unique_name("Process"),
+                    "lotPrefix": uuid.uuid4().hex[:6].upper(),
+                    "outputItemName": _unique_name("Output"),
+                    "sequence": 1,
+                    "isFinalStage": False,
+                    "active": True,
+                    "remarks": "",
+                    "processType": "",
+                    "primaryColorAxis": "",
+                    "components": [],
+                    "colorLinks": [],
+                }
+            ],
+            mutation=True,
+        )
+    )
+    _ok(
+        _rpc(
+            client,
+            "saveProduction",
+            [
+                {
+                    "processId": process["data"]["processId"],
+                    "assignedTo": "Worker A",
+                    "qty": 1,
+                    "componentsConsumed": [
+                        {"itemName": item, "qty": 1, "sourceType": "ITEM"}
+                    ],
+                }
+            ],
+            mutation=True,
+        )
+    )
+
+
+def _with_count(client, item):
+    _ok(_rpc(client, "adjustStockManually", [item, "", 5, "count"], mutation=True))
+
+
+ENTRIES = [
+    _with_bill,
+    _with_po,
+    _with_return,
+    _with_issue,
+    _with_wastage,
+    _with_lot,
+    _with_count,
+]
+
+
+def _plain_item(client, **form):
+    name = _unique_name("EntryItem")
+    _ok(
+        _rpc(
+            client,
+            "saveItem",
+            [{"itemName": name, "itemBaseUnit": "Pcs", **form}],
+            mutation=True,
+        )
+    )
+    return name
+
+
+def _edit_base_unit(client, item, unit, **form):
+    return _rpc(
+        client,
+        "saveItem",
+        [
+            {
+                "itemName": item,
+                "originalName": item,
+                "itemBaseUnit": unit,
+                **form,
+            }
+        ],
+        mutation=True,
+    ).get_json()
+
+
+@pytest.mark.parametrize("entry", ENTRIES, ids=lambda fn: fn.__name__)
+def test_an_item_with_an_entry_cannot_be_deleted(erp_client, entry):
+    item = _plain_item(erp_client)
+    entry(erp_client, item)
+
+    refused = _rpc(erp_client, "deleteItem", [item, ""], mutation=True).get_json()
+
+    assert refused["success"] is False
+    assert "its own stock and entries" in refused["message"]
+    listed = _rpc(erp_client, "getItemsData").get_json()["data"]
+    assert item in [i["name"] for i in listed]
+    stock = _rpc(erp_client, "getStockData").get_json()["data"]
+    assert item in [s["name"] for s in stock]
+
+
+def test_an_item_with_opening_stock_cannot_be_deleted(erp_client):
+    item = _plain_item(erp_client, itemInitialStock=5)
+
+    refused = _rpc(erp_client, "deleteItem", [item, ""], mutation=True).get_json()
+
+    assert refused["success"] is False
+
+
+def test_bulk_delete_skips_an_item_with_entries_and_deletes_the_rest(erp_client):
+    used = _plain_item(erp_client)
+    _with_bill(erp_client, used)
+    unused = _plain_item(erp_client)
+
+    body = _ok(
+        _rpc(
+            erp_client,
+            "deleteItemsBulk",
+            [[{"name": used, "size": ""}, {"name": unused, "size": ""}]],
+            mutation=True,
+        )
+    )
+
+    assert [i["name"] for i in body["data"]["deletedItems"]] == [unused]
+    assert [i["name"] for i in body["data"]["skipped"]] == [used]
+    assert "its own stock and entries" in body["message"]
+
+
+def test_an_entry_on_a_deleted_document_no_longer_holds_the_item(erp_client):
+    item = _plain_item(erp_client)
+    _with_bill(erp_client, item)
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "UPDATE erp.bill_headers SET deleted_at = NOW() WHERE id IN "
+            "(SELECT header_id FROM erp.bill_lines WHERE item_name = %s)",
+            (item,),
+        )
+
+    _ok(_rpc(erp_client, "deleteItem", [item, ""], mutation=True))
+
+
+def test_a_lot_drawing_from_the_pool_does_not_hold_an_item_of_that_name(erp_client):
+    item = _plain_item(erp_client)
+    process = _ok(
+        _rpc(
+            erp_client,
+            "saveProcess",
+            [
+                {
+                    "processName": _unique_name("Process"),
+                    "lotPrefix": uuid.uuid4().hex[:6].upper(),
+                    "outputItemName": _unique_name("Output"),
+                    "sequence": 1,
+                    "isFinalStage": False,
+                    "active": True,
+                    "remarks": "",
+                    "processType": "",
+                    "primaryColorAxis": "",
+                    "components": [],
+                    "colorLinks": [],
+                }
+            ],
+            mutation=True,
+        )
+    )
+    _ok(
+        _rpc(
+            erp_client,
+            "saveProduction",
+            [
+                {
+                    "processId": process["data"]["processId"],
+                    "assignedTo": "Worker A",
+                    "qty": 1,
+                    "componentsConsumed": [
+                        {"itemName": item, "qty": 1, "sourceType": "POOL"}
+                    ],
+                }
+            ],
+            mutation=True,
+        )
+    )
+
+    _ok(_rpc(erp_client, "deleteItem", [item, ""], mutation=True))
+
+
+@pytest.mark.parametrize("entry", ENTRIES, ids=lambda fn: fn.__name__)
+def test_an_item_with_an_entry_keeps_its_base_unit(erp_client, entry):
+    item = _plain_item(erp_client)
+    entry(erp_client, item)
+
+    refused = _edit_base_unit(erp_client, item, "Dozen")
+
+    assert refused["success"] is False
+    assert "Purchase Unit" in refused["message"]
+    listed = _rpc(erp_client, "getItemsData").get_json()["data"]
+    assert next(i for i in listed if i["name"] == item)["baseUnit"] == "Pcs"
+
+
+def test_opening_stock_is_held_in_the_base_unit_too(erp_client):
+    item = _plain_item(erp_client, itemInitialStock=5)
+
+    assert _edit_base_unit(erp_client, item, "Dozen")["success"] is False
+
+
+def test_an_item_with_no_entries_can_change_its_base_unit(erp_client):
+    item = _plain_item(erp_client)
+
+    _ok_body = _edit_base_unit(erp_client, item, "Dozen")
+
+    assert _ok_body["success"] is True, _ok_body["message"]
+    listed = _rpc(erp_client, "getItemsData").get_json()["data"]
+    assert next(i for i in listed if i["name"] == item)["baseUnit"] == "Dozen"
+
+
+def test_the_same_base_unit_in_other_case_is_not_a_change(erp_client):
+    item = _plain_item(erp_client)
+    _with_bill(erp_client, item)
+
+    body = _edit_base_unit(erp_client, item, "PCS")
+
+    assert body["success"] is True, body["message"]
+
+
+def test_a_rename_cannot_carry_a_base_unit_change_past_the_guard(erp_client):
+    item = _plain_item(erp_client)
+    _with_bill(erp_client, item)
+
+    refused = _rpc(
+        erp_client,
+        "saveItem",
+        [
+            {
+                "itemName": _unique_name("Renamed"),
+                "originalName": item,
+                "itemBaseUnit": "Dozen",
+            }
+        ],
+        mutation=True,
+    ).get_json()
+
+    assert refused["success"] is False
+    assert "Purchase Unit" in refused["message"]

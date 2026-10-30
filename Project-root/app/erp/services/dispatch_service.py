@@ -889,7 +889,8 @@ def save_dispatch(conn, cur, form_data):
     original_qty_by_product: dict = {}
     if is_edit:
         cur.execute(
-            f"SELECT id FROM {headers_table} WHERE lower(dispatch_number) = lower(%s) AND deleted_at IS NULL",
+            f"SELECT id, logistics_contractor, logistics_rate FROM {headers_table} "
+            "WHERE lower(dispatch_number) = lower(%s) AND deleted_at IS NULL",
             (old_dispatch_number,),
         )
         header_row = cur.fetchone()
@@ -963,8 +964,17 @@ def save_dispatch(conn, cur, form_data):
     # Dispatch / Logistics has no real Process record (no Process Type, no
     # Size) -- it's keyed into the same Layer 1 rate card as a pseudo
     # Process Type paired with the fixed size fallback, so a logistics
-    # rate is just one more row on a contractor's normal rate card.
-    logistics_rate = contractors_service._get_contractor_rate(
+    # rate is just one more row on a contractor's normal rate card. An edit
+    # keeps the rate it was saved with, the same rule as save_production: only
+    # a different contractor, or a dispatch holding no rate, reads the card.
+    same_contractor = (
+        is_edit
+        and str(header_row["logistics_contractor"] or "").strip().lower()
+        == logistics_contractor.lower()
+    )
+    logistics_rate = (
+        float(header_row["logistics_rate"] or 0) if same_contractor else 0.0
+    ) or contractors_service._get_contractor_rate(
         cur,
         logistics_contractor,
         config_maps.LOGISTICS_PROCESS_NAME,
@@ -1098,6 +1108,20 @@ def save_dispatch(conn, cur, form_data):
     )
 
 
+def _reopen_plan_lines(cur, header_ids: list) -> None:
+    """Plan lines a bill fulfilled go back on the plan when the bill goes.
+    Left fulfilled they point at a bill that is gone, stop reserving their
+    quantity, and can't be removed (delete_dispatch_plan_line refuses)."""
+    plan_lines_table = config_maps.TABLE_NAMES.get("DISPATCH_PLAN_LINES")
+    headers_table = config_maps.TABLE_NAMES.get("DISPATCH_HEADERS")
+    cur.execute(
+        f"UPDATE {plan_lines_table} SET fulfilled_dispatch_number = NULL, fulfilled_at = NULL "
+        f"WHERE lower(fulfilled_dispatch_number) IN "
+        f"(SELECT lower(dispatch_number) FROM {headers_table} WHERE id = ANY(%s))",
+        (header_ids,),
+    )
+
+
 @rpc_method("deleteDispatch", mutation=True)
 @database.transactional
 def delete_dispatch(
@@ -1145,6 +1169,7 @@ def delete_dispatch(
         f"UPDATE {headers_table} SET deleted_at = NOW(), updated_by = %s WHERE id = %s",
         (get_current_user_id(), header_id),
     )
+    _reopen_plan_lines(cur, [header_id])
 
     warehouse_service._recalculate_warehouse_pool(cur)
 
@@ -1226,6 +1251,7 @@ def delete_dispatch_bulk(conn, cur, dispatch_numbers, expected_bills=None):
         (user_id, deletable_ids),
     )
     bills_deleted = cur.rowcount
+    _reopen_plan_lines(cur, deletable_ids)
 
     warehouse_service._recalculate_warehouse_pool(cur)
 

@@ -160,6 +160,12 @@ ENTRY_DATE_GAP_DAYS = 45
 # worker recycled mid-run never reaches its own finally).
 STALE_RUN_AFTER = timedelta(minutes=15)
 
+# One snapshot for the whole in-transaction part of a run. READ ONLY alone
+# stays READ COMMITTED, where each statement sees the latest commit: a lot
+# saved between the pool's replay and the read of the stored pool would look
+# like a stale pool, and a code bug. Must be the transaction's first statement.
+_SNAPSHOT_SQL = "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+
 # Distinct from ledger_audit_service (918_273_645) and backup_service
 # (918_273_646).
 _AUDIT_LOCK_KEY = 918_273_647
@@ -1664,8 +1670,9 @@ def _check_lots_without_rate(ctx: _Context) -> list:
         elif now:
             why = (
                 f"The rate card now pays {_rs(now)} a unit for {ptype} at size {size}; these lots "
-                "were saved before it existed and keep the rate they were saved with, so about "
-                f"{_rs(now * units)} is missing from {contractor}'s balance."
+                f"were saved before it existed, so about {_rs(now * units)} is missing from "
+                f"{contractor}'s balance. A lot holding no rate takes the card's when it is next "
+                "saved."
             )
             qty = now * units
         else:
@@ -3366,19 +3373,11 @@ def _check_future_dates(ctx: _Context) -> list:
 
 def _external_ledger_findings() -> list:
     """The hourly ledger reconciliation (ledger_audit_service), folded in.
-    Opens its own connections, so it runs outside the audit's transaction.
-
-    Its over_consumed_item is left out: it measures returns + wastage +
-    issues against what was ever billed, ignoring opening stock, counts and
-    production, so an item that came in as opening stock reads as
-    over-consumed by everything ever issued. negative_item_stock asks the
-    same question of the Stock page's own figure."""
+    Opens its own connections, so it runs outside the audit's transaction."""
     res = ledger_audit_service.compute_internal_ledger_audit_findings()
     out = []
     for f in res.get("findings") or []:
         t = f.get("type", "")
-        if t == "over_consumed_item":
-            continue
         refs = [
             f"PO {f['poNumber']}" if f.get("poNumber") else "",
             f"Return {f['returnNumber']}" if f.get("returnNumber") else "",
@@ -3589,8 +3588,10 @@ def _external_item_ledgers(stats: dict) -> list:
             {r["item_name"].strip() for r in audit_entries._stock_rows_of(cur)}
         )
 
-    def problems_in(name) -> list:
-        data = items_service.build_item_ledger(name, production, terms)["data"]
+    def problems_in(name, shared=True) -> list:
+        data = items_service.build_item_ledger(
+            name, production if shared else None, terms if shared else None
+        )["data"]
         top: dict = {}
         for entry in data["entries"]:  # newest first
             if entry.get("balance") is not None:
@@ -3613,13 +3614,12 @@ def _external_item_ledgers(stats: dict) -> list:
         return found
 
     out = []
-    sizes = 0
     for name in names:
         found = problems_in(name)
         if found:
-            # A save landing between two reads looks like a disagreement.
-            found = problems_in(name)
-        sizes += len(found)
+            # A save landing after the shared read looks like a disagreement,
+            # so the second look reads everything afresh.
+            found = problems_in(name, shared=False)
         for size, what, shown, current in found:
             out.append(
                 _finding(
@@ -3759,8 +3759,9 @@ _MISSING = {
     ),
     "stored_base_qty_stale": (
         "calculation",
-        "A line's base quantity is worked out once, when it is saved: changing a unit's factor "
-        "or an item's base unit does not recalculate it.",
+        "A line's base quantity is worked out once, when it is saved. A unit in use can no "
+        "longer change its factor, nor an item with entries its Base Unit, so these lines "
+        "date from before that.",
     ),
     "bill_ledger_only_uncounted": (
         "logic",
@@ -3777,8 +3778,8 @@ _MISSING = {
     ),
     "lot_colours_disagree": (
         "logic",
-        "A lot's quantity comes from its primary colours, and each colour's counting flag from "
-        "the form; saving does not compare the two.",
+        "A lot's quantity comes from its primary colours, and saving now sets each colour's "
+        "counting flag by the same rule, so these lots date from before that.",
     ),
     "labor_bill_without_lot": (
         "logic",
@@ -4007,7 +4008,7 @@ def compute_findings(
             # A failed statement aborts the transaction; start a clean one so
             # the remaining checks can still read.
             cur.connection.rollback()
-            cur.execute("SET TRANSACTION READ ONLY")
+            cur.execute(_SNAPSHOT_SQL)
     if stats is not None:
         stats.update(ctx.stats)
     return findings, errors
@@ -4243,7 +4244,7 @@ def _execute_run(run_id: int) -> None:
             conn,
             cur,
         ):
-            cur.execute("SET TRANSACTION READ ONLY")
+            cur.execute(_SNAPSHOT_SQL)
             stats: dict = {}
             findings, errors = compute_findings(cur, stats=stats)
             conn.rollback()  # nothing was written; end the read-only transaction

@@ -1,7 +1,7 @@
 """Internal ledger reconciliation audit, ported from Apps_Script/module_audit.js.
 
-Cross-checks the PO, Bill, Return, Wastage, and Issued Stock ledgers
-against each other so calculation mistakes (a mis-linked PO, a typo'd
+Cross-checks the PO, Bill and Return ledgers against each other so
+calculation mistakes (a mis-linked PO, a typo'd
 quantity, a return that doesn't match anything ever billed) surface on
 their own instead of silently compounding. Read-only, never blocks a
 save, never auto-fixes anything -- a human reviews and corrects from the
@@ -49,10 +49,8 @@ import psycopg2.extras
 
 import database
 from . import bill_service
-from . import issue_service
 from . import po_service
 from . import return_service
-from . import wastage_service
 from ..envelope import build_response
 from ..registry import rpc_method
 
@@ -71,7 +69,7 @@ def _item_key(name, size) -> str:
 
 
 def compute_internal_ledger_audit_findings() -> dict:
-    """Pure (no writes, no logging) reconciliation pass across all 5
+    """Pure (no writes, no logging) reconciliation pass across the
     ledgers -- kept separate from run_internal_ledger_audit() so the check
     logic itself stays trivially testable with no DB writes involved.
 
@@ -86,11 +84,11 @@ def compute_internal_ledger_audit_findings() -> dict:
        doesn't exist for that vendor (free-text, never validated at entry).
     3. return_item_not_on_bill -- a Return names a real Bill, but has an
        item (name+size) that bill never actually billed.
-    4. over_consumed_item -- total Returned + Wasted + Issued base qty for
-       an (item, size) exceeds total Billed base qty for that same
-       item+size, across every vendor combined. Not vendor-scoped --
-       Wastage/Issue both carry an optional vendor field that's usually
-       blank, so keying this to vendor would silently miss most real cases.
+
+    Returned + Wasted + Issued against Billed is deliberately not one of
+    them. It ignored opening stock, counts and production, so an item that
+    came in as opening stock read as over-consumed by everything ever issued.
+    The Audit's negative_item_stock asks that of the Stock page's own figure.
     """
     bill_response = bill_service.get_bill_data()
     if not bill_response["success"]:
@@ -106,20 +104,6 @@ def compute_internal_ledger_audit_findings() -> dict:
     if not return_response["success"]:
         raise RuntimeError(f"Failed to load Return data: {return_response['message']}")
     returns = return_response["data"] or []
-
-    wastage_response = wastage_service.get_wastage_data()
-    if not wastage_response["success"]:
-        raise RuntimeError(
-            f"Failed to load Wastage data: {wastage_response['message']}"
-        )
-    wastage_records = wastage_response["data"] or []
-
-    issue_response = issue_service.get_issue_data()
-    if not issue_response["success"]:
-        raise RuntimeError(
-            f"Failed to load Issued Stock data: {issue_response['message']}"
-        )
-    issue_records = issue_response["data"] or []
 
     findings = []
 
@@ -186,73 +170,14 @@ def compute_internal_ledger_audit_findings() -> dict:
                     }
                 )
 
-    # -- Check 4: over-consumed items (Return + Wastage + Issue vs Bill)
-    billed_base_qty_by_item: dict = {}
-    for bill in bills:
-        for item in bill["items"]:
-            key = _item_key(item["name"], item["size"])
-            billed_base_qty_by_item[key] = billed_base_qty_by_item.get(key, 0) + float(
-                item.get("baseQty") or 0
-            )
-
-    consumed_by_item: dict = {}
-
-    def _add_consumption(records, field):
-        for rec in records:
-            for item in rec["items"]:
-                # Written off the Warehouse Pool (migration 048): a processed
-                # item that was never billed, so it has no bill to be
-                # over-consumed against.
-                if item.get("sourceType") == "POOL":
-                    continue
-                key = _item_key(item["name"], item["size"])
-                entry = consumed_by_item.get(key)
-                if entry is None:
-                    entry = {
-                        "name": item["name"],
-                        "size": item["size"],
-                        "unit": item.get("unit", ""),
-                        "returnedBaseQty": 0.0,
-                        "wastedBaseQty": 0.0,
-                        "issuedBaseQty": 0.0,
-                    }
-                    consumed_by_item[key] = entry
-                entry[field] += float(item.get("baseQty") or 0)
-
-    _add_consumption(returns, "returnedBaseQty")
-    _add_consumption(wastage_records, "wastedBaseQty")
-    _add_consumption(issue_records, "issuedBaseQty")
-
-    for entry in consumed_by_item.values():
-        total_consumed_base_qty = (
-            entry["returnedBaseQty"] + entry["wastedBaseQty"] + entry["issuedBaseQty"]
-        )
-        billed_base_qty = billed_base_qty_by_item.get(
-            _item_key(entry["name"], entry["size"]), 0
-        )
-        over_by = total_consumed_base_qty - billed_base_qty
-        if over_by > 0.0001:
-            findings.append(
-                {
-                    "type": "over_consumed_item",
-                    "itemName": entry["name"],
-                    "size": entry["size"],
-                    "unit": entry["unit"],
-                    "totalBilledBaseQty": round(billed_base_qty, 4),
-                    "totalReturnedBaseQty": round(entry["returnedBaseQty"], 4),
-                    "totalWastedBaseQty": round(entry["wastedBaseQty"], 4),
-                    "totalIssuedBaseQty": round(entry["issuedBaseQty"], 4),
-                    "totalConsumedBaseQty": round(total_consumed_base_qty, 4),
-                    "overBy": round(over_by, 4),
-                }
-            )
-
     counts: dict = {}
     for f in findings:
         counts[f["type"]] = counts.get(f["type"], 0) + 1
 
     if not findings:
-        message = "No discrepancies found -- PO, Bill, Return, Wastage, and Issued Stock ledgers reconcile cleanly."
+        message = (
+            "No discrepancies found -- PO, Bill and Return ledgers reconcile cleanly."
+        )
     else:
         suffix = "y" if len(findings) == 1 else "ies"
         message = f"{len(findings)} discrepanc{suffix} found: " + ", ".join(
@@ -279,13 +204,6 @@ def describe_audit_finding(f: dict) -> str:
     if t == "return_item_not_on_bill":
         size = f" ({f['size']})" if f["size"] else ""
         return f"Return #{f['returnNumber']} ({f['vendor']}) -- {f['itemName']}{size} isn't on Bill #{f['billNumber']}"
-    if t == "over_consumed_item":
-        size = f" ({f['size']})" if f["size"] else ""
-        return (
-            f"{f['itemName']}{size} -- returned {f['totalReturnedBaseQty']} + wasted {f['totalWastedBaseQty']} "
-            f"+ issued {f['totalIssuedBaseQty']} = {f['totalConsumedBaseQty']} consumed, but only "
-            f"{f['totalBilledBaseQty']} ever billed ({f['overBy']} over)"
-        )
     return str(f)
 
 
@@ -367,7 +285,7 @@ def run_internal_ledger_audit() -> dict:
             # session-level lock could outlive this connection's return to the
             # pool. But that means the lock only exists while THIS transaction
             # does, so the work it guards has to happen inside it, and that
-            # work is a five-ledger reconciliation whose readers each take
+            # work is a multi-ledger reconciliation whose readers each take
             # their own connection.
             #
             # Threading a cursor through all five service readers to save one

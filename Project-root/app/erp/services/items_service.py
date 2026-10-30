@@ -365,10 +365,92 @@ def _propagate_item_identity_change(
         )
 
 
+_ITEM_IN_USE = (
+    "referenced by a Product's BOM, a Process recipe, a Stock Group, "
+    "or its own stock and entries"
+)
+
+
+def _get_item_keys_with_entries(cur, keys: set) -> set:
+    """Which of `keys` ("nameLower|sizeLower") a live document or stock figure
+    stands on: a bill, PO, return, issue, ITEM wastage or ITEM lot component,
+    a stock adjustment, or opening stock. POOL rows name a Warehouse Pool
+    bucket, not an item. Every one of these is a quantity in the item's Base
+    Unit or a reason its row must stay on the Stock page.
+    """
+    if not keys:
+        return set()
+    cur.execute(
+        """
+        WITH entry AS (
+            SELECT l.item_name, l.size FROM erp.bill_lines l
+              JOIN erp.bill_headers h ON h.id = l.header_id
+             WHERE h.deleted_at IS NULL
+            UNION ALL
+            SELECT l.item_name, l.size FROM erp.po_lines l
+              JOIN erp.po_headers h ON h.id = l.header_id
+             WHERE h.deleted_at IS NULL
+            UNION ALL
+            SELECT l.item_name, l.size FROM erp.return_lines l
+              JOIN erp.return_headers h ON h.id = l.header_id
+             WHERE h.deleted_at IS NULL
+            UNION ALL
+            SELECT l.item_name, l.size FROM erp.issue_lines l
+              JOIN erp.issue_headers h ON h.id = l.header_id
+             WHERE h.deleted_at IS NULL
+            UNION ALL
+            SELECT l.item_name, l.size FROM erp.wastage_lines l
+              JOIN erp.wastage_headers h ON h.id = l.header_id
+             WHERE h.deleted_at IS NULL AND l.source_type != 'POOL'
+            UNION ALL
+            SELECT c ->> 'itemName', c ->> 'size' FROM erp.production p
+             CROSS JOIN LATERAL jsonb_array_elements(
+               CASE WHEN jsonb_typeof(p.components_consumed) = 'array'
+                    THEN p.components_consumed ELSE '[]'::jsonb END) c
+             WHERE p.deleted_at IS NULL
+               AND upper(btrim(COALESCE(c ->> 'sourceType', ''))) != 'POOL'
+            UNION ALL
+            SELECT item_name, size FROM erp.stock_adjustments
+            UNION ALL
+            SELECT item_name, size FROM erp.stock
+             WHERE deleted_at IS NULL AND initial_stock <> 0
+        )
+        SELECT DISTINCT
+               lower(btrim(item_name)) || '|' || lower(btrim(COALESCE(size, ''))) AS key
+          FROM entry
+         WHERE lower(btrim(item_name)) || '|' || lower(btrim(COALESCE(size, ''))) = ANY(%s)
+        """,
+        (sorted(keys),),
+    )
+    return {row["key"] for row in cur.fetchall()}
+
+
+def _refuse_base_unit_change(
+    cur, item_id: int, name: str, size: str, base_unit: str
+) -> None:
+    """Saved bills, returns, wastage, issues and counts hold their quantity in
+    the Base Unit they were saved under, while lots convert into the current
+    one on every read: an edit from Pcs to Dozen moved Stock from 108 to 119
+    with nothing to show why. A new item has nothing to move, so it can."""
+    cur.execute("SELECT base_unit FROM erp.items WHERE id = %s", (item_id,))
+    current = str(cur.fetchone()["base_unit"] or "").strip() or "Pcs"
+    if current.lower() == base_unit.lower():
+        return
+    if _get_item_keys_with_entries(cur, {f"{name.lower()}|{size.lower()}"}):
+        raise ValueError(
+            f'"{name}" already has stock or entries in {current}, so its Base Unit '
+            f"can't change to {base_unit}: saved quantities would stay in {current}, "
+            "lots would be re-read, and Stock would move. Keep the Base Unit and "
+            f"set {base_unit} as the Purchase Unit instead."
+        )
+
+
 def _get_item_keys_in_use(cur, items: list) -> set:
     """ "nameLower|sizeLower" keys referenced by a BOM component row, an
-    ITEM-sourced Process Components row, or a saved Stock Group -- unsafe to
-    delete. Guarded via config_maps.TABLE_NAMES exactly like Phase 1a's
+    ITEM-sourced Process Components row, a saved Stock Group, or entries of
+    the item's own (_get_item_keys_with_entries) -- unsafe to delete: the
+    item would leave the Stock page with its stock and entries still there.
+    Guarded via config_maps.TABLE_NAMES exactly like Phase 1a's
     rename cascades; all three targets are real as of Phase 3c (BOM),
     Phase 3a (Process Components), and this round (Stock Groups).
     """
@@ -437,7 +519,7 @@ def _get_item_keys_in_use(cur, items: list) -> set:
             if key in requested:
                 in_use.add(key)
 
-    return in_use
+    return in_use | _get_item_keys_with_entries(cur, requested)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -987,6 +1069,11 @@ def save_item(conn, cur, form_data):
             f"Edit aborted to prevent data inconsistency."
         )
 
+    if is_edit:
+        _refuse_base_unit_change(
+            cur, existing_id, original_name, original_size, base_unit
+        )
+
     user_id = get_current_user_id()
 
     if is_edit:
@@ -1125,7 +1212,8 @@ def delete_item(conn, cur, name, size=""):
     ):
         size_suffix = f" ({valid_size})" if valid_size else ""
         raise ValueError(
-            f'Cannot delete "{valid_name}"{size_suffix}: referenced by a Product\'s BOM, a Process recipe, or a Stock Group.'
+            f'Cannot delete "{valid_name}"{size_suffix}: {_ITEM_IN_USE}. '
+            "Rename it to the right item to merge the two instead."
         )
 
     cur.execute(
@@ -1188,8 +1276,7 @@ def delete_items_bulk(conn, cur, items):
             for it in skipped
         ]
         message += (
-            f" Skipped {len(skipped)} item(s) referenced by a Product's BOM, a Process recipe, or a Stock Group: "
-            f"{', '.join(labels)}."
+            f" Skipped {len(skipped)} item(s) {_ITEM_IN_USE}: {', '.join(labels)}."
         )
 
     return build_response(

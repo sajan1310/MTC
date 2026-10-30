@@ -1340,8 +1340,7 @@ def _build_warehouse_pool_buckets(
         # previously silently ignored, understating pool consumption by
         # whatever that row's conversion factor is (e.g. a Dozen row
         # debiting as if it were 1 Pcs).
-        pool_item_unit_map = None
-        pool_units_map = None
+        pool_unit_maps: dict = {}
         # COMMON-scoped consumption is aggregated per item and settled after
         # this loop rather than debited inline -- see the greedy drain below
         # for why it cannot be decided one component at a time.
@@ -1370,25 +1369,7 @@ def _build_warehouse_pool_buckets(
                     if not qty:
                         continue
 
-                unit = str(comp.get("unit") or "").strip()
-                if unit:
-                    if pool_item_unit_map is None:
-                        pool_item_unit_map = items_service.get_item_unit_info_map(cur)
-                    if pool_units_map is None:
-                        pool_units_map = units_service.get_units_map(cur)
-                    unit_info = items_service.lookup_item_unit_info(
-                        pool_item_unit_map, item_name, ""
-                    )
-                    try:
-                        qty = units_service.convert_qty_to_base_unit(
-                            qty, unit, unit_info, pool_units_map
-                        )
-                    except ValueError:
-                        # Unconvertible (e.g. no Weight-per-Base-Unit set
-                        # yet) -- fall back to the as-entered qty rather
-                        # than blocking the whole recalculation over one
-                        # bad recipe row.
-                        pass
+                qty = pool_component_qty(cur, comp, qty, pool_unit_maps)
 
                 # poolColor before colorGroup: the bucket this row draws
                 # FROM, which is only the lot's own output colour in the
@@ -2155,6 +2136,30 @@ def _get_pool_available_qty_map(cur) -> dict:
         entry["total"] += available_qty
         entry["byColor"][color] = entry["byColor"].get(color, 0.0) + available_qty
     return result
+
+
+def pool_component_qty(cur, comp: dict, qty: float, unit_maps: dict) -> float:
+    """`qty` of a POOL component in the unit the pool counts in. The one
+    conversion Pass 2 debits by and the availability check reads, so a 2 Dozen
+    draw is 24 out of the bucket in both. `unit_maps` is the caller's dict, so
+    a scan reads the two masters once."""
+    unit = str(comp.get("unit") or "").strip()
+    if not unit:
+        return qty
+    if not unit_maps:
+        unit_maps["items"] = items_service.get_item_unit_info_map(cur)
+        unit_maps["units"] = units_service.get_units_map(cur)
+    item_name = str(comp.get("itemName") or "").strip()
+    unit_info = items_service.lookup_item_unit_info(unit_maps["items"], item_name, "")
+    try:
+        return units_service.convert_qty_to_base_unit(
+            qty, unit, unit_info, unit_maps["units"]
+        )
+    except ValueError:
+        # Unconvertible (e.g. no Weight-per-Base-Unit set yet) -- fall back
+        # to the as-entered qty rather than blocking the whole recalculation
+        # over one bad recipe row.
+        return qty
 
 
 def _check_pool_credit_removal_warning(

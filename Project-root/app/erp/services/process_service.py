@@ -699,9 +699,10 @@ def save_process(conn, cur, form_data):
 
     existing_id = None
     old_output_item_name = ""
+    old_process_name = ""
     if is_edit:
         cur.execute(
-            "SELECT id, output_item_name FROM erp.process_master WHERE lower(process_id) = lower(%s) AND deleted_at IS NULL",
+            "SELECT id, output_item_name, process_name FROM erp.process_master WHERE lower(process_id) = lower(%s) AND deleted_at IS NULL",
             (process_id_input,),
         )
         existing_row = cur.fetchone()
@@ -709,6 +710,7 @@ def save_process(conn, cur, form_data):
             raise ValueError(f'Process with ID "{process_id_input}" not found.')
         existing_id = existing_row["id"]
         old_output_item_name = existing_row["output_item_name"] or ""
+        old_process_name = existing_row["process_name"] or ""
 
     # Duplicate Lot Prefix -- across EVERY non-deleted process, active or
     # not (excludes the row being edited).
@@ -826,6 +828,16 @@ def save_process(conn, cur, form_data):
             _rename_pool_output_item_name_everywhere(
                 cur, old_output_item_name, output_item_name
             )
+
+        # These hold the process by name, not id. A Labor bill line left on
+        # the old name can't be saved again: save_bill looks it up among
+        # today's processes and refuses it as not recognized.
+        if old_process_name and old_process_name != process_name:
+            for sheet_key in ("BILL_LINES", "BOM_ADDITIONAL_COSTS"):
+                if table := config_maps.TABLE_NAMES.get(sheet_key):
+                    rename_utils.rename_in_column(
+                        cur, table, "process_name", old_process_name, process_name
+                    )
 
         message = f'Process "{process_name}" updated.'
     else:

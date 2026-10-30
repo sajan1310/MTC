@@ -239,6 +239,31 @@ def _rename_color_token_in_either_column(
             )
 
 
+def _rename_color_token_in_keyed_rows(
+    cur, table: str, key_columns: tuple, old: str, new: str
+) -> None:
+    """_rename_color_token_in_column for a table with one row per key and
+    colour. The master refuses a rename onto a live colour, so a row already
+    under the new spelling is a leftover: the renamed row replaces it, where a
+    plain UPDATE would hit the unique index and fail the whole rename.
+    """
+    old_lower = old.lower()
+    keys = ", ".join(key_columns)
+    same_key = " AND ".join(f"lower({column}) = lower(%s)" for column in key_columns)
+    cur.execute(f"SELECT id, color, {keys} FROM {table} WHERE color != ''")
+    for row in cur.fetchall():
+        renamed = _rename_color_token(row["color"], old_lower, new)
+        if renamed == row["color"]:
+            continue
+        cur.execute(
+            f"DELETE FROM {table} WHERE id != %s AND lower(color) = lower(%s) AND {same_key}",
+            (row["id"], renamed, *(row[column] for column in key_columns)),
+        )
+        cur.execute(
+            f"UPDATE {table} SET color = %s WHERE id = %s", (renamed, row["id"])
+        )
+
+
 def _rename_color_token_in_json_entries(
     entries, keys: tuple, old_lower: str, new: str
 ) -> bool:
@@ -392,6 +417,20 @@ def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
     # its receipts would credit nothing.
     if table := config_maps.TABLE_NAMES.get("PRODUCTION_RECEIPT_LINES"):
         _rename_color_token_in_column(cur, table, "color", old, new)
+
+    # Both are looked up by the colour's name. A process's override left on
+    # the old name stops applying, so a colour it added drops off its list
+    # and one it excluded comes back; a bucket's Counts flag goes the same way.
+    _rename_color_token_in_keyed_rows(
+        cur, "erp.process_color_overrides", ("process_id",), old, new
+    )
+    _rename_color_token_in_keyed_rows(
+        cur,
+        "erp.warehouse_pool_bucket_flags",
+        ("output_item_name", "product_tag"),
+        old,
+        new,
+    )
 
     # Warehouse Pool bucket colors are always DERIVED (rebuilt from scratch
     # by _recalculate_warehouse_pool) from the sheets just renamed above --

@@ -7432,16 +7432,26 @@ App.Production = {
 
     const size = App.Utils.getSizeFromOutputItemName(process.outputItemName);
 
+    const editing = document.getElementById('productionRowIdx')?.value;
+    const lot = editing ? (App.State.globalProduction || []).find(l => String(l.rowIdx) === editing) : null;
+    const kept = lot ? App.Utils.keptRate(lot.assignedTo, lot.contractorRate, contractorName) : 0;
+    const keptExtra = lot && App.Utils.sameText(lot.extraChargeType, extraChargeType)
+      ? App.Utils.keptRate(lot.assignedTo, lot.extraChargeAmount, contractorName)
+      : 0;
+    const extra = keptExtra || extraChargeAmount;
+
     try {
       const res = await Api.call('getContractorRateForProcessType', contractorName, process.processType, size);
-      const rate = res.success ? toNumber(res.data?.ratePerUnit) : 0;
-      if (!rate && !extraChargeAmount) {
+      const cardRate = res.success ? toNumber(res.data?.ratePerUnit) : 0;
+      const rate = kept || cardRate;
+      if (!rate && !extra) {
         hintEl.innerText = `No rate card entry for "${App.Utils.formatNameCase(contractorName)}" / ${process.processType || 'General'} / ${size} — Payable will be 0.`;
         return;
       }
-      let text = `Payable: ${formatCurrency(qty * (rate + extraChargeAmount))} (${this.formatQty(qty)} x ${rate}/unit`;
-      if (extraChargeType) text += ` + ${extraChargeType} ${formatCurrency(extraChargeAmount)}/unit`;
+      let text = `Payable: ${formatCurrency(qty * (rate + extra))} (${this.formatQty(qty)} x ${rate}/unit`;
+      if (extraChargeType) text += ` + ${extraChargeType} ${formatCurrency(extra)}/unit`;
       text += ')';
+      if (kept && kept !== cardRate) text += ` Saved rate kept; the rate card says ${cardRate}.`;
       hintEl.innerText = text;
     } catch (err) {
       hintEl.innerText = '';

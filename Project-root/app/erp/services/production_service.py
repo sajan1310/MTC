@@ -302,6 +302,16 @@ def _validate_number(value, min_value: float, max_value: float) -> float:
     return n
 
 
+def _is_blank_or_zero(value) -> bool:
+    text = str(value if value is not None else "").strip()
+    if not text:
+        return True
+    try:
+        return float(text) == 0
+    except ValueError:
+        return False
+
+
 def _find_bom_product_id(cur, product_id_str: str):
     if not product_id_str:
         return None
@@ -591,6 +601,23 @@ def _build_pool_needed_map(components: list) -> dict:
     return pool_needed
 
 
+def _in_pool_units(cur, components: list) -> list:
+    """`components` with each POOL quantity in the unit the pool counts in,
+    ready for _build_pool_needed_map."""
+    unit_maps: dict = {}
+    converted = []
+    for c in components or []:
+        c = c or {}
+        if str(c.get("sourceType") or "").strip().upper() == "POOL":
+            qty = float(c.get("qty") or 0)
+            c = {
+                **c,
+                "qty": warehouse_service.pool_component_qty(cur, c, qty, unit_maps),
+            }
+        converted.append(c)
+    return converted
+
+
 def _validate_pool_availability(
     cur, pool_needed: dict, already_consumed: dict = None
 ) -> str | None:
@@ -814,10 +841,10 @@ def save_production(conn, cur, form_data):
     # Output Item Name defaults to the process's own -- editable per lot
     # (e.g. this run actually produced a variant/rework SKU) without
     # touching the process master, which every *other* lot still inherits.
-    # Warehouse Pool crediting/consumption already keys off this column
-    # per production row (see _recalculate_warehouse_pool), so a custom
-    # name here simply lands in its own pool bucket instead of the
-    # process's usual one -- exactly scoped to this lot.
+    # On a final-stage lot a custom name gets a pool bucket of its own,
+    # exactly scoped to this lot. On any other it is only a label: the goods
+    # are credited to the process's own output, which is what the next stage
+    # draws on (see _recalculate_warehouse_pool's Pass 1).
     output_item_name = (
         str(form_data.get("outputItemName") or "").strip() or process["outputItemName"]
     )
@@ -1078,6 +1105,15 @@ def save_production(conn, cur, form_data):
                 raise ValueError(
                     f'At least one "{primary_color_axis}" color is required for this lot.'
                 )
+
+            # The flag the form sent did not decide the quantity above, so
+            # saved as sent the two can disagree: a lot of 20 whose colours
+            # add up to 40, and a Receive form that allows the 40. Only the
+            # quantity-bearing axis carries an allocation, as above.
+            for c in color_breakdown:
+                c["countsTowardTotal"] = _is_primary_axis_row(c)
+                if not c["countsTowardTotal"]:
+                    c.pop("splits", None)
         else:
             # The own-output group gets the same guard the primary-axis branch
             # above applies: a pick with nothing checked under it is an
@@ -1260,7 +1296,8 @@ def save_production(conn, cur, form_data):
             # FOR UPDATE: a receipt saved against this lot mid-edit must wait,
             # or the edit could take a colour below what just came back.
             "SELECT id, process_id, lot_number, status, components_consumed, custom_components, "
-            "qty, color_breakdown FROM erp.production WHERE id = %s AND deleted_at IS NULL "
+            "qty, color_breakdown, assigned_to, contractor_rate, extra_charge_type, "
+            "extra_charge_amount FROM erp.production WHERE id = %s AND deleted_at IS NULL "
             "FOR UPDATE",
             (target_id,),
         )
@@ -1280,7 +1317,7 @@ def save_production(conn, cur, form_data):
     else:
         lot_number = _generate_lot_number(cur, process["lotPrefix"])
 
-    pool_needed = _build_pool_needed_map(clean_components)
+    pool_needed = _build_pool_needed_map(_in_pool_units(cur, clean_components))
 
     # A lot received in part (migration 055) can still be edited, just not
     # below what already came back.
@@ -1291,9 +1328,18 @@ def save_production(conn, cur, form_data):
         )
         lot_received = lot_receipts.received_amounts(lot_receipt_rows)
         _check_lot_keeps_its_receipts(color_breakdown, qty, lot_receipt_rows)
+        # save_production_receipt refuses a receipt dated before its lot; this
+        # is the same rule from the other side.
+        first_received = min((r["date"] for r in lot_receipt_rows or []), default=None)
+        if first_received and production_date > first_received:
+            raise ValueError(
+                f"Lot #{existing['lot_number']} can't be dated after its first receipt "
+                f"({date_utils.to_display_string(first_received)})."
+            )
 
     original_pool_consumed: dict = {}
     if is_edit and existing is not None:
+        pool_unit_maps: dict = {}
         previous_status = str(existing["status"] or "").strip().lower()
         # What this lot has already drawn from the pool: all of it once
         # Completed, its receipts' share before that.
@@ -1316,6 +1362,9 @@ def save_production(conn, cur, form_data):
                 drawn = float(c.get("qty") or 0)
                 if previous_shape is not None:
                     drawn = previous_shape.component_qty(c, drawn, lot_received)
+                drawn = warehouse_service.pool_component_qty(
+                    cur, c, drawn, pool_unit_maps
+                )
                 original_pool_consumed[key] = original_pool_consumed.get(key, 0) + drawn
 
     # Only run the pool-availability check when this save will leave the
@@ -1335,12 +1384,33 @@ def save_production(conn, cur, form_data):
     size = contractors_service._get_size_from_output_item_name(
         process["outputItemName"]
     )
-    contractor_rate = contractors_service._get_contractor_rate(
+
+    # A saved lot keeps the rate it was saved with, so a remarks or quantity
+    # edit recalculates its payable at that rate and never at whatever the
+    # rate card says that day. Reading the card on every save took a payable
+    # from Rs 100 to 150 on a remarks edit after a card change, and to Rs 0
+    # after a card entry was removed. Its process can't change (see above), so
+    # only a different contractor takes the card's rate -- and so does a lot
+    # holding no rate, or it could never be repaired.
+    same_contractor = (
+        is_edit
+        and str(existing["assigned_to"] or "").strip().lower() == assigned_to.lower()
+    )
+    contractor_rate = (
+        float(existing["contractor_rate"] or 0) if same_contractor else 0.0
+    ) or contractors_service._get_contractor_rate(
         cur, assigned_to, process["processType"], size
     )
 
     extra_charge_type = str(form_data.get("extraChargeType") or "").strip()
+    same_extra_charge = (
+        same_contractor
+        and str(existing["extra_charge_type"] or "").strip().lower()
+        == extra_charge_type.lower()
+    )
     extra_charge_amount = (
+        float(existing["extra_charge_amount"] or 0) if same_extra_charge else 0.0
+    ) or (
         contractors_service._get_extra_charge(cur, assigned_to, extra_charge_type)
         if extra_charge_type
         else 0.0
@@ -1476,6 +1546,25 @@ def save_production(conn, cur, form_data):
     return build_response(True, {"lotNumber": lot_number, "row": fresh_row}, message)
 
 
+def _pool_credit_warning(cur, row, qty) -> str | None:
+    """The pool warning for deleting lot `row`, on what it actually put
+    there: all of it once Completed, what came back before that. A Pending
+    lot has credited nothing, so it can't leave a bucket short."""
+    credited = row["color_breakdown"]
+    if not lot_receipts.is_completed(row["status"]):
+        receipts = lot_receipts.load_receipts(cur, [row["id"]]).get(row["id"])
+        if not receipts:
+            return None
+        by_colour: dict = {}
+        for receipt in receipts:
+            for line in receipt["lines"]:
+                by_colour[line["color"]] = by_colour.get(line["color"], 0) + line["qty"]
+        credited = [{"color": c, "qty": q} for c, q in by_colour.items()]
+    return warehouse_service._check_pool_credit_removal_warning(
+        cur, row["output_item_name"], credited, qty
+    )
+
+
 @rpc_method("deleteProduction", mutation=True)
 @database.transactional
 def delete_production(conn, cur, row_idx, expected_product_id=None, expected_qty=None):
@@ -1484,7 +1573,7 @@ def delete_production(conn, cur, row_idx, expected_product_id=None, expected_qty
     )
 
     cur.execute(
-        "SELECT product_id, qty, output_item_name, color_breakdown, lot_number FROM erp.production WHERE id = %s AND deleted_at IS NULL",
+        "SELECT id, status, product_id, qty, output_item_name, color_breakdown, lot_number FROM erp.production WHERE id = %s AND deleted_at IS NULL",
         (target_id,),
     )
     row = cur.fetchone()
@@ -1501,9 +1590,7 @@ def delete_production(conn, cur, row_idx, expected_product_id=None, expected_qty
 
     pool_credit_warning = None
     if not product_id:
-        pool_credit_warning = warehouse_service._check_pool_credit_removal_warning(
-            cur, row["output_item_name"], row["color_breakdown"], qty
-        )
+        pool_credit_warning = _pool_credit_warning(cur, row, qty)
 
     cur.execute(
         "UPDATE erp.production SET deleted_at = NOW(), updated_by = %s WHERE id = %s",
@@ -1541,7 +1628,7 @@ def delete_production_bulk(conn, cur, row_idxs, expected_rows=None):
                 continue
 
     cur.execute(
-        "SELECT id, product_id, qty, output_item_name, color_breakdown FROM erp.production WHERE deleted_at IS NULL AND id = ANY(%s)",
+        "SELECT id, status, product_id, qty, output_item_name, color_breakdown FROM erp.production WHERE deleted_at IS NULL AND id = ANY(%s)",
         (target_ids,),
     )
     rows_by_id = {row["id"]: row for row in cur.fetchall()}
@@ -1567,9 +1654,7 @@ def delete_production_bulk(conn, cur, row_idxs, expected_rows=None):
             continue
 
         if not product_id:
-            warning = warehouse_service._check_pool_credit_removal_warning(
-                cur, row["output_item_name"], row["color_breakdown"], qty
-            )
+            warning = _pool_credit_warning(cur, row, qty)
             if warning:
                 pool_credit_warnings.append(warning)
 
@@ -1647,7 +1732,7 @@ def update_production_status(conn, cur, row_idx, expected_qty, new_status):
                 if isinstance(c, dict)
             ]
         pool_warning = _validate_pool_availability(
-            cur, _build_pool_needed_map(components)
+            cur, _build_pool_needed_map(_in_pool_units(cur, components))
         )
 
     cur.execute(
@@ -1791,7 +1876,15 @@ def save_production_receipt(conn, cur, form_data):
         raw = raw or {}
         qty = _validate_number(raw.get("qty"), 0, 10000000)
         if not qty:
-            continue
+            # _validate_number reads anything it can't use as 0, and a
+            # negative or mistyped line is not one with nothing on it:
+            # dropped here, the receipt would save short with no word.
+            if _is_blank_or_zero(raw.get("qty")):
+                continue
+            raise ValueError(
+                f'"{raw.get("qty")}" is not a quantity for '
+                f"{_receipt_line_label(raw.get('color'), raw.get('size'))}."
+            )
         key = lot_receipts.line_key(raw.get("color"), raw.get("size"))
         if key not in line_by_key:
             raise ValueError(
@@ -1815,7 +1908,11 @@ def save_production_receipt(conn, cur, form_data):
                 f"{'is' if balance[key] == 1 else 'are'} still to come on Lot #{lot_number}."
             )
 
-    receipt_date = date_utils.to_safe_date(form_data.get("date")) or date.today()
+    receipt_date = date_utils.to_safe_date(form_data.get("date"))
+    if receipt_date is None:
+        if not _is_blank_or_zero(form_data.get("date")):
+            raise ValueError("Enter a valid receipt date.")
+        receipt_date = date.today()
     if row["production_date"] and receipt_date < row["production_date"]:
         raise ValueError(
             "A receipt can't be dated before its lot "
@@ -1831,11 +1928,14 @@ def save_production_receipt(conn, cur, form_data):
     pool_warning = _validate_pool_availability(
         cur,
         _build_pool_needed_map(
-            [
-                {**c, "qty": shape.component_qty(c, c.get("qty"), wanted)}
-                for c in row["components_consumed"] or []
-                if isinstance(c, dict)
-            ]
+            _in_pool_units(
+                cur,
+                [
+                    {**c, "qty": shape.component_qty(c, c.get("qty"), wanted)}
+                    for c in row["components_consumed"] or []
+                    if isinstance(c, dict)
+                ],
+            )
         ),
     )
 

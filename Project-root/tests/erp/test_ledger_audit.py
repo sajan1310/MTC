@@ -173,45 +173,15 @@ def test_return_bill_reference_checks(erp_app, erp_client):
     )
 
 
-def test_over_consumed_item_detected(erp_app, erp_client):
-    vendor = _unique_name("ConsumedAuditVendor")
-    item = _unique_name("ConsumedItem")
-
+def test_stock_that_came_in_as_opening_stock_is_no_discrepancy(erp_app, erp_client):
+    """Issues measured against bills alone read every item that came in as
+    opening stock as over-consumed, hourly, in the bell. Stock going below
+    zero is the Audit's negative_item_stock, on the Stock page's own figure."""
+    item = _unique_name("OpeningItem")
     _rpc(
         erp_client,
-        "saveBill",
-        [
-            {
-                "vendor": vendor,
-                "billNumber": _unique_name("BILL"),
-                "billDate": "01/01/2026",
-                "items": [{"name": item, "qty": 5, "unit": "Pcs", "price": 10}],
-            }
-        ],
-        mutation=True,
-    )
-    _rpc(
-        erp_client,
-        "saveReturn",
-        [
-            {
-                "vendor": vendor,
-                "returnDate": "01/01/2026",
-                "items": [{"name": item, "qty": 2, "price": 10, "reason": "Excess"}],
-            }
-        ],
-        mutation=True,
-    )
-    _rpc(
-        erp_client,
-        "saveWastage",
-        [
-            {
-                "date": "01/01/2026",
-                "vendor": vendor,
-                "items": [{"name": item, "qty": 2, "unit": "Pcs", "reason": "Damaged"}],
-            }
-        ],
+        "saveItem",
+        [{"itemName": item, "itemInitialStock": 10}],
         mutation=True,
     )
     _rpc(
@@ -219,9 +189,9 @@ def test_over_consumed_item_detected(erp_app, erp_client):
         "saveIssueStock",
         [
             {
+                "issuedTo": "Line 1",
                 "date": "01/01/2026",
-                "issuedTo": "Contractor A",
-                "items": [{"name": item, "qty": 2, "unit": "Pcs"}],
+                "items": [{"name": item, "qty": 6, "unit": "Pcs"}],
             }
         ],
         mutation=True,
@@ -230,75 +200,7 @@ def test_over_consumed_item_detected(erp_app, erp_client):
     with erp_app.app_context():
         result = ledger_audit_service.compute_internal_ledger_audit_findings()
 
-    match = next(
-        f
-        for f in result["findings"]
-        if f["type"] == "over_consumed_item" and f["itemName"] == item
-    )
-    assert match["totalBilledBaseQty"] == 5
-    assert match["totalReturnedBaseQty"] == 2
-    assert match["totalWastedBaseQty"] == 2
-    assert match["totalIssuedBaseQty"] == 2
-    assert match["totalConsumedBaseQty"] == 6
-    assert match["overBy"] == 1
-
-
-def test_wastage_written_off_the_pool_is_not_an_over_consumed_item(erp_app, erp_client):
-    """A processed item written off the Warehouse Pool (migration 048) was
-    never billed -- it was made here -- so measuring it against bills would
-    report every write-off as over-consumption."""
-    output = _unique_name("PaintedFrame")
-    process = _rpc(
-        erp_client,
-        "saveProcess",
-        [
-            {
-                "processName": _unique_name("Painting"),
-                "lotPrefix": uuid.uuid4().hex[:6].upper(),
-                "outputItemName": output,
-                "sequence": 1,
-                "isFinalStage": False,
-                "active": True,
-                "components": [],
-            }
-        ],
-        mutation=True,
-    ).get_json()
-    assert process["success"] is True, process["message"]
-    _rpc(
-        erp_client,
-        "saveWarehousePoolOpening",
-        [{"processId": process["data"]["processId"], "qty": 10}],
-        mutation=True,
-    )
-    saved = _rpc(
-        erp_client,
-        "saveWastage",
-        [
-            {
-                "date": "01/01/2026",
-                "items": [
-                    {
-                        "sourceType": "POOL",
-                        "name": output,
-                        "qty": 2,
-                        "reason": "Paint run",
-                    }
-                ],
-            }
-        ],
-        mutation=True,
-    ).get_json()
-    assert saved["success"] is True, saved["message"]
-
-    with erp_app.app_context():
-        result = ledger_audit_service.compute_internal_ledger_audit_findings()
-
-    assert not [
-        f
-        for f in result["findings"]
-        if f["type"] == "over_consumed_item" and f["itemName"] == output
-    ]
+    assert not [f for f in result["findings"] if f.get("itemName") == item]
 
 
 def test_run_internal_ledger_audit_writes_summary_row(erp_app):

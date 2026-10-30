@@ -9,6 +9,8 @@ from __future__ import annotations
 import hashlib
 from datetime import date, datetime
 
+from . import units_service
+
 _EPS = 1e-6
 # Rupee amounts: below this a difference is rounding.
 MONEY_EPS = 0.01
@@ -70,8 +72,7 @@ def _finding(
 
 
 def _fmt(q) -> str:
-    q = float(q or 0)
-    return f"{q:g}" if abs(q - round(q)) > _EPS else str(int(round(q)))
+    return units_service.format_qty(q)
 
 
 def _label(item: str, colour: str = "", tag: str = "") -> str:

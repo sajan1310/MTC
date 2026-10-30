@@ -36,10 +36,42 @@ _UNIT_RENAME_SINGLE_COLUMN_TARGETS = [
     ("RETURN_LINES", "unit"),
     ("WASTAGE_LINES", "unit"),
     ("ISSUE_LINES", "unit"),
+    ("PROCESS_COMPONENTS", "unit"),
 ]
 
 # Items Master has two unit-name columns to rename.
 _ITEMS_UNIT_FIELDS = ["baseUnit", "purchaseUnit"]
+
+
+def _rename_unit_in_lot_components(cur, old: str, new: str) -> None:
+    """Lots keep their components as JSON and convert them on every Stock
+    read, so a lot left naming the old unit would be read as one of its
+    item's Base Unit from then on: renaming a unit moved Stock from 76 to 98.
+    POOL components convert too, so they are renamed with the rest.
+    custom_components (the saved Production Sheet) has no unit to rename.
+    """
+    table = config_maps.TABLE_NAMES.get("PRODUCTION")
+    if not table:
+        return
+    old_lower = old.lower()
+    cur.execute(f"SELECT id, components_consumed FROM {table} WHERE deleted_at IS NULL")
+    for row in cur.fetchall():
+        components = row["components_consumed"]
+        if not isinstance(components, list):
+            continue
+        changed = False
+        for comp in components:
+            if (
+                isinstance(comp, dict)
+                and str(comp.get("unit") or "").strip().lower() == old_lower
+            ):
+                comp["unit"] = new
+                changed = True
+        if changed:
+            cur.execute(
+                f"UPDATE {table} SET components_consumed = %s WHERE id = %s",
+                (psycopg2.extras.Json(components), row["id"]),
+            )
 
 
 def _rename_unit_everywhere(cur, old_name: str, new_name: str) -> None:
@@ -62,6 +94,8 @@ def _rename_unit_everywhere(cur, old_name: str, new_name: str) -> None:
             rename_utils.rename_in_column(
                 cur, items_table, config_maps.to_snake_case(field), old, new
             )
+
+    _rename_unit_in_lot_components(cur, old, new)
 
 
 def _unit_usage(cur, unit_name: str) -> list:
@@ -182,7 +216,7 @@ def save_unit(conn, cur, form_data):
     )
 
     cur.execute(
-        "SELECT id FROM erp.units WHERE lower(unit_name) = lower(%s) AND deleted_at IS NULL",
+        "SELECT id, family, factor_to_base FROM erp.units WHERE lower(unit_name) = lower(%s) AND deleted_at IS NULL",
         (original_name,),
     )
     existing = cur.fetchone()
@@ -199,6 +233,23 @@ def save_unit(conn, cur, form_data):
         )
         if cur.fetchone():
             raise ValueError(f'Another unit named "{new_name}" already exists.')
+
+    # Bills, returns, wastage and issues stored their base quantity when they
+    # were saved; lots convert on every read. A new factor would reach only
+    # the lots and move Stock with no warning (96 to 72 on one item), and
+    # the convert functions compare family exactly, so that counts too.
+    if is_edit and (
+        family != str(existing["family"] or "").strip()
+        or abs(factor - float(existing["factor_to_base"] or 0)) > 1e-9
+    ):
+        in_use = _unit_usage(cur, original_name)
+        if in_use:
+            raise ValueError(
+                f'"{original_name}" is used by {", ".join(in_use)}, so its factor '
+                "and family can't change: saved quantities would keep the old "
+                "conversion, lots would take the new one, and Stock would move. "
+                "Add a new unit with the new factor instead."
+            )
 
     user_id = get_current_user_id()
 

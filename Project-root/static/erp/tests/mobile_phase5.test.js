@@ -293,4 +293,51 @@ describe('Log Lot contractor rate', () => {
     expect(hint().textContent).toContain('₹40.00');
     expect(hint().textContent).not.toContain('999');
   });
+
+  // An edit keeps the lot's saved rate unless its contractor changes
+  // (save_production), so the hint must not promise today's card.
+  describe('on an edit', () => {
+    const saved = { assignedTo: 'rakesh', contractorRate: 30, extraChargeType: '', extraChargeAmount: 0 };
+
+    afterEach(() => { MApp.Production.editingLot = null; });
+
+    test('shows the rate saved on the lot, and that the card differs', async () => {
+      MApp.Production.editingLot = saved;
+      MApp.Api.call = jest.fn(async () => ({ success: true, data: { ratePerUnit: 40 } }));
+
+      await MApp.Production._showContractorRate();
+
+      expect(hint().textContent).toContain('Saved rate: ₹30.00');
+      expect(hint().textContent).toContain('The rate card says ₹40.00');
+    });
+
+    test('says nothing more when the card agrees', async () => {
+      MApp.Production.editingLot = saved;
+      MApp.Api.call = jest.fn(async () => ({ success: true, data: { ratePerUnit: 30 } }));
+
+      await MApp.Production._showContractorRate();
+
+      expect(hint().textContent).toContain('Saved rate: ₹30.00');
+      expect(hint().textContent).not.toContain('The rate card says');
+    });
+
+    test('a different contractor is priced from their card', async () => {
+      MApp.Production.editingLot = saved;
+      MApp.Production.selectedAssignedTo = 'Sanjay';
+      MApp.Api.call = jest.fn(async () => ({ success: true, data: { ratePerUnit: 40 } }));
+
+      await MApp.Production._showContractorRate();
+
+      expect(hint().textContent).toContain('Rate on file: ₹40.00');
+    });
+
+    test('a saved lot holding no rate is priced from the card, like the save', async () => {
+      MApp.Production.editingLot = { ...saved, contractorRate: 0 };
+      MApp.Api.call = jest.fn(async () => ({ success: true, data: { ratePerUnit: 40 } }));
+
+      await MApp.Production._showContractorRate();
+
+      expect(hint().textContent).toContain('Rate on file: ₹40.00');
+    });
+  });
 });
