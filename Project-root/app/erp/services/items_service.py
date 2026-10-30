@@ -1871,6 +1871,10 @@ def _ledger_entry(
 
 @rpc_method("getItemLedgerData")
 def get_item_ledger_data(item_name):
+    return build_item_ledger(item_name)
+
+
+def build_item_ledger(item_name, production=None, terms=None):
     """Every stock movement for one Items Master name, across all its size
     variants, in BASE UNITS -- computed server-side from the exact same
     terms, signs, unit conversions and count anchors as Current Stock
@@ -1921,6 +1925,12 @@ def get_item_ledger_data(item_name):
     counted) + incoming - outgoing over the counted rows must equal the
     currentStock the Stock page shows, and `balanced` reports whether it
     does.
+
+    The audit reads every item's ledger, and this is slow for one reason: it
+    walks every lot, and works out Current Stock's terms, for each item in
+    turn. So `production` ({lower-cased item name: components}) and `terms`
+    (the whole of stock_service._get_stock_terms) let a caller reading many
+    items hand in those two once. What comes back is the same.
     """
     # Local import: stock_service imports THIS module, so a module-level
     # import would be circular -- same precedent as stock_rows.py's own
@@ -2069,7 +2079,12 @@ def get_item_ledger_data(item_name):
 
         # Production: the lot's OWN recorded consumption, every process
         # stage -- not a BOM estimate, and not final-stage lots only.
-        for comp in stock_service._iter_completed_production_components(cur):
+        components = (
+            stock_service._iter_completed_production_components(cur)
+            if production is None
+            else production.get(target_lower, ())
+        )
+        for comp in components:
             if comp["itemName"].strip().lower() != target_lower:
                 continue
             source = (
@@ -2198,13 +2213,14 @@ def get_item_ledger_data(item_name):
 
         # The very anchors and sums get_stock_data renders from, for this
         # item's sizes only.
-        terms = stock_service._get_stock_terms(
-            cur,
-            [
-                (target_lower, (r["size"] or "").strip().lower())
-                for r in stock_rows_found
-            ],
-        )
+        if terms is None:
+            terms = stock_service._get_stock_terms(
+                cur,
+                [
+                    (target_lower, (r["size"] or "").strip().lower())
+                    for r in stock_rows_found
+                ],
+            )
 
     # One order per size, fixed before anything is accumulated, so the
     # display can be its exact reverse.

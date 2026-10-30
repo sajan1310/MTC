@@ -28,6 +28,7 @@ function loadDashboard() {
 function mountModal() {
   document.body.innerHTML = `
     <div id="auditRunMeta"></div><div id="auditSummary"></div>
+    <div id="auditCoverage"></div><div id="auditLedgers"></div><div id="auditMissing"></div>
     <button id="auditRunBtn"></button><div id="auditProgress"></div>
     <input type="checkbox" id="auditShowDismissed"><div id="auditBody"></div>`;
 }
@@ -70,6 +71,88 @@ describe('App.Dashboard audit report', () => {
     document.getElementById('auditShowDismissed').checked = true;
     App.Dashboard.renderAuditReport();
     expect(body.textContent).toContain('Gone');
+  });
+
+  test('says what it checked, module by module, and a chip filters the list', () => {
+    App.Dashboard._audit = report([
+      finding({ fingerprint: 'a', area: 'bills', title: 'Bill one' }),
+      finding({ fingerprint: 'b', area: 'pool', title: 'Pool one' }),
+    ], {
+      coverage: [
+        { area: 'bills', label: 'Received bills', findings: 1, integrity: 0, failed: 0 },
+        { area: 'pool', label: 'Warehouse Pool', findings: 1, integrity: 0, failed: 0 },
+        { area: 'wastage', label: 'Wastage', findings: 0, integrity: 0, failed: 0 },
+        { area: 'units', label: 'Units', findings: 0, integrity: 0, failed: 2 },
+      ],
+    });
+    App.Dashboard.renderAuditReport();
+
+    const chips = document.getElementById('auditCoverage');
+    const body = document.getElementById('auditBody');
+    expect(chips.textContent).toContain('Received bills · 1');
+    // Nothing to report reads as checked, and a check that failed says so.
+    expect(chips.textContent).toContain('Wastage');
+    expect(chips.textContent).toContain('2 could not run');
+    expect(body.textContent).toContain('Received bills'); // on the finding too
+
+    App.Dashboard.filterAuditArea('bills');
+    expect(body.textContent).toContain('Bill one');
+    expect(body.textContent).not.toContain('Pool one');
+    expect(chips.querySelector('[aria-pressed="true"]').textContent).toContain('Received bills');
+
+    App.Dashboard.filterAuditArea('wastage');
+    expect(body.textContent).toContain('Nothing to review in Wastage');
+
+    App.Dashboard.filterAuditArea('wastage'); // the same chip again clears it
+    expect(body.textContent).toContain('Pool one');
+  });
+
+  test('traces each ledger and lists what is missing, and filtering leaves the panels alone', () => {
+    App.Dashboard._audit = report([
+      finding({
+        title: 'Bill one',
+        area: 'bills',
+        missing: { type: 'logic', text: 'Saving a bill does not compare its price.' },
+      }),
+    ], {
+      coverage: [{ area: 'bills', label: 'Received bills', findings: 1, integrity: 0, failed: 0 }],
+      stockStatement: { items: 1630, disagree: 0 },
+      recipeCheck: { judged: 647, byNeighbours: 267, notJudged: 434 },
+      ledgers: [
+        { area: 'bills', label: 'Bill Ledger', lands: 'its item', checked: '1,598 lines on 624 bills', misplaced: 3, wrongFigures: 0 },
+        { area: 'stock', label: 'Item Ledger', lands: 'its size', checked: '1,630 items', misplaced: 0, wrongFigures: 1 },
+      ],
+      missing: [
+        { type: 'calculation', text: 'No payable is worked out.', findings: 6, checks: ['lot_without_rate'] },
+        { type: 'logic', text: 'Saving a bill does not compare its price.', findings: 45, checks: ['bill_rate_above_po'] },
+      ],
+    });
+    App.Dashboard.renderAuditReport();
+
+    const ledgers = document.getElementById('auditLedgers');
+    expect(ledgers.textContent).toContain('Ledgers traced: 2 · 3 landing finding(s) · 1 wrong figure(s)');
+    expect(ledgers.textContent).toContain('1,598 lines on 624 bills');
+    expect(ledgers.textContent).toContain('all agree with the Stock page');
+    expect(ledgers.textContent).toContain('267 older ones against the lots around them; 434 had too little');
+
+    const missing = document.getElementById('auditMissing');
+    expect(missing.textContent).toContain('Missing: 1 calculation(s), 1 piece(s) of logic');
+    expect(missing.textContent).toContain('No payable is worked out.');
+
+    expect(document.getElementById('auditBody').textContent)
+      .toContain('Missing logic: Saving a bill does not compare its price.');
+
+    missing.querySelector('details').open = true;
+    App.Dashboard.filterAuditArea('bills');
+    expect(document.getElementById('auditMissing').querySelector('details').open).toBe(true);
+  });
+
+  test('a run from before these panels shows none', () => {
+    App.Dashboard._audit = report([finding({})]);
+    App.Dashboard.renderAuditReport();
+    expect(document.getElementById('auditLedgers').textContent).toBe('');
+    expect(document.getElementById('auditMissing').textContent).toBe('');
+    expect(document.getElementById('auditBody').textContent).toContain('Title');
   });
 
   test('a review decision is sent with the numbers it was made on', async () => {
