@@ -313,6 +313,12 @@ def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
     if table := config_maps.TABLE_NAMES.get("WASTAGE_LINES"):
         _rename_color_token_in_column(cur, table, "color", old, new)
 
+    # A Labor line's colour decides the bucket its goods land in when the
+    # bill adds to the pool. Left stale, the next save of that bill would
+    # refuse the colour, or put the goods back under the old name.
+    if table := config_maps.TABLE_NAMES.get("BILL_LINES"):
+        _rename_color_token_in_column(cur, table, "color", old, new)
+
     if table := config_maps.TABLE_NAMES.get("PROCESS_COLOR_LINKS"):
         _rename_color_token_in_either_column(
             cur,

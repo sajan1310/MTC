@@ -463,6 +463,47 @@ def _check_pool_ledger_screens(ctx: _Context) -> list:
     return out
 
 
+def _check_bill_pool_entries(ctx: _Context) -> list:
+    """A Labor bill saved to add to the pool holds exactly its quantity there,
+    and a deleted bill holds nothing. save_bill and delete_bill keep the two
+    together, so any difference is a bug, not an entry mistake."""
+    cur = ctx.cur
+    cur.execute(
+        """
+        SELECT h.id, h.bill_number, h.vendor, h.deleted_at,
+               COALESCE(l.qty, 0) AS billed, COALESCE(o.qty, 0) AS pooled
+          FROM erp.bill_headers h
+          LEFT JOIN (SELECT header_id, SUM(base_qty) AS qty FROM erp.bill_lines
+                      WHERE adds_to_pool GROUP BY header_id) l ON l.header_id = h.id
+          LEFT JOIN (SELECT bill_header_id, SUM(qty) AS qty FROM erp.warehouse_pool_opening
+                      WHERE bill_header_id IS NOT NULL GROUP BY bill_header_id) o
+                 ON o.bill_header_id = h.id
+         WHERE l.header_id IS NOT NULL OR o.bill_header_id IS NOT NULL
+        """
+    )
+    out = []
+    for r in cur.fetchall():
+        billed = 0.0 if r["deleted_at"] else float(r["billed"])
+        pooled = float(r["pooled"])
+        if abs(billed - pooled) <= _EPS:
+            continue
+        gone = " (deleted)" if r["deleted_at"] else ""
+        out.append(
+            _finding(
+                "bill_pool_entry_mismatch",
+                "integrity",
+                "pool",
+                f"Bill {r['bill_number']} ({r['vendor']}){gone}: {_fmt(billed)} should be in the "
+                f"Warehouse Pool, {_fmt(pooled)} is",
+                "Saving or deleting a bill keeps its pool entries in step with it, so this "
+                "should not be possible. Do not correct it by hand: it needs looking at.",
+                refs=[f"Bill {r['bill_number']}"],
+                qty=abs(billed - pooled),
+            )
+        )
+    return out
+
+
 def _check_pool_openings(ctx: _Context) -> list:
     """A pool opening or count hangs off the process that makes its bucket. If
     that process is gone, nothing says which stage the stock belongs to."""
@@ -1043,7 +1084,7 @@ def _check_labor_bills(ctx: _Context) -> list:
         SELECT h.id, h.bill_number, h.vendor, h.bill_date, h.created_at,
                l.process_name, l.item_name, l.color, l.qty
           FROM erp.bill_lines l JOIN erp.bill_headers h ON h.id = l.header_id
-         WHERE h.deleted_at IS NULL AND l.bill_type = 'LABOR'
+         WHERE h.deleted_at IS NULL AND l.bill_type = 'LABOR' AND NOT l.adds_to_pool
          ORDER BY h.bill_date, h.id
         """
     )
@@ -1105,7 +1146,11 @@ def _check_labor_bills(ctx: _Context) -> list:
                 "lot would have used are still in Stock."
             )
         else:
-            detail += "Log the lot (dated the day the goods came back) so the pool and Stock both move."
+            detail += (
+                "Log the lot (dated the day the goods came back) so the pool and Stock both "
+                "move. If the vendor made these goods and no lot will record them, edit the "
+                "bill and choose Add to Warehouse Pool instead."
+            )
         out.append(
             _finding(
                 "labor_bill_without_lot",
@@ -3645,6 +3690,7 @@ _CHECKS = (
     (("pool",), _check_pool_ledger, False),
     (("pool",), _check_pool_ledger_screens, False),
     (("pool",), _check_pool_openings, False),
+    (("pool", "bills"), _check_bill_pool_entries, False),
     (("pool",), _check_negative_buckets, False),
     (("pool",), _check_pool_hand_edits, False),
     (("pool", "stock"), _check_count_variances, True),
@@ -3948,6 +3994,7 @@ _LANDING_CHECKS = frozenset(
         "bill_names_missing_po",
         "bill_on_wrong_po",
         "bill_po_line_unmatched",
+        "bill_pool_entry_mismatch",
         "bill_po_vendor_mismatch",
         "bill_after_po_cancelled",
         "bill_ledger_only_uncounted",

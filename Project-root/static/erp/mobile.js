@@ -18835,9 +18835,9 @@ MApp.PoolOpenings = {
         </div>
         ${isCorrection ? '<div class="mb-mt-2"><span class="mb-chip">Correction</span></div>' : ''}
         ${r.remarks ? `<div class="mb-card-sub mb-mt-2">${MApp.Util.escapeHtml(r.remarks)}</div>` : ''}
-        <div class="mb-mt-2">
+        ${r.fromBill ? '<div class="mb-card-sub mb-mt-2">Change it on the bill.</div>' : `<div class="mb-mt-2">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-opening-delete="${i}">Delete</button>
-        </div>
+        </div>`}
       </div>`;
     }).join('') + MApp.Paging.moreHtml(page);
 

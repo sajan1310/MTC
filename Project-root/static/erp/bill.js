@@ -606,6 +606,10 @@ App.Bill = {
     document.getElementById('billForm')?.reset();
     const billType = bill.billType === 'LABOR' ? 'LABOR' : 'GOODS';
     await this.setBillType(billType);
+    // A saved bill has already been answered, so an edit reopens on that
+    // answer. Only a new Labor bill starts with neither picked.
+    const poolChoice = document.getElementById(bill.addToPool ? 'billPoolAdd' : 'billPoolLedger');
+    if (poolChoice && billType === 'LABOR') poolChoice.checked = true;
 
     const existingBillNumber = document.getElementById('existingBillNumber');
     if (existingBillNumber) existingBillNumber.value = bill.billNumber || '';
@@ -1474,6 +1478,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const { formData, items } = App.Bill.serializeForm();
     if (!items.length) {
       App.Utils.showToast('Please add at least one item to the bill.', true);
+      return;
+    }
+    // The saver's to decide, so neither is picked for them: a bill that
+    // quietly became Ledger only left 58 finished frames out of the pool.
+    if (formData.billType === 'LABOR' && formData.addToPool === undefined) {
+      App.Utils.showToast('Choose Add to Warehouse Pool or Ledger only.', true);
       return;
     }
 
