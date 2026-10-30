@@ -638,7 +638,7 @@ def test_a_document_dated_after_today_is_reported(erp_admin_client):
     assert "Bill(s) dated after today" in f["title"]
 
 
-def test_the_old_over_consumption_check_is_left_out_and_a_failing_check_is_reported(
+def test_the_hourly_ledger_findings_arrive_and_a_failing_check_is_reported(
     monkeypatch,
 ):
     monkeypatch.setattr(
@@ -646,11 +646,6 @@ def test_the_old_over_consumption_check_is_left_out_and_a_failing_check_is_repor
         "compute_internal_ledger_audit_findings",
         lambda: {
             "findings": [
-                {
-                    "type": "over_consumed_item",
-                    "itemName": "Opening Stock Item",
-                    "size": "",
-                },
                 {
                     "type": "over_billed_po_line",
                     "poNumber": "9",
@@ -673,7 +668,6 @@ def test_the_old_over_consumption_check_is_left_out_and_a_failing_check_is_repor
     found, errors = audit_service.compute_external_findings()
     checks = {f["check"] for f in found}
     assert "over_billed_po_line" in checks
-    assert "over_consumed_item" not in checks
     assert errors == [
         {"check": "_external_contractor_findings", "error": "ledger unreachable"}
     ]

@@ -3373,19 +3373,11 @@ def _check_future_dates(ctx: _Context) -> list:
 
 def _external_ledger_findings() -> list:
     """The hourly ledger reconciliation (ledger_audit_service), folded in.
-    Opens its own connections, so it runs outside the audit's transaction.
-
-    Its over_consumed_item is left out: it measures returns + wastage +
-    issues against what was ever billed, ignoring opening stock, counts and
-    production, so an item that came in as opening stock reads as
-    over-consumed by everything ever issued. negative_item_stock asks the
-    same question of the Stock page's own figure."""
+    Opens its own connections, so it runs outside the audit's transaction."""
     res = ledger_audit_service.compute_internal_ledger_audit_findings()
     out = []
     for f in res.get("findings") or []:
         t = f.get("type", "")
-        if t == "over_consumed_item":
-            continue
         refs = [
             f"PO {f['poNumber']}" if f.get("poNumber") else "",
             f"Return {f['returnNumber']}" if f.get("returnNumber") else "",
@@ -3786,8 +3778,8 @@ _MISSING = {
     ),
     "lot_colours_disagree": (
         "logic",
-        "A lot's quantity comes from its primary colours, and each colour's counting flag from "
-        "the form; saving does not compare the two.",
+        "A lot's quantity comes from its primary colours, and saving now sets each colour's "
+        "counting flag by the same rule, so these lots date from before that.",
     ),
     "labor_bill_without_lot": (
         "logic",

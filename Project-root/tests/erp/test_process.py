@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 import uuid
 
+import database
+
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
@@ -1071,3 +1073,119 @@ def test_refresh_reports_what_it_skipped_instead_of_claiming_a_match(erp_client)
         assert field in data, f"{field} missing from {data}"
     if data["componentsUnknown"] or data["componentsCleared"]:
         assert "already match" not in res["message"], res["message"]
+
+
+def _rename_colour(client, old, new):
+    body = _rpc(
+        client,
+        "saveColor",
+        [{"name": new, "originalName": old}],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+
+def _overrides(process_id):
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "SELECT color, action FROM erp.process_color_overrides WHERE process_id = %s",
+            (process_id,),
+        )
+        return dict(cur.fetchall())
+
+
+def test_a_colour_rename_reaches_a_processs_colour_overrides(erp_client):
+    old_color = _unique_name("OldColor")
+    new_color = _unique_name("NewColor")
+    _rpc(erp_client, "saveColor", [{"name": old_color}], mutation=True)
+    _payload, process_id = _save_process(erp_client)
+    added = _rpc(
+        erp_client,
+        "includeWarehousePoolColor",
+        [process_id, old_color],
+        mutation=True,
+    ).get_json()
+    assert added["success"] is True, added["message"]
+
+    _rename_colour(erp_client, old_color, new_color)
+
+    assert _overrides(process_id) == {new_color: "INCLUDE"}
+
+
+def test_a_colour_rename_replaces_a_leftover_override_of_that_name(erp_client):
+    """The unique index would otherwise fail the whole rename."""
+    old_color = _unique_name("OldColor")
+    new_color = _unique_name("NewColor")
+    _rpc(erp_client, "saveColor", [{"name": old_color}], mutation=True)
+    _payload, process_id = _save_process(erp_client)
+    _rpc(
+        erp_client,
+        "includeWarehousePoolColor",
+        [process_id, old_color],
+        mutation=True,
+    )
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "INSERT INTO erp.process_color_overrides (process_id, color, action) "
+            "VALUES (%s, %s, 'EXCLUDE')",
+            (process_id, new_color),
+        )
+
+    _rename_colour(erp_client, old_color, new_color)
+
+    assert _overrides(process_id) == {new_color: "INCLUDE"}
+
+
+def test_a_colour_rename_reaches_a_pool_buckets_counts_flag(erp_client):
+    old_color = _unique_name("OldColor")
+    new_color = _unique_name("NewColor")
+    _rpc(erp_client, "saveColor", [{"name": old_color}], mutation=True)
+    payload, process_id = _save_process(erp_client)
+    flag = _rpc(
+        erp_client,
+        "setWarehousePoolBucketCountsTowardTotal",
+        [payload["outputItemName"], process_id, "", old_color, False],
+        mutation=True,
+    ).get_json()
+    assert flag["success"] is True, flag["message"]
+
+    _rename_colour(erp_client, old_color, new_color)
+
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "SELECT color FROM erp.warehouse_pool_bucket_flags WHERE output_item_name = %s",
+            (payload["outputItemName"],),
+        )
+        assert [r[0] for r in cur.fetchall()] == [new_color]
+
+
+def test_a_process_rename_reaches_additional_costs_on_a_product(erp_client):
+    payload, process_id = _save_process(erp_client)
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "INSERT INTO erp.bom_products (product_id, product_name) "
+            "VALUES (%s, %s) RETURNING id",
+            (_unique_name("PRD"), _unique_name("Product")),
+        )
+        header_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO erp.bom_additional_costs "
+            "(header_id, description, rate, process_name) VALUES (%s, 'Polish', 1, %s)",
+            (header_id, payload["processName"]),
+        )
+    renamed = _unique_name("Renamed Process")
+
+    body = _rpc(
+        erp_client,
+        "saveProcess",
+        [{**payload, "processId": process_id, "processName": renamed}],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "SELECT process_name FROM erp.bom_additional_costs WHERE header_id = %s",
+            (header_id,),
+        )
+        assert cur.fetchone()[0] == renamed

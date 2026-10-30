@@ -1540,3 +1540,63 @@ def test_a_saved_dispatch_keeps_its_logistics_rate(erp_app, erp_client):
     assert moved["success"] is True, moved["message"]
     assert _dispatched(erp_client, number)["logisticsRate"] == 4
     assert _dispatched(erp_client, number)["logisticsCost"] == 16
+
+
+def _planned_bill(erp_app, erp_client):
+    """A plan line, and the bill converted from it."""
+    token = _get_bom_token(erp_app, erp_client)
+    product_name, product_id = _save_bom_product(erp_client, token)
+    _payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _complete_production_lot(erp_client, process_id, product_id, 10)
+    plan = _save_plan_line(
+        erp_client, productId=product_id, productName=product_name, qty=4
+    ).get_json()
+    assert plan["success"] is True, plan["message"]
+    line_id = plan["data"]["lineId"]
+    bill = _save_dispatch(
+        erp_client,
+        [{"productId": product_id, "productName": product_name, "qty": 4}],
+        sourcePlanLineIds=[line_id],
+    ).get_json()
+    assert bill["success"] is True, bill["message"]
+    return line_id, bill["data"]["dispatchNumber"]
+
+
+def _plan_line(client, line_id):
+    listed = _rpc(client, "getDispatchPlans").get_json()["data"]
+    return next(r for r in listed if r["lineId"] == line_id)
+
+
+def test_deleting_a_bill_puts_its_plan_lines_back_on_the_plan(erp_app, erp_client):
+    line_id, number = _planned_bill(erp_app, erp_client)
+    assert _plan_line(erp_client, line_id)["fulfilled"] is True
+
+    body = _rpc(erp_client, "deleteDispatch", [number], mutation=True).get_json()
+    assert body["success"] is True, body["message"]
+
+    line = _plan_line(erp_client, line_id)
+    assert line["fulfilled"] is False
+    assert line["fulfilledDispatchNumber"] == ""
+    # Back on the plan it can be taken off it again.
+    removed = _rpc(
+        erp_client, "deleteDispatchPlanLine", [line_id], mutation=True
+    ).get_json()
+    assert removed["success"] is True, removed["message"]
+
+
+def test_bulk_deleting_bills_puts_their_plan_lines_back(erp_app, erp_client):
+    line_id, number = _planned_bill(erp_app, erp_client)
+
+    body = _rpc(erp_client, "deleteDispatchBulk", [[number]], mutation=True).get_json()
+    assert body["success"] is True, body["message"]
+
+    assert _plan_line(erp_client, line_id)["fulfilled"] is False
+
+
+def test_deleting_a_bill_leaves_other_bills_plan_lines_alone(erp_app, erp_client):
+    line_id, _number = _planned_bill(erp_app, erp_client)
+    _other_line, other = _planned_bill(erp_app, erp_client)
+
+    _rpc(erp_client, "deleteDispatch", [other], mutation=True)
+
+    assert _plan_line(erp_client, line_id)["fulfilled"] is True

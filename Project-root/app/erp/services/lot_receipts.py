@@ -47,6 +47,7 @@ balance always add back up to the whole lot, whatever the colours.
 from __future__ import annotations
 
 from . import process_service
+from . import units_service
 from . import warehouse_service
 from .. import config_maps
 
@@ -79,8 +80,7 @@ def _counting_entries(color_breakdown) -> list:
 
 def fmt_qty(qty) -> str:
     """A quantity for a message: 60, not 60.0; 2.5 stays 2.5."""
-    qty = _num(qty)
-    return str(int(qty)) if qty == int(qty) else f"{qty:g}"
+    return units_service.format_qty(_num(qty))
 
 
 class LotShape:

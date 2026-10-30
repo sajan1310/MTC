@@ -17,6 +17,8 @@ from __future__ import annotations
 import uuid
 from datetime import date, timedelta
 
+from app.erp.services import lot_receipts
+
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
@@ -638,3 +640,110 @@ def test_the_dashboard_counts_only_the_balance_as_work_in_progress(erp_client):
     dash = _rpc(erp_client, "getDashboardData").get_json()["data"]
     stage = next(p for p in dash["pipeline"] if p["processId"] == process_id)
     assert stage["totalQty"] == 6
+
+
+def test_a_lot_cannot_be_dated_after_its_first_receipt(erp_client):
+    today = date.today()
+    _output, raw, row, process_id = _plain_lot(erp_client)
+
+    def redate(when):
+        return _rpc(
+            erp_client,
+            "saveProduction",
+            [
+                {
+                    "rowIdx": row["rowIdx"],
+                    "processId": process_id,
+                    "assignedTo": "Worker A",
+                    "status": "In Progress",
+                    "qty": 10,
+                    "date": when.isoformat(),
+                    "componentsConsumed": [_component(raw, 20)],
+                }
+            ],
+            mutation=True,
+        ).get_json()
+
+    earlier = redate(today - timedelta(days=10))
+    assert earlier["success"] is True, earlier["message"]
+    received = _receive(erp_client, row, _whole(2), when=today - timedelta(days=5))
+    assert received["success"] is True, received["message"]
+
+    refused = redate(today - timedelta(days=4))
+    assert refused["success"] is False
+    assert "can't be dated after its first receipt" in refused["message"]
+
+    same_day = redate(today - timedelta(days=5))
+    assert same_day["success"] is True, same_day["message"]
+
+
+def test_a_receipt_with_a_date_that_means_nothing_is_refused(erp_client):
+    _output, _raw, row, _ = _plain_lot(erp_client)
+
+    body = _rpc(
+        erp_client,
+        "saveProductionReceipt",
+        [{"rowIdx": row["rowIdx"], "lines": _whole(2), "date": "31st of Nowhere"}],
+        mutation=True,
+    ).get_json()
+
+    assert body["success"] is False
+    assert body["message"] == "Enter a valid receipt date."
+    assert _lot(erp_client, row["lotNumber"])["balanceQty"] == 10
+
+
+def test_a_receipt_with_no_date_is_dated_today(erp_client):
+    _output, _raw, row, _ = _plain_lot(erp_client)
+
+    body = _receive(erp_client, row, _whole(2))
+
+    assert body["success"] is True, body["message"]
+
+
+def test_a_line_that_is_not_a_quantity_refuses_the_receipt(erp_client):
+    _output, red, blue, _frame, _r, _b, row = _colour_lot(erp_client)
+
+    for bad in ("six", -2, "nan", 99999999):
+        body = _receive(
+            erp_client,
+            row,
+            [
+                {"color": red, "size": "", "qty": 2},
+                {"color": blue, "size": "", "qty": bad},
+            ],
+        )
+        assert body["success"] is False, bad
+        assert f'"{bad}" is not a quantity for' in body["message"]
+    assert _lot(erp_client, row["lotNumber"])["balanceQty"] == 10
+
+
+def test_a_blank_or_zero_line_is_still_nothing_received_of_that_colour(erp_client):
+    _output, red, blue, _frame, _r, _b, row = _colour_lot(erp_client)
+
+    body = _receive(
+        erp_client,
+        row,
+        [
+            {"color": red, "size": "", "qty": 2},
+            {"color": blue, "size": "", "qty": ""},
+        ],
+    )
+    assert body["success"] is True, body["message"]
+
+    body = _receive(
+        erp_client,
+        row,
+        [
+            {"color": red, "size": "", "qty": 1},
+            {"color": blue, "size": "", "qty": "0.0"},
+        ],
+    )
+    assert body["success"] is True, body["message"]
+    assert _lot(erp_client, row["lotNumber"])["balanceQty"] == 7
+
+
+def test_a_quantity_in_a_message_never_reads_in_exponents():
+    assert lot_receipts.fmt_qty(1500000) == "1500000"
+    assert lot_receipts.fmt_qty(1500000.5) == "1500000.5"
+    assert lot_receipts.fmt_qty(60.0) == "60"
+    assert lot_receipts.fmt_qty(2.5) == "2.5"

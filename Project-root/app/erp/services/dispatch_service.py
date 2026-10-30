@@ -1108,6 +1108,20 @@ def save_dispatch(conn, cur, form_data):
     )
 
 
+def _reopen_plan_lines(cur, header_ids: list) -> None:
+    """Plan lines a bill fulfilled go back on the plan when the bill goes.
+    Left fulfilled they point at a bill that is gone, stop reserving their
+    quantity, and can't be removed (delete_dispatch_plan_line refuses)."""
+    plan_lines_table = config_maps.TABLE_NAMES.get("DISPATCH_PLAN_LINES")
+    headers_table = config_maps.TABLE_NAMES.get("DISPATCH_HEADERS")
+    cur.execute(
+        f"UPDATE {plan_lines_table} SET fulfilled_dispatch_number = NULL, fulfilled_at = NULL "
+        f"WHERE lower(fulfilled_dispatch_number) IN "
+        f"(SELECT lower(dispatch_number) FROM {headers_table} WHERE id = ANY(%s))",
+        (header_ids,),
+    )
+
+
 @rpc_method("deleteDispatch", mutation=True)
 @database.transactional
 def delete_dispatch(
@@ -1155,6 +1169,7 @@ def delete_dispatch(
         f"UPDATE {headers_table} SET deleted_at = NOW(), updated_by = %s WHERE id = %s",
         (get_current_user_id(), header_id),
     )
+    _reopen_plan_lines(cur, [header_id])
 
     warehouse_service._recalculate_warehouse_pool(cur)
 
@@ -1236,6 +1251,7 @@ def delete_dispatch_bulk(conn, cur, dispatch_numbers, expected_bills=None):
         (user_id, deletable_ids),
     )
     bills_deleted = cur.rowcount
+    _reopen_plan_lines(cur, deletable_ids)
 
     warehouse_service._recalculate_warehouse_pool(cur)
 

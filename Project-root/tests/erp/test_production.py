@@ -2799,3 +2799,327 @@ def test_a_saved_lot_keeps_its_extra_charge_after_the_card_moves(erp_client):
     added = _resave(erp_client, process_id, contractor, row, extraChargeType=charge)
     assert added["extraChargeAmount"] == 80
     assert added["contractorPayable"] == 360
+
+
+# ── A lot's colours say what its quantity says ─────────────────────────────
+
+
+def _two_axis_process(client):
+    frame_payload, frame_id = _save_process(client)
+    _seed_pool(client, frame_id, 50, color="Black")
+    _seed_pool(client, frame_id, 50, color="Blue")
+    rim_payload, rim_id = _save_process(client)
+    _seed_pool(client, rim_id, 50, color="Red")
+    _seed_pool(client, rim_id, 50, color="Green")
+    axis_label = frame_payload["outputItemName"]
+    _payload, down_id = _save_process(
+        client,
+        primaryColorAxis=axis_label,
+        components=[
+            {
+                "itemName": frame_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
+            {
+                "itemName": rim_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
+        ],
+    )
+    return down_id, axis_label
+
+
+def test_a_lots_saved_colours_agree_with_its_quantity(erp_client):
+    down_id, axis_label = _two_axis_process(erp_client)
+
+    body = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "primaryColorAxis": axis_label,
+                "colorBreakdown": [
+                    {"color": "Black", "qty": 4, "countsTowardTotal": False},
+                    {"color": "Blue", "qty": 6},
+                    {"color": "Red", "qty": 100, "countsTowardTotal": True},
+                ],
+                "componentsConsumed": [_item_component()],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+    row = _lot_row(erp_client, body["data"]["lotNumber"])
+    assert row["qty"] == 10
+    assert {c["color"]: c["countsTowardTotal"] for c in row["colorBreakdown"]} == {
+        "Black": True,
+        "Blue": True,
+        "Red": False,
+    }
+    assert row["balanceQty"] == 10
+
+
+def test_a_row_off_the_primary_axis_keeps_no_allocation(erp_client):
+    down_id, axis_label = _two_axis_process(erp_client)
+
+    body = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "primaryColorAxis": axis_label,
+                "colorBreakdown": [
+                    {
+                        "color": "Black",
+                        "qty": 4,
+                        "splits": [{"qty": 4, "axes": {"rim": "Red"}}],
+                    },
+                    {
+                        "color": "Red",
+                        "qty": 4,
+                        "splits": [{"qty": 4, "axes": {"frame": "Black"}}],
+                    },
+                ],
+                "componentsConsumed": [_item_component()],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+    row = _lot_row(erp_client, body["data"]["lotNumber"])
+    by_colour = {c["color"]: c for c in row["colorBreakdown"]}
+    assert "splits" not in by_colour["Red"]
+    assert by_colour["Black"]["splits"] == [{"qty": 4, "axes": {"rim": "Red"}}]
+
+
+# ── Deleting a lot warns only of what it can take back ─────────────────────
+
+
+def _lot_of(client, process_id, qty, status):
+    body = _rpc(
+        client,
+        "saveProduction",
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "status": status,
+                "qty": qty,
+                "componentsConsumed": [_item_component()],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+    return _lot_row(client, body["data"]["lotNumber"])
+
+
+def test_deleting_a_pending_lot_warns_of_nothing(erp_client):
+    _payload, process_id = _save_process(erp_client)
+    _seed_pool(erp_client, process_id, 3)
+    row = _lot_of(erp_client, process_id, 10, "Pending")
+
+    body = _rpc(
+        erp_client, "deleteProduction", [row["rowIdx"]], mutation=True
+    ).get_json()
+
+    assert body["success"] is True, body["message"]
+    assert "Warning" not in body["message"]
+
+
+def test_bulk_deleting_pending_lots_warns_of_nothing(erp_client):
+    _payload, process_id = _save_process(erp_client)
+    _seed_pool(erp_client, process_id, 3)
+    row = _lot_of(erp_client, process_id, 10, "Pending")
+
+    body = _rpc(
+        erp_client, "deleteProductionBulk", [[row["rowIdx"]]], mutation=True
+    ).get_json()
+
+    assert body["success"] is True, body["message"]
+    assert "Warning" not in body["message"]
+
+
+def _spent_downstream(client, payload, process_id, qty):
+    """Another lot draws `qty` of `process_id`'s output from the pool."""
+    _down_payload, down_id = _save_process(
+        client,
+        components=[
+            {
+                "itemName": payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            }
+        ],
+    )
+    body = _rpc(
+        client,
+        "saveProduction",
+        [
+            {
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "status": "Completed",
+                "qty": qty,
+                "componentsConsumed": [
+                    {
+                        "itemName": payload["outputItemName"],
+                        "qty": qty,
+                        "sourceType": "POOL",
+                        "colorGroup": "COMMON",
+                    }
+                ],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+
+def test_deleting_a_completed_lot_warns_when_its_credit_was_spent(erp_client):
+    payload, process_id = _save_process(erp_client)
+    row = _lot_of(erp_client, process_id, 10, "Completed")
+    _spent_downstream(erp_client, payload, process_id, 8)
+
+    body = _rpc(
+        erp_client, "deleteProduction", [row["rowIdx"]], mutation=True
+    ).get_json()
+
+    assert "-8.00" in body["message"]  # 2 left, less the 10 it put there
+
+
+def test_deleting_a_partly_received_lot_warns_only_of_what_came_back(erp_client):
+    payload, process_id = _save_process(erp_client)
+    row = _lot_of(erp_client, process_id, 10, "In Progress")
+    for qty in (2, 2):
+        receipt = _rpc(
+            erp_client,
+            "saveProductionReceipt",
+            [
+                {
+                    "rowIdx": row["rowIdx"],
+                    "lines": [{"color": "", "size": "", "qty": qty}],
+                }
+            ],
+            mutation=True,
+        ).get_json()
+        assert receipt["success"] is True, receipt["message"]
+    _spent_downstream(erp_client, payload, process_id, 3)
+
+    body = _rpc(
+        erp_client, "deleteProduction", [row["rowIdx"]], mutation=True
+    ).get_json()
+
+    assert "-3.00" in body["message"]  # 1 left, less the 4 it put there
+
+
+# ── The pool warning counts what the pool will actually lose ───────────────
+
+
+def _crate_of_twelve(client):
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "INSERT INTO erp.units (unit_name, family, factor_to_base) "
+            "SELECT 'Pcs', 'Count', 1 WHERE NOT EXISTS "
+            "(SELECT 1 FROM erp.units WHERE lower(unit_name) = 'pcs' AND deleted_at IS NULL)"
+        )
+    name = _unique_name("Crate")
+    body = _rpc(
+        client,
+        "saveUnit",
+        [{"unitName": name, "family": "Count", "factorToBase": 12}],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+    return name
+
+
+def _pool_draw(item, unit, qty=1):
+    return {
+        "itemName": item,
+        "qty": qty,
+        "unit": unit,
+        "sourceType": "POOL",
+        "colorGroup": "COMMON",
+    }
+
+
+def test_the_pool_warning_counts_a_draw_in_its_own_unit(erp_client):
+    crate = _crate_of_twelve(erp_client)
+    payload, process_id = _save_process(erp_client)
+    _seed_pool(erp_client, process_id, 5)
+    _down_payload, down_id = _save_process(erp_client)
+
+    body = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "status": "Completed",
+                "qty": 1,
+                "componentsConsumed": [_pool_draw(payload["outputItemName"], crate)],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+
+    assert body["success"] is True, body["message"]
+    assert "Only 5.0 unit(s)" in body["message"]
+
+
+def test_a_lot_re_saved_gets_back_what_it_drew_in_the_pools_unit(erp_client):
+    crate = _crate_of_twelve(erp_client)
+    payload, process_id = _save_process(erp_client)
+    _seed_pool(erp_client, process_id, 20)
+    _down_payload, down_id = _save_process(erp_client)
+    components = [_pool_draw(payload["outputItemName"], crate)]
+    first = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "status": "Completed",
+                "qty": 1,
+                "componentsConsumed": components,
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert first["success"] is True, first["message"]
+    assert "Warning" not in first["message"]
+    row = _lot_row(erp_client, first["data"]["lotNumber"])
+
+    # 8 left + the 12 it already holds: nothing new is being asked of the pool.
+    again = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "rowIdx": row["rowIdx"],
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "status": "Completed",
+                "qty": 1,
+                "componentsConsumed": components,
+            }
+        ],
+        mutation=True,
+    ).get_json()
+
+    assert again["success"] is True, again["message"]
+    assert "Warning" not in again["message"]

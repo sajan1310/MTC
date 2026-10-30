@@ -1334,3 +1334,75 @@ def test_deleting_a_po_says_which_bills_still_name_it(erp_client):
     assert body["success"] is True
     assert "1 line(s) on 1 bill(s) still name this PO" in body["message"]
     assert "Direct" in body["message"]
+
+
+def test_a_labor_bill_can_be_saved_again_after_its_process_is_renamed(erp_client):
+    payload = {
+        "processName": _unique_name("Labor Process"),
+        "lotPrefix": uuid.uuid4().hex[:6].upper(),
+        "outputItemName": _unique_name("Labor Output"),
+        "sequence": 1,
+        "isFinalStage": False,
+        "active": True,
+        "remarks": "",
+        "processType": "",
+        "primaryColorAxis": "",
+        "components": [],
+        "colorLinks": [],
+    }
+    process = _rpc(erp_client, "saveProcess", [payload], mutation=True).get_json()
+    assert process["success"] is True, process["message"]
+    number = _unique_name("LABOR")
+    vendor = _unique_name("Labor Vendor")
+
+    def line(process_name):
+        return {"processName": process_name, "qty": 2, "price": 5}
+
+    first = _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "billType": "LABOR",
+                "vendor": vendor,
+                "billNumber": number,
+                "billDate": "01/01/2026",
+                "items": [line(payload["processName"])],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert first["success"] is True, first["message"]
+
+    renamed = _unique_name("Renamed Labor Process")
+    edit = {
+        **payload,
+        "processId": process["data"]["processId"],
+        "processName": renamed,
+    }
+    assert (
+        _rpc(erp_client, "saveProcess", [edit], mutation=True).get_json()["success"]
+        is True
+    )
+
+    listed = _rpc(erp_client, "getBillData").get_json()["data"]
+    bill = next(b for b in listed if b["billNumber"] == number)
+    assert bill["items"][0]["processName"] == renamed
+
+    again = _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "billType": "LABOR",
+                "vendor": vendor,
+                "billNumber": number,
+                "existingBillNumber": number,
+                "existingVendor": vendor,
+                "billDate": "01/01/2026",
+                "items": [line(bill["items"][0]["processName"])],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert again["success"] is True, again["message"]
