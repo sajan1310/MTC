@@ -1260,7 +1260,8 @@ def save_production(conn, cur, form_data):
             # FOR UPDATE: a receipt saved against this lot mid-edit must wait,
             # or the edit could take a colour below what just came back.
             "SELECT id, process_id, lot_number, status, components_consumed, custom_components, "
-            "qty, color_breakdown FROM erp.production WHERE id = %s AND deleted_at IS NULL "
+            "qty, color_breakdown, assigned_to, contractor_rate, extra_charge_type, "
+            "extra_charge_amount FROM erp.production WHERE id = %s AND deleted_at IS NULL "
             "FOR UPDATE",
             (target_id,),
         )
@@ -1335,12 +1336,33 @@ def save_production(conn, cur, form_data):
     size = contractors_service._get_size_from_output_item_name(
         process["outputItemName"]
     )
-    contractor_rate = contractors_service._get_contractor_rate(
+
+    # A saved lot keeps the rate it was saved with, so a remarks or quantity
+    # edit recalculates its payable at that rate and never at whatever the
+    # rate card says that day. Reading the card on every save took a payable
+    # from Rs 100 to 150 on a remarks edit after a card change, and to Rs 0
+    # after a card entry was removed. Its process can't change (see above), so
+    # only a different contractor takes the card's rate -- and so does a lot
+    # holding no rate, or it could never be repaired.
+    same_contractor = (
+        is_edit
+        and str(existing["assigned_to"] or "").strip().lower() == assigned_to.lower()
+    )
+    contractor_rate = (
+        float(existing["contractor_rate"] or 0) if same_contractor else 0.0
+    ) or contractors_service._get_contractor_rate(
         cur, assigned_to, process["processType"], size
     )
 
     extra_charge_type = str(form_data.get("extraChargeType") or "").strip()
+    same_extra_charge = (
+        same_contractor
+        and str(existing["extra_charge_type"] or "").strip().lower()
+        == extra_charge_type.lower()
+    )
     extra_charge_amount = (
+        float(existing["extra_charge_amount"] or 0) if same_extra_charge else 0.0
+    ) or (
         contractors_service._get_extra_charge(cur, assigned_to, extra_charge_type)
         if extra_charge_type
         else 0.0

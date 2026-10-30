@@ -1477,3 +1477,66 @@ def test_over_dispatch_guard_reads_units_not_sub_groups(erp_client):
         ],
     )
     assert ok.get_json()["success"] is True, ok.get_json()["message"]
+
+
+def _set_logistics_rate(client, contractor, rate):
+    body = _rpc(
+        client,
+        "saveContractorRate",
+        [
+            {
+                "contractorName": contractor,
+                "processType": "Dispatch / Logistics",
+                "size": "General",
+                "ratePerUnit": rate,
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+
+def _dispatched(client, number):
+    listed = _rpc(client, "getDispatchData").get_json()["data"]
+    return next(r for r in listed if r["dispatchNumber"] == number)
+
+
+def test_a_saved_dispatch_keeps_its_logistics_rate(erp_app, erp_client):
+    token = _get_bom_token(erp_app, erp_client)
+    product_name, product_id = _save_bom_product(erp_client, token)
+    _payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _complete_production_lot(erp_client, process_id, product_id, 10)
+    contractor = _unique_name("LogisticsContractor")
+    other = _unique_name("OtherTransport")
+    _set_logistics_rate(erp_client, contractor, 7)
+    _set_logistics_rate(erp_client, other, 4)
+
+    def line(qty):
+        return [{"productId": product_id, "productName": product_name, "qty": qty}]
+
+    first = _save_dispatch(
+        erp_client, line(3), logisticsContractor=contractor
+    ).get_json()
+    assert first["success"] is True, first["message"]
+    number = first["data"]["dispatchNumber"]
+
+    _set_logistics_rate(erp_client, contractor, 9)
+    edited = _save_dispatch(
+        erp_client,
+        line(4),
+        logisticsContractor=contractor,
+        existingDispatchNumber=number,
+    ).get_json()
+    assert edited["success"] is True, edited["message"]
+    assert _dispatched(erp_client, number)["logisticsRate"] == 7
+    assert _dispatched(erp_client, number)["logisticsCost"] == 28
+
+    moved = _save_dispatch(
+        erp_client,
+        line(4),
+        logisticsContractor=other,
+        existingDispatchNumber=number,
+    ).get_json()
+    assert moved["success"] is True, moved["message"]
+    assert _dispatched(erp_client, number)["logisticsRate"] == 4
+    assert _dispatched(erp_client, number)["logisticsCost"] == 16

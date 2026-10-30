@@ -215,3 +215,39 @@ def test_sync_vendors_from_po_history_skips_below_min_rate(erp_client):
 
     items = _rpc(erp_client, "getItemsData").get_json()["data"]
     assert not any(i["name"] == item_name for i in items)
+
+
+def test_vendor_rename_carries_its_issues_with_it(erp_client):
+    original = _unique_name("Issue Vendor")
+    renamed = _unique_name("Renamed Issue Vendor")
+    _rpc(erp_client, "saveVendor", [{"vendorName": original}], mutation=True)
+    saved = _rpc(
+        erp_client,
+        "saveIssueStock",
+        [
+            {
+                "issuedTo": original,
+                "date": "01/01/2026",
+                "items": [{"name": _unique_name("Issued"), "qty": 1, "unit": "Pcs"}],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert saved["success"] is True, saved["message"]
+
+    def issue():
+        listed = _rpc(erp_client, "getIssueData").get_json()["data"]
+        return next(r for r in listed if r["issueId"] == saved["data"]["issueId"])
+
+    assert issue()["vendor"] == original
+
+    rename = _rpc(
+        erp_client,
+        "saveVendor",
+        [{"vendorName": renamed, "originalVendorName": original}],
+        mutation=True,
+    )
+    assert rename.get_json()["success"] is True
+
+    assert issue()["vendor"] == renamed
+    assert issue()["issuedTo"] == renamed

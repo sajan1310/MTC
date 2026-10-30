@@ -908,3 +908,39 @@ def test_contractor_rename_cascades_into_bom_additional_costs(erp_app, erp_clien
     listed = _rpc(erp_client, "getBOMData", [token]).get_json()["data"]
     match = next(p for p in listed if p["productId"] == product_id)
     assert match["additionalCosts"][0]["contractorName"] == new_contractor
+
+
+def test_contractor_rename_carries_issued_to_with_it(erp_client):
+    old_contractor = _unique_name("Issue Contractor")
+    new_contractor = _unique_name("Renamed Contractor")
+    _rpc(
+        erp_client,
+        "saveContractor",
+        [{"contractorName": old_contractor}],
+        mutation=True,
+    )
+    saved = _rpc(
+        erp_client,
+        "saveIssueStock",
+        [
+            {
+                "issuedTo": old_contractor,
+                "date": "01/01/2026",
+                "items": [{"name": _unique_name("Issued"), "qty": 1, "unit": "Pcs"}],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert saved["success"] is True, saved["message"]
+
+    rename = _rpc(
+        erp_client,
+        "saveContractor",
+        [{"contractorName": new_contractor, "originalContractorName": old_contractor}],
+        mutation=True,
+    )
+    assert rename.get_json()["success"] is True
+
+    listed = _rpc(erp_client, "getIssueData").get_json()["data"]
+    match = next(r for r in listed if r["issueId"] == saved["data"]["issueId"])
+    assert match["issuedTo"] == new_contractor

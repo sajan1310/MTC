@@ -45,6 +45,8 @@ _VENDOR_RENAME_SINGLE_COLUMN_TARGETS = [
     ("RETURN_HEADERS", "vendor"),
     ("WASTAGE_HEADERS", "vendor"),
     ("BOM_LINES", "vendor"),
+    ("ISSUE_HEADERS", "vendor"),
+    ("ISSUE_HEADERS", "issuedTo"),
 ]
 
 

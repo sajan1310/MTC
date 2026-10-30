@@ -504,7 +504,10 @@
 // findings to it; traces every ledger to where its entries must land; and
 // lists the calculations and logic it found missing. dashboard.js is
 // precached.
-const CACHE_NAME = 'erp-shell-v100';
+// v101: editing a lot or a dispatch keeps the rate it was saved with, so the
+// Payable and Logistics Cost hints show that rate, and say so when the rate
+// card differs. core.js, production.js and dispatch.js are precached.
+const CACHE_NAME = 'erp-shell-v101';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

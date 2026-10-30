@@ -170,6 +170,12 @@ def _rename_contractor_everywhere(cur, old_name: str, new_name: str) -> None:
             cur, table, config_maps.to_snake_case("logisticsContractor"), old, new
         )
 
+    # Issued To is free text, but it names the contractor the stock went to.
+    if table := config_maps.TABLE_NAMES.get("ISSUE_HEADERS"):
+        rename_utils.rename_in_column(
+            cur, table, config_maps.to_snake_case("issuedTo"), old, new
+        )
+
     # Display-only "sourced from" snapshot on a Product's Additional Cost
     # line -- never used in a lookup or balance calc, but still a
     # de-normalized copy of the name this function otherwise promises to

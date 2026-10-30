@@ -1748,6 +1748,14 @@ const App = {
       return String(a == null ? '' : a).trim().toLowerCase() === String(b == null ? '' : b).trim().toLowerCase();
     },
 
+    // What an edit keeps: a saved lot or dispatch holds on to its own rate
+    // unless its contractor changes (save_production, save_dispatch). 0 means
+    // it has none to keep, so the rate card decides. The cost hints use this
+    // so they show what the save will do, not what today's card says.
+    keptRate(savedContractor, savedRate, contractor) {
+      return this.sameText(savedContractor, contractor) ? toNumber(savedRate) : 0;
+    },
+
     // Display casing for name-like fields (Assigned By/To, ...) so
     // "ANIL"/"anil"/"Anil" -- all the same real contractor per sameText --
     // render identically instead of as visibly different strings. First

@@ -889,7 +889,8 @@ def save_dispatch(conn, cur, form_data):
     original_qty_by_product: dict = {}
     if is_edit:
         cur.execute(
-            f"SELECT id FROM {headers_table} WHERE lower(dispatch_number) = lower(%s) AND deleted_at IS NULL",
+            f"SELECT id, logistics_contractor, logistics_rate FROM {headers_table} "
+            "WHERE lower(dispatch_number) = lower(%s) AND deleted_at IS NULL",
             (old_dispatch_number,),
         )
         header_row = cur.fetchone()
@@ -963,8 +964,17 @@ def save_dispatch(conn, cur, form_data):
     # Dispatch / Logistics has no real Process record (no Process Type, no
     # Size) -- it's keyed into the same Layer 1 rate card as a pseudo
     # Process Type paired with the fixed size fallback, so a logistics
-    # rate is just one more row on a contractor's normal rate card.
-    logistics_rate = contractors_service._get_contractor_rate(
+    # rate is just one more row on a contractor's normal rate card. An edit
+    # keeps the rate it was saved with, the same rule as save_production: only
+    # a different contractor, or a dispatch holding no rate, reads the card.
+    same_contractor = (
+        is_edit
+        and str(header_row["logistics_contractor"] or "").strip().lower()
+        == logistics_contractor.lower()
+    )
+    logistics_rate = (
+        float(header_row["logistics_rate"] or 0) if same_contractor else 0.0
+    ) or contractors_service._get_contractor_rate(
         cur,
         logistics_contractor,
         config_maps.LOGISTICS_PROCESS_NAME,

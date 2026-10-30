@@ -1042,14 +1042,21 @@ App.Dispatch = {
       return;
     }
 
+    const editing = document.getElementById('dispatchNumberHidden')?.value;
+    const saved = editing ? (App.State.globalDispatchBills || []).find(x => x.dispatchNumber === editing) : null;
+    const kept = saved ? App.Utils.keptRate(saved.logisticsContractor, saved.logisticsRate, contractorName) : 0;
+
     try {
       const res = await Api.call('getContractorRateForProcessType', contractorName, 'Dispatch / Logistics', 'General');
-      const rate = res.success ? toNumber(res.data?.ratePerUnit) : 0;
+      const cardRate = res.success ? toNumber(res.data?.ratePerUnit) : 0;
+      const rate = kept || cardRate;
       if (!rate) {
         hintEl.innerText = `No rate card entry for "${App.Utils.formatNameCase(contractorName)}" / Dispatch / Logistics — cost will be 0.`;
         return;
       }
-      hintEl.innerText = `Logistics Cost: ${formatCurrency(totalQty * rate)} (${totalQty} x ${rate}/unit, across all lines)`;
+      let text = `Logistics Cost: ${formatCurrency(totalQty * rate)} (${totalQty} x ${rate}/unit, across all lines)`;
+      if (kept && kept !== cardRate) text += ` Saved rate kept; the rate card says ${cardRate}.`;
+      hintEl.innerText = text;
     } catch (err) {
       hintEl.innerText = '';
     }

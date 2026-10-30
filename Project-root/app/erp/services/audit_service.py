@@ -1670,8 +1670,9 @@ def _check_lots_without_rate(ctx: _Context) -> list:
         elif now:
             why = (
                 f"The rate card now pays {_rs(now)} a unit for {ptype} at size {size}; these lots "
-                "were saved before it existed and keep the rate they were saved with, so about "
-                f"{_rs(now * units)} is missing from {contractor}'s balance."
+                f"were saved before it existed, so about {_rs(now * units)} is missing from "
+                f"{contractor}'s balance. A lot holding no rate takes the card's when it is next "
+                "saved."
             )
             qty = now * units
         else:
@@ -3766,8 +3767,9 @@ _MISSING = {
     ),
     "stored_base_qty_stale": (
         "calculation",
-        "A line's base quantity is worked out once, when it is saved: changing a unit's factor "
-        "or an item's base unit does not recalculate it.",
+        "A line's base quantity is worked out once, when it is saved. A unit in use can no "
+        "longer change its factor, nor an item with entries its Base Unit, so these lines "
+        "date from before that.",
     ),
     "bill_ledger_only_uncounted": (
         "logic",

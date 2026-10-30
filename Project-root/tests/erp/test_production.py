@@ -2616,3 +2616,186 @@ def test_save_production_primary_axis_key_still_writes_the_pick_back(erp_client)
     assert body["data"]["row"]["qty"] == 12
     axes_data = _rpc(erp_client, "getProcessColorAxes", [down_id]).get_json()["data"]
     assert axes_data["savedPrimaryColorAxis"] == rim
+
+
+# ── A saved lot keeps its rate ─────────────────────────────────────────────
+
+
+def _set_rate(client, contractor, process_type, rate):
+    body = _rpc(
+        client,
+        "saveContractorRate",
+        [
+            {
+                "contractorName": contractor,
+                "processType": process_type,
+                "size": "General",
+                "ratePerUnit": rate,
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+
+def _set_extra_charge(client, contractor, service_type, amount):
+    body = _rpc(
+        client,
+        "saveContractorServiceCharge",
+        [
+            {
+                "contractorName": contractor,
+                "serviceType": service_type,
+                "chargeAmount": amount,
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+
+def _lot_row(client, lot_number):
+    listed = _rpc(client, "getProductionData").get_json()["data"]
+    return next(r for r in listed if r["lotNumber"] == lot_number)
+
+
+def _rated_lot(client, rate=10, **form):
+    """A 4-unit lot saved at `rate`; None saves it with no card entry at all."""
+    process_type = _unique_name("RateType")
+    _payload, process_id = _save_process(client, processType=process_type)
+    contractor = _unique_name("RateWorker")
+    if rate is not None:
+        _set_rate(client, contractor, process_type, rate)
+    body = _rpc(
+        client,
+        "saveProduction",
+        [
+            {
+                "processId": process_id,
+                "assignedTo": contractor,
+                "qty": 4,
+                "componentsConsumed": [_item_component()],
+                **form,
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+    row = _lot_row(client, body["data"]["lotNumber"])
+    return process_id, process_type, contractor, row
+
+
+def _resave(client, process_id, contractor, row, **overrides):
+    overrides.setdefault("assignedTo", contractor)
+    overrides.setdefault("qty", 4)
+    _edit_lot(client, process_id, row, [_item_component()], **overrides)
+    return _lot_row(client, row["lotNumber"])
+
+
+def test_a_remarks_edit_leaves_the_saved_rate_alone_after_the_card_moves(erp_client):
+    process_id, process_type, contractor, row = _rated_lot(erp_client)
+    assert row["contractorPayable"] == 40
+
+    _set_rate(erp_client, contractor, process_type, 15)
+    saved = _resave(erp_client, process_id, contractor, row, remarks="checked")
+
+    assert saved["remarks"] == "checked"
+    assert saved["contractorRate"] == 10
+    assert saved["contractorPayable"] == 40
+
+
+def test_a_quantity_edit_recalculates_at_the_saved_rate(erp_client):
+    process_id, process_type, contractor, row = _rated_lot(erp_client)
+
+    _set_rate(erp_client, contractor, process_type, 15)
+    saved = _resave(erp_client, process_id, contractor, row, qty=6)
+
+    assert saved["contractorRate"] == 10
+    assert saved["contractorPayable"] == 60
+
+
+def test_a_saved_lot_keeps_its_rate_after_the_card_entry_is_removed(erp_client):
+    process_id, process_type, contractor, row = _rated_lot(erp_client)
+
+    gone = _rpc(
+        erp_client,
+        "deleteContractorRate",
+        [contractor, process_type, "General"],
+        mutation=True,
+    ).get_json()
+    assert gone["success"] is True, gone["message"]
+    saved = _resave(erp_client, process_id, contractor, row)
+
+    assert saved["contractorRate"] == 10
+    assert saved["contractorPayable"] == 40
+
+
+def test_a_different_contractor_takes_their_own_rate(erp_client):
+    process_id, process_type, contractor, row = _rated_lot(erp_client)
+    other = _unique_name("OtherWorker")
+    _set_rate(erp_client, other, process_type, 7)
+
+    saved = _resave(erp_client, process_id, other, row)
+
+    assert saved["contractorRate"] == 7
+    assert saved["contractorPayable"] == 28
+
+
+def test_a_contractor_spelled_in_other_case_is_the_same_contractor(erp_client):
+    process_id, process_type, contractor, row = _rated_lot(erp_client)
+
+    _set_rate(erp_client, contractor, process_type, 15)
+    saved = _resave(erp_client, process_id, contractor.upper(), row)
+
+    assert saved["contractorRate"] == 10
+
+
+def test_a_lot_holding_no_rate_takes_the_card_on_its_next_save(erp_client):
+    process_id, process_type, contractor, row = _rated_lot(erp_client, rate=None)
+    assert row["contractorPayable"] == 0
+
+    _set_rate(erp_client, contractor, process_type, 12)
+    saved = _resave(erp_client, process_id, contractor, row)
+
+    assert saved["contractorRate"] == 12
+    assert saved["contractorPayable"] == 48
+
+
+def test_a_saved_lot_keeps_its_extra_charge_after_the_card_moves(erp_client):
+    charge = _unique_name("Polish")
+    process_type = _unique_name("RateType")
+    _payload, process_id = _save_process(erp_client, processType=process_type)
+    contractor = _unique_name("RateWorker")
+    _set_rate(erp_client, contractor, process_type, 10)
+    _set_extra_charge(erp_client, contractor, charge, 50)
+    body = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": process_id,
+                "assignedTo": contractor,
+                "qty": 4,
+                "extraChargeType": charge,
+                "componentsConsumed": [_item_component()],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+    row = _lot_row(erp_client, body["data"]["lotNumber"])
+    assert row["contractorPayable"] == 240  # (10 + 50) * 4
+
+    _set_extra_charge(erp_client, contractor, charge, 80)
+    kept = _resave(erp_client, process_id, contractor, row, extraChargeType=charge)
+    assert kept["extraChargeAmount"] == 50
+    assert kept["contractorPayable"] == 240
+
+    dropped = _resave(erp_client, process_id, contractor, row, extraChargeType="")
+    assert dropped["extraChargeAmount"] == 0
+    assert dropped["contractorPayable"] == 40
+
+    # Added back it is a new choice, so it is priced from today's card.
+    added = _resave(erp_client, process_id, contractor, row, extraChargeType=charge)
+    assert added["extraChargeAmount"] == 80
+    assert added["contractorPayable"] == 360

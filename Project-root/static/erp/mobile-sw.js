@@ -203,7 +203,9 @@
 // shows it full screen, and the inspector can take or pick a new one from
 // the checklist ("Change photo" in the viewer, a camera where there is
 // none). mobile.js and mobile_styles.css carry it.
-const CACHE_NAME = 'erp-mobile-shell-v91';
+// v92: editing a lot keeps the rate it was saved with, so the rate hint shows
+// that rate, and says so when the rate card differs. mobile.js carries it.
+const CACHE_NAME = 'erp-mobile-shell-v92';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

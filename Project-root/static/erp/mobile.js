@@ -6868,11 +6868,25 @@ MApp.Production = {
   _rate: 0,
   _rateSeq: 0,
 
+  // What an edit keeps: a saved lot holds on to its own rate and extra charge
+  // unless its contractor changes (save_production). 0 means it has none to
+  // keep, so the rate card decides.
+  _keptLotAmount(amount) {
+    const lot = this.editingLot;
+    const same = lot && MApp.LotModel.sameText(lot.assignedTo, this.selectedAssignedTo);
+    return same ? MApp.Util.toNumber(amount) : 0;
+  },
+
   _paintRateHint() {
     const hint = document.getElementById('lot-rate-hint');
     if (!hint || !this.selectedAssignedTo) return;
-    const rate = this._rate || 0;
-    const extra = this.selectedExtraChargeAmount || 0;
+    const lot = this.editingLot;
+    const kept = lot ? this._keptLotAmount(lot.contractorRate) : 0;
+    const keptExtra = lot && MApp.LotModel.sameText(lot.extraChargeType, this.selectedExtraChargeType)
+      ? this._keptLotAmount(lot.extraChargeAmount)
+      : 0;
+    const rate = kept || this._rate || 0;
+    const extra = keptExtra || this.selectedExtraChargeAmount || 0;
     const qty = this.model ? this.model.lotTotal() : 0;
     hint.hidden = false;
     if (rate <= 0 && extra <= 0) {
@@ -6880,7 +6894,8 @@ MApp.Production = {
       hint.style.color = 'var(--mb-enamel-amber-ink)';
       return;
     }
-    let text = `Rate on file: ${MApp.Util.formatCurrency(rate)} per unit.`;
+    let text = `${kept ? 'Saved rate' : 'Rate on file'}: ${MApp.Util.formatCurrency(rate)} per unit.`;
+    if (kept && kept !== this._rate) text += ` The rate card says ${MApp.Util.formatCurrency(this._rate)}.`;
     if (qty) {
       text += ` Payable ${MApp.Util.formatCurrency(qty * (rate + extra))} (${MApp.LotModel.formatQty(qty)} × ${MApp.Util.formatCurrency(rate)}`;
       if (extra) text += ` + ${this.selectedExtraChargeType} ${MApp.Util.formatCurrency(extra)}`;
