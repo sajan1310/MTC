@@ -2194,6 +2194,7 @@ App.Production = {
     if (this._suppressCascade) return;
     const seq = ++this._compLoadSeq;
     this._resetProcDataCache();
+    App.LotRef?.load(processId);
 
     const tagWrapper = document.getElementById('productionProductTagWrapper');
     const outputEl = document.getElementById('productionOutputItemName');
@@ -7471,6 +7472,7 @@ App.Production = {
   async resetCreateForm() {
     const seq = ++this._compLoadSeq;
     this._resetProcDataCache();
+    App.LotRef?.reset();
     this.clearComponentsTable();
     this.hideColorMatrix();
     const checklistEl = document.getElementById('productionColorChecklist');
@@ -7531,6 +7533,7 @@ App.Production = {
 
     const seq = ++this._compLoadSeq;
     this._resetProcDataCache();
+    App.LotRef?.reset();
 
     const form = document.getElementById('productionForm');
     if (form) form.reset();
@@ -7771,6 +7774,9 @@ App.Production = {
     // and component tables have settled, so it reads this lot's real total.
     await this.refreshExtraChargeOptions(p.assignedTo, p.extraChargeType);
     this.refreshPayableHint();
+
+    await App.LotRef?.load(p.processId, p.rowIdx);
+    if (seq !== this._compLoadSeq) return;
 
     document.getElementById('productionFormTitle').innerText = `Edit Production Lot: Row #${p.rowIdx}`;
     document.getElementById('productionSubmitBtn').innerText = 'Update Production Lot';

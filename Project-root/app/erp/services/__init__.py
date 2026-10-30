@@ -25,6 +25,7 @@ from . import bom_service  # noqa: F401
 from . import contractors_service  # noqa: F401
 from . import warehouse_service  # noqa: F401
 from . import production_service  # noqa: F401
+from . import lot_reference_service  # noqa: F401
 from . import inspection_service  # noqa: F401
 from . import dispatch_service  # noqa: F401
 from . import clients_service  # noqa: F401

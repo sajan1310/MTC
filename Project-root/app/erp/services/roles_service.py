@@ -86,6 +86,7 @@ TAB_BY_SERVICE_MODULE = {
     "process_service": "productsTab",
     "contractors_service": "contractorsTab",
     "production_service": "productionTab",
+    "lot_reference_service": "productionTab",
     "issue_service": "productionTab",
     "inspection_service": "inspectionTab",
     "clients_service": "clientsTab",

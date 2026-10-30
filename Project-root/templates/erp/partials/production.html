@@ -595,6 +595,20 @@
                 <button type="button" id="productionAddColorsBtn" class="btn btn-link btn-sm p-0 mt-1"
                   style="display:none;" onclick="App.Production.enableManualColors()">+ Add Colors to this Lot</button>
               </div>
+              <!-- Lot Reference (migration 057): optional, see lot-reference.js.
+                   Filled when a process is picked, and hidden for sequence 1.
+                   One field: a picked lot is a link beneath it, and its details
+                   open in the side window only when that link is clicked. The
+                   select has no id or name on purpose: App.Nav._serialize reads
+                   the hidden input instead, which holds the same thing. -->
+              <div class="col-md-6" id="productionLotRefSection" style="display:none;">
+                <span class="form-label fw-bold d-block">Lot Reference <span
+                    class="text-muted fw-normal">(optional)</span> <small
+                    class="text-muted fw-normal lot-ref-scope"></small></span>
+                <input type="hidden" name="lotRefs" id="productionLotRefs" value="[]" disabled>
+                <select class="form-select lot-ref-select" aria-label="Lot Reference"></select>
+                <div class="lot-ref-list"></div>
+              </div>
               <div class="col-md-12" id="productionColorWrapper" style="display:none;">
                 <label class="form-label fw-bold d-flex justify-content-between align-items-center">
                   <span>Color/Sub-Groups *</span>

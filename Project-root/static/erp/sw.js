@@ -507,7 +507,12 @@
 // v101: editing a lot or a dispatch keeps the rate it was saved with, so the
 // Payable and Logistics Cost hints show that rate, and say so when the rate
 // card differs. core.js, production.js and dispatch.js are precached.
-const CACHE_NAME = 'erp-shell-v101';
+// v103: Log Production Lot has an optional Lot Reference: a searchable
+// dropdown of the related lots at the sequence before, with a side window to
+// view one. Every dropdown takes typing as soon as it opens, and Escape in
+// one closes the list, not the form around it. lot-reference.js, core.js,
+// production.js and styles.css are precached.
+const CACHE_NAME = 'erp-shell-v103';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
@@ -528,6 +533,7 @@ const PRECACHE_URLS = [
   '/static/erp/contractor.js',
   '/static/erp/inspection.js',
   '/static/erp/production.js',
+  '/static/erp/lot-reference.js',
   '/static/erp/issue.js',
   '/static/erp/client.js',
   '/static/erp/dispatch.js',

@@ -205,7 +205,10 @@
 // none). mobile.js and mobile_styles.css carry it.
 // v92: editing a lot keeps the rate it was saved with, so the rate hint shows
 // that rate, and says so when the rate card differs. mobile.js carries it.
-const CACHE_NAME = 'erp-mobile-shell-v92';
+// v94: Log Lot has an optional Lot Reference: a searchable list of the related
+// lots at the sequence before, and a read-only sheet to view one. mobile.js,
+// mobile_styles.css and the template carry it.
+const CACHE_NAME = 'erp-mobile-shell-v94';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

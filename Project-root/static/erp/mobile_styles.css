@@ -3126,6 +3126,97 @@ fieldset.mb-field {
 .mb-insp-done svg { width: 56px; height: 56px; color: var(--mb-enamel-green-ink); }
 .mb-insp-done-title { max-width: 28rem; margin: 0; font-size: 1.25rem; font-weight: 700; }
 
+/* ── Lot Reference (MApp.LotRef) ─────────────────────────────────────────
+   One lot, read-only, opened from a picked lot's link. Full screen on a
+   phone. From 768px a right-hand panel, and the form moves over rather than
+   being covered. Two classes, so it outranks both the 480px frame and the
+   tablet's full-width rule above. */
+@media (min-width: 768px) {
+  .mb-sheet.mb-sheet-side {
+    right: 0;
+    left: auto;
+    width: min(26rem, 45vw);
+    --mb-sheet-x: 0px;
+
+    box-shadow: -8px 0 24px rgb(15 23 42 / 18%);
+  }
+
+  .mb-sheet.mb-sheet-side > .mb-sheet-body {
+    padding-inline: var(--mb-sp-5);
+  }
+
+  #sheet-log-lot:has(~ #sheet-lot-detail.open) {
+    right: min(26rem, 45vw);
+    left: 0;
+    width: auto;
+    --mb-sheet-x: 0px;
+  }
+}
+
+.mapp-lot-ref-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mb-sp-2);
+  margin-top: var(--mb-sp-2);
+}
+
+.mapp-lot-ref-chip {
+  display: inline-flex;
+  align-items: center;
+  background: var(--mb-surface);
+  border: 1px solid var(--mb-steel-faint);
+  border-radius: var(--mb-radius-sm);
+}
+
+.mapp-lot-ref-link {
+  min-height: var(--mb-tap-min);
+  padding: 0 var(--mb-sp-1) 0 var(--mb-sp-3);
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--mb-ink);
+  text-decoration: underline;
+  background: none;
+  border: 0;
+}
+
+span.mapp-lot-ref-link {
+  display: inline-flex;
+  align-items: center;
+}
+
+.mapp-lot-ref-deleted {
+  color: var(--mb-steel);
+  text-decoration: line-through;
+}
+
+.mapp-lot-ref-remove {
+  min-width: var(--mb-tap-min);
+  min-height: var(--mb-tap-min);
+  font-size: 1.125rem;
+  color: var(--mb-steel);
+  background: none;
+  border: 0;
+}
+
+.mapp-lot-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--mb-sp-2) var(--mb-sp-4);
+  margin: var(--mb-sp-3) 0 0;
+}
+
+.mapp-lot-facts dt {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--mb-steel);
+}
+
+.mapp-lot-facts dd {
+  margin: 0;
+  color: var(--mb-ink);
+  overflow-wrap: anywhere;
+}
+
 /* ── Print ────────────────────────────────────────────────────────────────
    print.html's containers are the templates the desktop shell prints,
    filled by the same builders (print-templates.js). What decides how a

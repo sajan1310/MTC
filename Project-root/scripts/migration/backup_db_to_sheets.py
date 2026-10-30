@@ -118,6 +118,9 @@ TABLES = [
     # needs.
     "erp.production_receipts",
     "erp.production_receipt_lines",
+    # Which earlier lots each lot was connected to (057). The operator's own
+    # statement, not derivable from anything else.
+    "erp.production_lot_refs",
     "erp.dispatch_headers",
     "erp.dispatch_lines",
     "erp.dispatch_plan_lines",
