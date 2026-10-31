@@ -13,11 +13,13 @@ Logged in for real through the same path as test_rpc_permission_gate.py.
 from __future__ import annotations
 
 import uuid
+from datetime import date
 
 import psycopg2.extras
 import pytest
 
 import database
+from app.erp import mutations, rpc
 from app.erp.registry import RPC_METHODS
 from app.erp.services import financials, roles_service
 from app.erp.services.financials import (
@@ -312,6 +314,50 @@ def test_a_refused_save_never_claims_its_mutation_id(client_as):
             "SELECT 1 FROM erp.rpc_mutations WHERE mutation_id = %s", (mutation_id,)
         )
         assert cur.fetchone() is None
+
+
+# -- Replies that take another route --------------------------------------
+
+
+def test_a_replayed_save_is_blanked_too(client_as, erp_app):
+    """A retried X-Mutation-Id answers from the stored envelope and never runs
+    the method, so this path needs the rule as much as the normal one. The
+    stored copy stays whole: the id may be an Admin's own retry."""
+    mutation_id = str(uuid.uuid4())
+    envelope = {"success": True, "data": {"itemName": "Axle", "qty": 4, "price": 150}}
+    with erp_app.app_context():
+        assert mutations.claim(mutation_id, "updateThreshold") is None
+        mutations.complete(mutation_id, envelope)
+
+    as_user = _mutate(client_as("user"), "updateThreshold", mutation_id=mutation_id)
+    assert as_user.get_json()["data"] == {"itemName": "Axle", "qty": 4, "price": 0}
+
+    as_admin = _mutate(client_as("admin"), "updateThreshold", mutation_id=mutation_id)
+    assert as_admin.get_json()["data"]["price"] == 150
+
+
+def test_a_reply_outside_the_usual_envelope_passes_through(client_as):
+    """getNextOrderNumber answers with a bare string, not an envelope."""
+    reply = _call(client_as("user"), "getNextOrderNumber")
+    assert reply.status_code == 200
+    assert reply.get_json().startswith("ORD-")
+
+
+def test_a_value_with_no_blank_form_is_left_as_it_is():
+    when = date(2026, 10, 31)
+    assert strip_financials({"rate": when}) == {"rate": when}
+
+
+def test_a_refusal_is_still_a_refusal_when_it_cannot_be_logged(client_as, monkeypatch):
+    def broken(**_kwargs):
+        raise RuntimeError("activity log unavailable")
+
+    client = client_as("user")
+    monkeypatch.setattr(rpc.activity_service, "record", broken)
+
+    response = _mutate(client, "saveBill", {})
+    assert response.status_code == 403
+    assert "carries prices" in response.get_json()["message"]
 
 
 # -- Lookups --------------------------------------------------------------
