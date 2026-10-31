@@ -25,7 +25,16 @@ from .envelope import build_response
 from . import mutations
 from .registry import RPC_METHODS, RpcSpec
 from .services import activity_service
-from .services.roles_service import TAB_BY_SERVICE_MODULE, get_effective_tab_level
+from .services.financials import (
+    FINANCIAL_SAVES,
+    sees_financials,
+    strip_financials,
+)
+from .services.roles_service import (
+    TAB_BY_SERVICE_MODULE,
+    get_effective_tab_level,
+    page_needs_read,
+)
 
 # The service layer's own vocabulary for "expected, user-correctable"
 # failures (verified: 222 raise ValueError + 5 raise RuntimeError sites
@@ -60,6 +69,15 @@ def _deny(spec: RpcSpec, reason: str, message: str):
     except Exception:  # noqa: BLE001 -- a refusal must still be a 403, not a 500
         current_app.logger.warning("Activity logging failed for denied %s", spec.name)
     return jsonify(build_response(False, None, message)), 403
+
+
+def _for_viewer(method: str, result):
+    """The reply this user may see: no rates, costs or money unless Admin."""
+    if sees_financials(getattr(current_user, "role", None)):
+        return result
+    if not isinstance(result, dict):
+        return result
+    return {**result, "data": strip_financials(result.get("data"), method)}
 
 
 @erp_rpc_bp.route("/rpc/<method>", methods=["POST"])
@@ -109,12 +127,16 @@ def call(method: str):
         if tab is not None:
             level = get_effective_tab_level(current_user.role, tab)
             if level is None:
-                return _deny(
-                    spec,
-                    f"Custom role '{current_user.role}' has no grant on tab '{tab}'",
-                    f"Not authorized to call {method}.",
-                )
-            if spec.mutation and level != "editor":
+                # No grant on this tab. The one way through is a read that a
+                # page the role DOES hold depends on (LOOKUPS_BY_TAB), and
+                # never a write: a dropdown has to fill, a save does not.
+                if spec.mutation or not page_needs_read(current_user.role, method):
+                    return _deny(
+                        spec,
+                        f"Custom role '{current_user.role}' has no grant on tab '{tab}'",
+                        f"Not authorized to call {method}.",
+                    )
+            elif spec.mutation and level != "editor":
                 # Viewer can't mutate at all; Commenter's one narrow
                 # exception (updateEntityRemarks) lives in remarks_service.py,
                 # outside TAB_BY_SERVICE_MODULE, so it never reaches this
@@ -124,6 +146,16 @@ def call(method: str):
                     f"Custom role '{current_user.role}' is '{level}', not 'editor', on tab '{tab}'",
                     f"Not authorized to call {method}.",
                 )
+
+    # A save that takes a price from the form is Admin-only, whatever the tab
+    # level: this user's form holds blanked prices (see financials.py), and
+    # saving it would write them over the real ones.
+    if method in FINANCIAL_SAVES and not sees_financials(current_user.role):
+        return _deny(
+            spec,
+            f"Role '{current_user.role}' may not save prices",
+            "Only an Admin can save this, because it carries prices.",
+        )
 
     mutation_id = request.headers.get("X-Mutation-Id")
     if spec.mutation:
@@ -162,7 +194,7 @@ def call(method: str):
             ), 409
 
         if cached is not None:
-            return jsonify(cached), 200
+            return jsonify(_for_viewer(method, cached)), 200
 
     payload = request.get_json(silent=True) or {}
     args = payload.get("args") or []
@@ -266,4 +298,4 @@ def call(method: str):
                 method,
             )
 
-    return jsonify(result), 200
+    return jsonify(_for_viewer(method, result)), 200

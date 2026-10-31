@@ -1038,8 +1038,14 @@ const App = {
     async checkSmartAlerts() {
       if (!this._alertKeys) this._alertKeys = new Set();
 
+      // An alert is for somebody who can open the page it points at. For a
+      // custom role without that page the fetch would only be refused.
+      const canOpen = tab => !App.Navigation.isLimited() || App.Navigation.isValidTab(tab);
+      const seesStock = canOpen('stockTab');
+      const seesPOs = canOpen('poLedger');
+
       // Fetch stock data if state is empty
-      if ((!App.State?.globalStock || App.State.globalStock.length === 0) && typeof Api !== 'undefined') {
+      if (seesStock && (!App.State?.globalStock || App.State.globalStock.length === 0) && typeof Api !== 'undefined') {
         try {
           const res = await Api.call('getStockData');
           if (res?.success && Array.isArray(res.data)) {
@@ -1049,7 +1055,7 @@ const App = {
       }
 
       // 1. Low Stock Smart Alert
-      const stockItems = App.State?.globalStock || [];
+      const stockItems = seesStock ? (App.State?.globalStock || []) : [];
       const lowStock = stockItems.filter(i => (i.isLowStock || (Number(i.threshold) > 0 && Number(i.currentStock) <= Number(i.threshold))));
       if (lowStock.length > 0) {
         const key = `lowstock-${lowStock.length}-${lowStock.slice(0, 3).map(i => i.name + i.size).join('|')}`;
@@ -1062,10 +1068,10 @@ const App = {
       }
 
       // 2. Overdue Pending Purchase Orders Alert (pending > 7 days)
-      if (typeof App.PO !== 'undefined') {
+      if (seesPOs && typeof App.PO !== 'undefined') {
         try { await App.PO.ensureLoaded(); } catch (e) { /* ignore best effort */ }
       }
-      const pos = App.State?.globalPOs || [];
+      const pos = seesPOs ? (App.State?.globalPOs || []) : [];
       const now = new Date();
       const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
       const overduePOs = pos.filter(po => {
@@ -1096,6 +1102,8 @@ const App = {
     // no equivalent table here).
     async checkBackendAlerts() {
       if (typeof Api === 'undefined') return;
+      // Ledger findings are for whoever runs the system, not a custom role.
+      if (App.Navigation.isLimited()) return;
 
       let seen;
       try {
@@ -2558,6 +2566,21 @@ const App = {
       return !!id && !!document.getElementById(`btn-${id}`);
     },
 
+    // True for a custom role, whose shell holds only the pages it was granted.
+    isLimited() {
+      const meta = document.querySelector('meta[name="current-user-access"]');
+      return !!meta && meta.content === 'limited';
+    },
+
+    // Where a load with nothing to restore opens. A custom role has no
+    // Dashboard button, so it opens on its first page. Null when it has no
+    // page at all: the Dashboard panel stays up and explains that.
+    landingTab() {
+      if (this.isValidTab('dashboardTab')) return 'dashboardTab';
+      const first = document.querySelector('#mainTabs .nav-link[data-tab]');
+      return first ? first.dataset.tab : null;
+    },
+
     tabFromHash() {
       const id = String(location.hash || '').replace(/^#/, '');
       return this.isValidTab(id) ? id : null;
@@ -2578,7 +2601,7 @@ const App = {
       if (fromHash) return fromHash;
       let stored = null;
       try { stored = localStorage.getItem(this.LAST_TAB_KEY); } catch (e) { /* storage inaccessible */ }
-      return this.isValidTab(stored) ? stored : 'dashboardTab';
+      return this.isValidTab(stored) ? stored : this.landingTab();
     },
 
     // Keeps the URL in step with the visible tab. `replace` is for the
@@ -2606,6 +2629,12 @@ const App = {
     },
 
     showTab(id, opts) {
+      // A link from one page into a page this account doesn't have (an
+      // alert, a cross-reference) stays where it is. Every content panel is
+      // in the DOM whatever the role, so without this it would open an empty
+      // shell whose data the server refuses.
+      if (!this.isValidTab(id)) return undefined;
+
       $$('.tab-content').forEach(tab => {
         tab.style.display = tab.id === id ? 'block' : 'none';
       });

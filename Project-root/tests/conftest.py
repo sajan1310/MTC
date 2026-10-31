@@ -69,6 +69,21 @@ def no_live_google(monkeypatch):
     return LIVE_GOOGLE_SETTINGS
 
 
+@pytest.fixture(autouse=True)
+def plain_user_sees_money(monkeypatch):
+    """The suite logs in as role 'user' and checks calculations by reading the
+    amounts back, so that login keeps seeing them here. Who may see money is
+    tested on its own in tests/erp/test_financials.py, which undoes this.
+    """
+    from app.erp.services import financials
+
+    monkeypatch.setattr(
+        financials,
+        "FINANCE_ROLES",
+        financials.FINANCE_ROLES | {"user"},
+    )
+
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_db():
     """Build the test database schema before any test runs.

@@ -26,10 +26,16 @@
   The delegated click handler in core.js is click-only, so the previous
   role="button" tabindex="0" divs could be focused by keyboard but never
   activated by one.
+
+  Who gets what: every figure is for pages.py's DASHBOARD_FIGURE_ROLES. Any
+  other built-in role keeps Quick Actions and nothing else. A custom role has
+  no Dashboard: it opens on its first granted page, so this tab only ever
+  shows for one that has no page here at all, and says so.
 -->
 
-<div id="dashboardTab" class="tab-content active" role="tabpanel" aria-labelledby="btn-dashboardTab">
+<div id="dashboardTab" class="tab-content active" role="tabpanel"{% if permitted_tabs is none %} aria-labelledby="btn-dashboardTab"{% endif %}>
 
+  {% if sees_figures %}
   <!-- Refresh & Backup bar -->
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
     <div class="d-flex align-items-center gap-2">
@@ -118,7 +124,9 @@
 
     </div>
   </section>
+  {% endif %}
 
+  {% if permitted_tabs is none %}
   <!-- 2. QUICK ACTIONS
        Kept high because these are the highest-frequency controls on the
        page, and kept to one row on a wide screen so they cost one band of
@@ -141,6 +149,8 @@
          slot after "Return Goods". Each set is a named group for screen
          readers, and the tooltips carry the full disambiguation. -->
     <div class="dash-action-row">
+      {# A job that carries a price is an Admin's (services/financials.py). #}
+      {% if sees_figures %}
       <div class="dash-action-set" role="group" aria-label="Purchasing" style="--dash-tiles: 3;">
         <button class="btn btn-success dash-action-tile" onclick="App.PO.openCreateModal()" title="Raise a purchase order to a vendor">
           <i class="bi bi-plus-circle" aria-hidden="true"></i><span>Create PO</span>
@@ -152,17 +162,20 @@
           <i class="bi bi-arrow-return-left" aria-hidden="true"></i><span>Return Goods</span>
         </button>
       </div>
+      {% endif %}
 
-      <div class="dash-action-set" role="group" aria-label="Production and dispatch" style="--dash-tiles: 4;">
+      <div class="dash-action-set" role="group" aria-label="Production and dispatch" style="--dash-tiles: {{ 4 if sees_figures else 2 }};">
         <button class="btn btn-dark dash-action-tile" onclick="App.Production.openCreateModal()" title="Log a new production lot">
           <i class="bi bi-play-circle" aria-hidden="true"></i><span>Log Production</span>
         </button>
+        {% if sees_figures %}
         <button class="btn btn-dark dash-action-tile" onclick="App.Issue.openIssueModal()" title="Issue stock to a contractor or process">
           <i class="bi bi-box-arrow-up" aria-hidden="true"></i><span>Issue Stock</span>
         </button>
         <button class="btn btn-success dash-action-tile" data-action="dash-new-dispatch" title="Record a dispatch bill going out to a client (stock out)">
           <i class="bi bi-truck" aria-hidden="true"></i><span>Record New Bill</span>
         </button>
+        {% endif %}
         <button class="btn btn-secondary dash-action-tile" onclick="App.Wastage.openWastageModal()" title="Log wasted or scrapped material">
           <i class="bi bi-trash3" aria-hidden="true"></i><span>Log Wastage</span>
         </button>
@@ -175,9 +188,11 @@
       </button>
       <div class="d-flex flex-wrap align-items-center gap-2">
         <span class="dash-setup-label">Setup</span>
+        {% if sees_figures %}
         <button class="btn btn-outline-secondary btn-sm" onclick="App.Item.openCreateModal()">
           <i class="bi bi-box-seam me-1" aria-hidden="true"></i>Item
         </button>
+        {% endif %}
         <button class="btn btn-outline-secondary btn-sm" onclick="App.Process.openCreateModal()">
           <i class="bi bi-diagram-3 me-1" aria-hidden="true"></i>Process
         </button>
@@ -187,7 +202,20 @@
       </div>
     </div>
   </section>
+  {% elif not (permitted_tabs | reject('equalto', 'inspectionTab') | list) %}
+  <!-- A custom role with no page on this shell. Inspection has no sidebar
+       entry of its own: inspectors work in the phone and tablet app. -->
+  <section class="dash-section" id="dashboardNoPages">
+    {% if 'inspectionTab' in permitted_tabs %}
+    <p class="mb-2">Inspection opens in the phone and tablet app.</p>
+    <a class="btn btn-primary btn-sm" href="{{ url_for('erp.mobile') }}">Open the app</a>
+    {% else %}
+    <p class="mb-0">No pages have been assigned to your account yet. Ask an admin to give your role access.</p>
+    {% endif %}
+  </section>
+  {% endif %}
 
+  {% if sees_figures %}
   <!-- 3. WHERE THE WORK IS
        Promoted above the charts. This is the most operationally useful
        block on the page and it used to sit below three rows of tiles and
@@ -369,6 +397,7 @@
       </div>
     </div>
   </section>
+  {% endif %}
 
 </div>
 

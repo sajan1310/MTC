@@ -19,7 +19,8 @@ from flask import (
 )
 from flask_login import current_user, login_required
 
-from . import erp_bp
+from . import config_maps, erp_bp
+from .services.financials import FINANCE_ROLES
 from .services.roles_service import get_role_permissions
 
 # Cache-busting version for the shell's own JS/CSS, read from the service
@@ -67,20 +68,31 @@ def _asset_version(filename: str, fallback: str) -> str:
     return fallback
 
 
-def _permitted_tabs_for(user):
+# The roles shown the Dashboard's figures, which is the same rule as every
+# other rate, cost and amount (see services/financials.py). Every other role
+# gets the page without them: nothing on the shell asks for getDashboardData or
+# getMobileDashboard on their behalf, and both shells show a dash for money.
+DASHBOARD_FIGURE_ROLES = FINANCE_ROLES
+
+
+def _tab_levels_for(user):
     """None means unrestricted (every built-in role: user/admin/super_admin
-    -- their sidebar is untouched). A custom role gets the set of tab ids
-    its permissions map grants (any level at all, viewer included) --
-    empty if the role can't be resolved (e.g. deleted out from under an
-    active session). This only controls what index.html renders; the real
-    enforcement is app/erp/rpc.py's per-request gate (see
+    -- their pages are untouched). A custom role gets its {tab: level} map
+    (any level at all, viewer included, counts as being able to open the
+    page) -- empty if the role can't be resolved (e.g. deleted out from under
+    an active session). This only controls what the two shells render; the
+    real enforcement is app/erp/rpc.py's per-request gate (see
     roles_service.get_effective_tab_level), not this.
     """
     role = getattr(user, "role", None)
     if role in ("user", "admin", "super_admin"):
         return None
     permissions = get_role_permissions(role) if role else None
-    return set(permissions.keys()) if permissions else set()
+    return dict(permissions) if permissions else {}
+
+
+def _sees_figures(user) -> bool:
+    return getattr(user, "role", None) in DASHBOARD_FIGURE_ROLES
 
 
 def _pending_approval_redirect():
@@ -106,7 +118,8 @@ def index():
         return redirect(url_for("erp.mobile"))
     return render_template(
         "erp/index.html",
-        permitted_tabs=_permitted_tabs_for(current_user),
+        permitted_tabs=_tab_levels_for(current_user),
+        sees_figures=_sees_figures(current_user),
     )
 
 
@@ -120,6 +133,9 @@ def mobile():
     return render_template(
         "erp/mobile.html",
         asset_v=_asset_version("mobile-sw.js", "0"),
+        tab_levels=_tab_levels_for(current_user),
+        sees_figures=_sees_figures(current_user),
+        app_version=config_maps.APP_VERSION,
     )
 
 

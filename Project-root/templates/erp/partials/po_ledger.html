@@ -92,7 +92,7 @@
       <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeletePOs" type="button" onclick="App.PO.bulkDelete()" style="white-space: nowrap;">
         <i class="bi bi-trash"></i> Delete Selected
       </button>
-      <button class="btn btn-success fw-bold shadow-sm"
+      <button class="finance-only btn btn-success fw-bold shadow-sm"
               type="button"
               onclick="App.PO.openCreateModal()"
               aria-label="Create a new Purchase Order"
@@ -150,7 +150,7 @@
     <p style="margin-bottom: 20px;">
       Start by creating a new Purchase Order or search for existing ones.
     </p>
-    <button class="btn btn-success" type="button" onclick="App.PO.openCreateModal()">
+    <button class="finance-only btn btn-success" type="button" onclick="App.PO.openCreateModal()">
       Create First PO
     </button>
   </div>
