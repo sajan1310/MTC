@@ -735,9 +735,10 @@ def _receipt_fields(row, receipts) -> dict:
     }
 
 
-def _row_to_production_record(row, receipts=None) -> dict:
+def _row_to_production_record(row, receipts=None, lot_refs=None) -> dict:
     return {
         **_receipt_fields(row, receipts),
+        "lotRefs": lot_refs or [],
         "rowIdx": row["id"],
         "date": date_utils.to_display_string(row["production_date"]) or "",
         "dateRaw": date_utils.to_iso_string(row["production_date"]) or "",
@@ -774,9 +775,13 @@ def get_production_data():
         )
         rows = cur.fetchall()
         receipts_by_lot = lot_receipts.load_receipts(cur)
+        refs_by_lot = lot_reference_service.load_lot_refs(cur)
 
     records = [
-        _row_to_production_record(row, receipts_by_lot.get(row["id"])) for row in rows
+        _row_to_production_record(
+            row, receipts_by_lot.get(row["id"]), refs_by_lot.get(row["id"])
+        )
+        for row in rows
     ]
     records.sort(key=lambda r: (r["dateRaw"] or "", r["rowIdx"]), reverse=True)
     return build_response(True, records)
@@ -794,7 +799,8 @@ def _fetch_production_record(cur, row_idx):
     if not row:
         return None
     receipts = lot_receipts.load_receipts(cur, [row["id"]]).get(row["id"])
-    return _row_to_production_record(row, receipts)
+    refs = lot_reference_service.load_lot_refs(cur, [row["id"]]).get(row["id"])
+    return _row_to_production_record(row, receipts, refs)
 
 
 @rpc_method("getProcessWipData")

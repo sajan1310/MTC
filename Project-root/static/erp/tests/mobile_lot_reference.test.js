@@ -202,6 +202,153 @@ describe('MApp.LotRef', () => {
   });
 });
 
+// The owner, 2026-10-31: a wrong quantity, a bad count or a bug must never
+// stop someone connecting the right lot, so these wait for a search and are
+// never taken away. Run against the real picker.
+describe('a lot that looks used up', () => {
+  const options = () => [...document.querySelectorAll('#mapp-picker-list .mb-picker-option')]
+    .map(o => o.textContent);
+  const pickerText = () => document.getElementById('mapp-picker-list').textContent;
+
+  beforeEach(async () => {
+    mount();
+    MApp.Api.call.mockResolvedValue({
+      success: true,
+      data: related({ lots: [lot(), lot({ rowIdx: 2, lotNumber: 'LOT-FTD003-0042', usedUp: true })] })
+    });
+    await MApp.LotRef.load('PRC-1');
+  });
+
+  afterEach(() => MApp.Picker.cancel());
+
+  test('stays out of the first list, and the picker says how to find it', () => {
+    MApp.LotRef.add();
+
+    expect(options().join()).toContain('LOT-FTD003-0043');
+    expect(options().join()).not.toContain('LOT-FTD003-0042');
+    expect(pickerText()).toContain('Type a lot number to find them');
+  });
+
+  test('search finds it, marked', () => {
+    MApp.LotRef.add();
+
+    MApp.Picker.onSearch('0042');
+
+    expect(options()).toHaveLength(1);
+    expect(options()[0]).toContain('LOT-FTD003-0042');
+    expect(options()[0]).toContain('Looks used up');
+    expect(pickerText()).not.toContain('Type a lot number');
+  });
+
+  test('clearing the search hides it again', () => {
+    MApp.LotRef.add();
+    MApp.Picker.onSearch('0042');
+
+    MApp.Picker.onSearch('');
+
+    expect(options().join()).not.toContain('LOT-FTD003-0042');
+  });
+
+  test('connects like any other lot', async () => {
+    const adding = MApp.LotRef.add();
+    MApp.Picker.onSearch('0042');
+
+    document.querySelector('#mapp-picker-list .mb-picker-option').click();
+    await adding;
+
+    expect(MApp.LotRef.payload()).toBe('[2]');
+  });
+
+  test('the field says search finds them', () => {
+    expect(section().textContent).toContain('used-up lots too');
+  });
+
+  test('when every lot looks used up the field can still be searched', async () => {
+    MApp.Api.call.mockResolvedValue({
+      success: true, data: related({ lots: [lot({ usedUp: true })] })
+    });
+    await MApp.LotRef.load('PRC-1');
+
+    expect(document.getElementById('lot-ref-add').disabled).toBe(false);
+
+    MApp.LotRef.add();
+    expect(options()).toHaveLength(0);
+    expect(pickerText()).toContain('Type a lot number to find them');
+
+    MApp.Picker.onSearch('0043');
+    expect(options()).toHaveLength(1);
+  });
+
+  test('a picker with no hidden items is as it was', () => {
+    MApp.Picker.open({ title: 'Choose', items: [{ value: 1, label: 'One' }] });
+
+    expect(options()).toHaveLength(1);
+    expect(pickerText()).toBe('One');
+  });
+});
+
+describe('tags on a lot card', () => {
+  const REF = { rowIdx: 4, lotNumber: 'LOT-FTD003-0043', deleted: false };
+  const card = refs => {
+    document.getElementById('production-list').innerHTML = '';
+    const lots = [{
+      rowIdx: 1, lotNumber: 'LOT-PK-0010', processId: 'PRC-1', dateRaw: '2026-10-30',
+      qty: 10, assignedTo: 'sanjay', status: 'Pending', lotRefs: refs
+    }];
+    MApp.Production.entries = MApp.Search.index(lots, MApp.Production.SEARCH);
+    MApp.Production.searchTerm = '';
+    MApp.Production.processById = { 'PRC-1': { processName: 'Packing' } };
+    MApp.Production.render();
+    return document.querySelector('#production-list .mb-card');
+  };
+
+  beforeEach(() => {
+    mount();
+    const list = document.createElement('div');
+    list.id = 'production-list';
+    document.body.appendChild(list);
+  });
+
+  test('a lot connected to nothing has no tags', () => {
+    expect(card([]).querySelector('.mapp-lot-ref-tags')).toBeNull();
+    expect(card(undefined).querySelector('.mapp-lot-ref-tags')).toBeNull();
+  });
+
+  test('a tap opens the lot it names', async () => {
+    MApp.Api.call = jest.fn(async () => ({ success: true, data: detail() }));
+    const tag = card([REF]).querySelector('button.mapp-lot-ref-tag');
+    expect(tag.textContent).toBe('LOT-FTD003-0043');
+
+    tag.click();
+    await flush();
+
+    expect(MApp.Api.call).toHaveBeenCalledWith('getLotDetail', 4);
+    expect(MApp.Sheet.isOpen('sheet-lot-detail')).toBe(true);
+    MApp.LotRef.closeDetail();
+  });
+
+  test('while selecting, a tap does not open it', () => {
+    MApp.Select.isActive = jest.fn(() => true);
+    MApp.LotRef.view = jest.fn();
+
+    card([REF]).querySelector('button.mapp-lot-ref-tag').click();
+
+    expect(MApp.LotRef.view).not.toHaveBeenCalled();
+  });
+
+  test('a lot deleted since is named but cannot be opened', () => {
+    const tags = card([{ ...REF, deleted: true }]).querySelector('.mapp-lot-ref-tags');
+
+    expect(tags.textContent).toBe('LOT-FTD003-0043');
+    expect(tags.querySelector('.mapp-lot-ref-deleted')).not.toBeNull();
+    expect(tags.querySelector('button')).toBeNull();
+  });
+
+  test('a lot number is shown as text, not markup', () => {
+    expect(card([{ ...REF, lotNumber: '<img src=x>' }]).querySelector('img')).toBeNull();
+  });
+});
+
 describe('the lot detail sheet', () => {
   const body = () => document.getElementById('lot-detail-body');
   const title = () => document.getElementById('lot-detail-title').textContent;

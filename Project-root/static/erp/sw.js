@@ -515,7 +515,11 @@
 // view one. Every dropdown takes typing as soon as it opens, and Escape in
 // one closes the list, not the form around it. lot-reference.js, core.js,
 // production.js and styles.css are precached.
-const CACHE_NAME = 'erp-shell-v103';
+// v104: a lot's connections show as tags on the Production Log, and a click
+// opens the lot. On the Packing form, Fitting lots that look used up wait for
+// a search instead of showing first. lot-reference.js, production.js and
+// styles.css are precached.
+const CACHE_NAME = 'erp-shell-v104';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

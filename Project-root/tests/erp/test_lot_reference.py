@@ -18,6 +18,7 @@ import json
 import uuid
 from datetime import date, timedelta
 
+import psycopg2.extras
 import pytest
 
 import database
@@ -646,6 +647,358 @@ def test_detail_of_a_deleted_lot_is_refused(erp_client, chain):
     assert (
         _rpc(erp_client, "getLotDetail", [row["rowIdx"]]).get_json()["success"] is False
     )
+
+
+# ── What looks used up ───────────────────────────────────────────────────
+#
+# The owner, 2026-10-31: lots that look used up drop out of what the dropdown
+# shows first, but a wrong quantity, a bad count or a bug must never stop
+# someone connecting the right lot.
+
+
+def _draw(item, qty):
+    return {
+        "itemName": item,
+        "qty": qty,
+        "sourceType": "POOL",
+        "unit": "Pcs",
+        "colorGroup": "COMMON",
+    }
+
+
+def _fitted_lots(client, fitted, *quantities):
+    """Completed lots, oldest first, a day apart."""
+    rows = []
+    for days_ago, qty in zip(range(len(quantities), 0, -1), quantities):
+        row = _row(client, fitted, qty=qty)
+        _set_completed_at(row, date.today() - timedelta(days=days_ago))
+        rows.append(row)
+    return rows
+
+
+def _pack(client, packing, item, qty, *, links=(), status="Completed", **form):
+    return _row(
+        client,
+        packing,
+        qty=qty,
+        status=status,
+        componentsConsumed=[_draw(item, qty)],
+        lotRefs=json.dumps([row["rowIdx"] for row in links]),
+        **form,
+    )
+
+
+def _shown_first(client, process_id, row_idx=None):
+    """What the dropdown shows before anyone types."""
+    lots = _related(client, process_id, row_idx)["lots"]
+    return [lot["lotNumber"] for lot in lots if not lot["usedUp"]]
+
+
+def test_every_lot_stays_while_the_pool_holds_them_all(erp_client, chain):
+    fitted, packing = chain
+    older, newer = _fitted_lots(erp_client, fitted, 10, 10)
+
+    assert _shown_first(erp_client, packing) == [
+        newer["lotNumber"],
+        older["lotNumber"],
+    ]
+
+
+def test_lots_older_than_the_pool_can_cover_look_used_up(erp_client, chain):
+    """Packed with no connection at all: this is what stops an old lot staying
+    listed for ever."""
+    fitted, packing = chain
+    oldest, middle, newest = _fitted_lots(erp_client, fitted, 10, 10, 10)
+
+    _pack(erp_client, packing, newest["outputItemName"], 15)
+
+    assert _shown_first(erp_client, packing) == [
+        newest["lotNumber"],
+        middle["lotNumber"],
+    ]
+
+
+def test_a_connected_lot_is_used_up_by_what_was_drawn(erp_client, chain):
+    fitted, packing = chain
+    older, newer = _fitted_lots(erp_client, fitted, 10, 10)
+
+    _pack(erp_client, packing, newer["outputItemName"], 10, links=[newer])
+
+    assert _shown_first(erp_client, packing) == [older["lotNumber"]]
+
+
+def test_a_partly_taken_lot_stays(erp_client, chain):
+    fitted, packing = chain
+    [lot] = _fitted_lots(erp_client, fitted, 10)
+
+    _pack(erp_client, packing, lot["outputItemName"], 4, links=[lot])
+
+    assert _shown_first(erp_client, packing) == [lot["lotNumber"]]
+
+
+def test_two_connected_lots_are_taken_oldest_first(erp_client, chain):
+    fitted, packing = chain
+    older, newer = _fitted_lots(erp_client, fitted, 10, 10)
+
+    _pack(erp_client, packing, older["outputItemName"], 15, links=[newer, older])
+
+    assert _shown_first(erp_client, packing) == [newer["lotNumber"]]
+
+
+def test_a_lot_recording_no_draw_of_the_item_takes_one_per_unit(erp_client, chain):
+    fitted, packing = chain
+    [lot] = _fitted_lots(erp_client, fitted, 10)
+
+    _row(erp_client, packing, qty=10, lotRefs=json.dumps([lot["rowIdx"]]))
+
+    assert _shown_first(erp_client, packing) == []
+
+
+def test_an_open_packing_lot_already_takes_its_frames(erp_client, chain):
+    fitted, packing = chain
+    [lot] = _fitted_lots(erp_client, fitted, 10)
+
+    _pack(erp_client, packing, lot["outputItemName"], 10, links=[lot], status="Pending")
+
+    assert _shown_first(erp_client, packing) == []
+
+
+def test_an_open_lot_stays_when_the_pool_holds_none(erp_client, chain):
+    fitted, packing = chain
+    row = _row(erp_client, fitted, status="In Progress")
+
+    assert _shown_first(erp_client, packing) == [row["lotNumber"]]
+
+
+def test_a_lot_being_received_counts_what_has_come_back(erp_client, chain):
+    fitted, packing = chain
+    [older] = _fitted_lots(erp_client, fitted, 10)
+    running = _row(erp_client, fitted, status="In Progress")
+    body = _rpc(
+        erp_client,
+        "saveProductionReceipt",
+        [
+            {
+                "rowIdx": running["rowIdx"],
+                "lines": [{"color": "", "size": "", "qty": 6}],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+    _pack(erp_client, packing, older["outputItemName"], 14)
+
+    # 2 left in the pool, and the 6 that came back are newer than the old lot.
+    assert _shown_first(erp_client, packing) == [running["lotNumber"]]
+
+
+def test_a_used_up_lot_stays_in_the_reply_and_goes_last(erp_client, chain):
+    """Search finds it there, which is what keeps it within reach."""
+    fitted, packing = chain
+    older, newer = _fitted_lots(erp_client, fitted, 10, 10)
+
+    _pack(erp_client, packing, newer["outputItemName"], 10, links=[newer])
+
+    lots = _related(erp_client, packing)["lots"]
+    assert [(lot["lotNumber"], lot["usedUp"]) for lot in lots] == [
+        (older["lotNumber"], False),
+        (newer["lotNumber"], True),
+    ]
+
+
+def test_a_used_up_lot_can_still_be_connected(erp_client, chain):
+    fitted, packing = chain
+    older, newer = _fitted_lots(erp_client, fitted, 10, 10)
+    _pack(erp_client, packing, newer["outputItemName"], 15)
+    assert _shown_first(erp_client, packing) == [newer["lotNumber"]]
+
+    row = _pack(erp_client, packing, newer["outputItemName"], 1, links=[older])
+
+    assert _ref_numbers(erp_client, row) == [older["lotNumber"]]
+
+
+def test_connecting_more_than_a_lot_held_is_not_refused(erp_client, chain):
+    fitted, packing = chain
+    [lot] = _fitted_lots(erp_client, fitted, 10)
+
+    row = _pack(erp_client, packing, lot["outputItemName"], 25, links=[lot])
+
+    assert _ref_numbers(erp_client, row) == [lot["lotNumber"]]
+    assert _shown_first(erp_client, packing) == []
+
+
+def test_a_wrong_packing_quantity_corrects_itself_when_edited(erp_client, chain):
+    fitted, packing = chain
+    [lot] = _fitted_lots(erp_client, fitted, 10)
+    row = _pack(erp_client, packing, lot["outputItemName"], 10, links=[lot])
+    assert _shown_first(erp_client, packing) == []
+
+    body = _edit(
+        erp_client,
+        {**row, "qty": 4},
+        componentsConsumed=[_draw(lot["outputItemName"], 4)],
+    )
+    assert body["success"] is True, body["message"]
+
+    assert _shown_first(erp_client, packing) == [lot["lotNumber"]]
+
+
+def test_a_cancelled_packing_lot_gives_its_lot_back(erp_client, chain):
+    fitted, packing = chain
+    [lot] = _fitted_lots(erp_client, fitted, 10)
+    row = _pack(
+        erp_client, packing, lot["outputItemName"], 10, links=[lot], status="Pending"
+    )
+    assert _shown_first(erp_client, packing) == []
+
+    body = _rpc(
+        erp_client,
+        "updateProductionStatus",
+        [row["rowIdx"], row["qty"], "Cancelled"],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+    assert _shown_first(erp_client, packing) == [lot["lotNumber"]]
+
+
+def test_a_deleted_packing_lot_gives_its_lot_back(erp_client, chain):
+    fitted, packing = chain
+    [lot] = _fitted_lots(erp_client, fitted, 10)
+    row = _pack(erp_client, packing, lot["outputItemName"], 10, links=[lot])
+    assert _shown_first(erp_client, packing) == []
+
+    body = _rpc(
+        erp_client, "deleteProduction", [row["rowIdx"]], mutation=True
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+    assert _shown_first(erp_client, packing) == [lot["lotNumber"]]
+
+
+def test_a_lot_being_edited_does_not_count_against_itself(erp_client, chain):
+    """Otherwise removing its link on the form could not bring the lot back."""
+    fitted, packing = chain
+    [lot] = _fitted_lots(erp_client, fitted, 10)
+    row = _pack(
+        erp_client, packing, lot["outputItemName"], 10, links=[lot], status="Pending"
+    )
+
+    assert _shown_first(erp_client, packing, row["rowIdx"]) == [lot["lotNumber"]]
+
+
+def test_nothing_looks_used_up_to_a_finished_lot(erp_client, chain):
+    """What is left today says nothing about what was there when it was made."""
+    fitted, packing = chain
+    [lot] = _fitted_lots(erp_client, fitted, 10)
+    row = _pack(erp_client, packing, lot["outputItemName"], 10, links=[lot])
+
+    assert _shown_first(erp_client, packing, row["rowIdx"]) == [lot["lotNumber"]]
+
+
+def test_painting_lots_never_look_used_up(erp_client):
+    """Below sequence 3 a lot is mixed (the owner, 2026-10-31)."""
+    model = _model(erp_client)
+    painting = _process(erp_client, 2, f"Painted Frame 14 inch {model}")
+    fitting = _process(erp_client, 3, f"Fitted Frame 14 inch {model} S/Rim")
+    painted = _row(erp_client, painting, qty=10)
+    _pack(erp_client, fitting, painted["outputItemName"], 10, links=[painted])
+
+    assert _shown_first(erp_client, fitting) == [painted["lotNumber"]]
+
+
+def test_a_colour_gone_negative_does_not_hide_the_others(erp_client, chain):
+    """Too many lots listed is harmless, and hiding one is not."""
+    fitted, packing = chain
+    [lot] = _fitted_lots(erp_client, fitted, 10)
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_c, cur):
+        cur.execute(
+            """
+            INSERT INTO erp.warehouse_pool
+                (output_item_name, process_id, produced_qty, consumed_qty,
+                 available_qty, color)
+            VALUES (%s, %s, 0, 15, -15, 'Red')
+            """,
+            (lot["outputItemName"], fitted),
+        )
+        try:
+            assert lot_reference_service._pool_on_hand(
+                cur, [lot["outputItemName"].lower()]
+            ) == {lot["outputItemName"].lower(): 10.0}
+        finally:
+            cur.execute(
+                "DELETE FROM erp.warehouse_pool WHERE output_item_name = %s"
+                " AND color = 'Red'",
+                (lot["outputItemName"],),
+            )
+
+
+def test_the_limit_cuts_what_looks_used_up_first(erp_client, chain, monkeypatch):
+    fitted, packing = chain
+    older, newer = _fitted_lots(erp_client, fitted, 10, 10)
+    _pack(erp_client, packing, newer["outputItemName"], 10, links=[newer])
+    monkeypatch.setattr(lot_reference_service, "MAX_RELATED_LOTS", 1)
+
+    assert _numbers(_related(erp_client, packing)["lots"]) == [older["lotNumber"]]
+
+
+# ── Tags on the Production Log ───────────────────────────────────────────
+
+
+def _log_row(client, row):
+    body = _rpc(client, "getProductionData").get_json()
+    assert body["success"] is True, body["message"]
+    return next(r for r in body["data"] if r["rowIdx"] == row["rowIdx"])
+
+
+def test_the_log_lists_what_a_lot_is_connected_to(erp_client, chain):
+    fitted, packing = chain
+    first = _row(erp_client, fitted)
+    second = _row(erp_client, fitted)
+
+    row = _row(
+        erp_client, packing, lotRefs=json.dumps([first["rowIdx"], second["rowIdx"]])
+    )
+
+    refs = _log_row(erp_client, row)["lotRefs"]
+    assert {ref["lotNumber"] for ref in refs} == {
+        first["lotNumber"],
+        second["lotNumber"],
+    }
+    assert {ref["rowIdx"] for ref in refs} == {first["rowIdx"], second["rowIdx"]}
+
+
+def test_a_saved_lot_comes_back_with_its_tags(erp_client, chain):
+    """The form patches the row from this, so the tag shows with no reload."""
+    fitted, packing = chain
+    source = _row(erp_client, fitted)
+
+    row = _row(erp_client, packing, lotRefs=json.dumps([source["rowIdx"]]))
+
+    assert [ref["lotNumber"] for ref in row["lotRefs"]] == [source["lotNumber"]]
+
+
+def test_a_lot_with_no_connections_has_no_tags(erp_client, chain):
+    fitted, _packing = chain
+    row = _row(erp_client, fitted)
+
+    assert row["lotRefs"] == []
+    assert _log_row(erp_client, row)["lotRefs"] == []
+
+
+def test_a_tag_on_a_lot_deleted_since_says_so(erp_client, chain):
+    fitted, packing = chain
+    source = _row(erp_client, fitted)
+    row = _row(erp_client, packing, lotRefs=json.dumps([source["rowIdx"]]))
+
+    body = _rpc(
+        erp_client, "deleteProduction", [source["rowIdx"]], mutation=True
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+    [ref] = _log_row(erp_client, row)["lotRefs"]
+    assert (ref["lotNumber"], ref["deleted"]) == (source["lotNumber"], True)
 
 
 # ── Who may see it ───────────────────────────────────────────────────────

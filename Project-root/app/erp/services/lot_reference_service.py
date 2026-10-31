@@ -22,6 +22,31 @@ guesses: a lot shows only what someone picked for it (the owner, 2026-10-30).
 Connections are optional and information only: the Warehouse Pool, Stock and
 the contractor ledger never read erp.production_lot_refs.
 
+What looks used up (the owner, 2026-10-31)
+------------------------------------------
+Only lots at USED_UP_SEQUENCES. Below them a lot is mixed: one Painting lot
+feeds many Fitting lots in many colours, so "used up" means little. Packing is
+the last stage today, so in practice this is the Packing form's Fitting lots.
+
+A lot looks used up when either of these is true:
+
+  - the lots connected to it have taken all of it. A connection carries no
+    quantity: a lot takes what it draws of the item, from what it was connected
+    to, oldest first (454 of 457 Packing lots draw one fitted frame per unit);
+  - the Warehouse Pool no longer holds enough of its item for it to still be
+    there. Counting back from the newest lot, whatever is older than the pool
+    can cover is taken as used.
+
+It takes both. Connections are optional, so on their own a lot packed with no
+connection would stay listed for ever; the pool on its own could not tell which
+lot a connection used. The pool half assumes the oldest stock goes first.
+
+This only decides what the dropdown shows before anyone types. A wrong
+quantity, a bad count or a bug must never stop someone connecting the right lot
+(the owner, 2026-10-31), so such a lot stays in the reply, flagged usedUp:
+search finds it and replace_lot_refs takes it like any other. Nothing here is
+saved and nothing else reads it, so a wrong answer can only change the list.
+
 production_service imports this module for save_production, so this one must
 not import production_service.
 """
@@ -43,6 +68,9 @@ from ..registry import rpc_method
 # The most related lots one dropdown lists, newest first. The busiest process
 # on the 29 Oct 2026 snapshot had 54.
 MAX_RELATED_LOTS = 200
+
+# The stages whose lots can look used up. See the module docstring.
+USED_UP_SEQUENCES = (3, 4)
 
 _LOT_COLUMNS = """
     id, lot_number, process_id, output_item_name, status, qty, color, color_breakdown,
@@ -135,6 +163,7 @@ def _lot_summary(lot: dict, receipts: list, process: dict | None) -> dict:
         "date": date_utils.to_display_string(when) or "",
         "dateRaw": date_utils.to_iso_string(when) or "",
         "deleted": lot["deleted_at"] is not None,
+        "usedUp": False,
     }
 
 
@@ -155,11 +184,144 @@ def _lots_of_processes(cur, process_ids: list) -> list:
     return cur.fetchall()
 
 
+def _received(receipts: list) -> float:
+    return sum(r["qty"] for r in receipts)
+
+
+def _lot_made(lot: dict, receipts: list) -> float:
+    """What a lot has to give: all of it, or what a Cancelled lot received
+    before its balance was dropped."""
+    if _text(lot["status"]).lower() == "cancelled":
+        return _received(receipts)
+    return float(lot["qty"])
+
+
+def _pool_draws(lot: dict) -> dict:
+    """{item name, lower-cased: what a lot draws of it from the pool}."""
+    drawn: dict = {}
+    for c in lot["components_consumed"] or []:
+        if isinstance(c, dict) and _text(c.get("sourceType")).upper() == "POOL":
+            item = _text(c.get("itemName")).lower()
+            drawn[item] = drawn.get(item, 0.0) + lot_receipts._num(c.get("qty"))
+    return drawn
+
+
+def _share_taken(lot: dict, receipts: list) -> float:
+    """How much of its draw a connected lot takes: all of it, open or not,
+    because those frames are spoken for; a Cancelled lot only what it received
+    before it was cancelled."""
+    if _text(lot["status"]).lower() != "cancelled":
+        return 1.0
+    qty = float(lot["qty"])
+    return _received(receipts) / qty if qty else 0.0
+
+
+def _taken_by_connections(cur, lots: list, made: dict, skip_id=None) -> dict:
+    """{lot id: what the lots connected to it have taken}. `skip_id` is the lot
+    being edited: what it takes is on the form, where it can still change."""
+    by_id = {lot["id"]: lot for lot in lots}
+    cur.execute(
+        """
+        SELECT production_id, ref_production_id FROM erp.production_lot_refs
+         WHERE ref_production_id = ANY(%s)
+        """,
+        (list(by_id),),
+    )
+    sources: dict = {}
+    for row in cur.fetchall():
+        if row["production_id"] != skip_id:
+            sources.setdefault(row["production_id"], []).append(
+                by_id[row["ref_production_id"]]
+            )
+    if not sources:
+        return {}
+
+    cur.execute(
+        """
+        SELECT id, qty, status, components_consumed FROM erp.production
+         WHERE id = ANY(%s) AND deleted_at IS NULL
+         ORDER BY production_date, id
+        """,
+        (list(sources),),
+    )
+    takers = cur.fetchall()
+    receipts = lot_receipts.load_receipts(cur, [lot["id"] for lot in takers])
+
+    taken: dict = {}
+    for taker in takers:
+        share = _share_taken(taker, receipts.get(taker["id"]) or [])
+        drawn = _pool_draws(taker)
+        wanted: dict = {}
+        ordered = sorted(
+            sources[taker["id"]], key=lambda s: (s["production_date"], s["id"])
+        )
+        for source in ordered:
+            item = _text(source["output_item_name"]).lower()
+            if item not in wanted:
+                # A lot that records no draw of the item takes one per unit.
+                wanted[item] = drawn.get(item, float(taker["qty"])) * share
+            take = min(wanted[item], made[source["id"]] - taken.get(source["id"], 0.0))
+            if take > 0:
+                taken[source["id"]] = taken.get(source["id"], 0.0) + take
+                wanted[item] -= take
+    return taken
+
+
+def _pool_on_hand(cur, items: list) -> dict:
+    """{item name, lower-cased: what the Warehouse Pool holds}. Only buckets
+    above zero count: a colour gone negative is a question about that colour
+    (warehouse_service), not fewer of the others on the shelf, and listing a
+    lot too many is harmless where hiding one is not."""
+    cur.execute(
+        """
+        SELECT lower(trim(output_item_name)) AS item,
+               SUM(GREATEST(available_qty, 0)) AS qty
+          FROM erp.warehouse_pool
+         WHERE counts_toward_total
+           AND COALESCE(trim(product_tag), '') = ''
+           AND lower(trim(output_item_name)) = ANY(%s)
+         GROUP BY 1
+        """,
+        (items,),
+    )
+    return {row["item"]: float(row["qty"]) for row in cur.fetchall()}
+
+
+def _mark_used_up(cur, lots, summaries, receipts, skip_id=None) -> None:
+    """Sets usedUp on `summaries`, which are newest first. See the module
+    docstring for the rule."""
+    lot_by_id = {lot["id"]: lot for lot in lots}
+    made = {lot["id"]: _lot_made(lot, receipts.get(lot["id"]) or []) for lot in lots}
+    taken = _taken_by_connections(cur, lots, made, skip_id)
+    on_hand = _pool_on_hand(
+        cur, sorted({s["outputItemName"].lower() for s in summaries})
+    )
+
+    for summary in summaries:
+        lot = lot_by_id[summary["rowIdx"]]
+        item = summary["outputItemName"].lower()
+        took = taken.get(lot["id"], 0.0)
+        left = made[lot["id"]] - took
+        if left <= lot_receipts._QTY_TOLERANCE:
+            summary["usedUp"] = True
+        elif lot_receipts.is_open(lot["status"]):
+            # Still being made: what has come back is in the pool and the rest
+            # isn't yet, so the pool can't say it has gone.
+            arrived = _received(receipts.get(lot["id"]) or [])
+            on_hand[item] = on_hand.get(item, 0.0) - max(arrived - took, 0.0)
+        elif on_hand.get(item, 0.0) <= lot_receipts._QTY_TOLERANCE:
+            summary["usedUp"] = True
+        else:
+            on_hand[item] -= left
+
+
 def _related_lots(cur, process, processes, model_names, *, exclude=None, limit=None):
-    """Summaries of the lots related to `process`, newest first. `exclude` is
-    the lot these are being listed for, when it already exists: it is left
-    out, and so is anything done after it was finished, because a lot cannot
-    have come from one made later."""
+    """Summaries of the lots related to `process`, newest first, with what
+    looks used up after the rest. `exclude` is the lot these are being listed
+    for, when it already exists: it is left out, and so is anything done after
+    it was finished, because a lot cannot have come from one made later.
+    Nothing looks used up to a finished lot: what is left now says nothing
+    about what was there when it was made."""
     related = _related_processes(process, processes, model_names)
     lots = _lots_of_processes(cur, list(related))
     receipts = lot_receipts.load_receipts(cur, [lot["id"] for lot in lots])
@@ -183,7 +345,43 @@ def _related_lots(cur, process, processes, model_names, *, exclude=None, limit=N
         summaries = [s for s in summaries if s["dateRaw"] <= cutoff]
 
     summaries.sort(key=lambda s: (s["dateRaw"], s["rowIdx"]), reverse=True)
+    if summaries and finished is None and process["sequence"] - 1 in USED_UP_SEQUENCES:
+        skip_id = exclude["id"] if exclude is not None else None
+        _mark_used_up(cur, lots, summaries, receipts, skip_id)
+        # Stable: newest first within each, and the limit cuts these first.
+        summaries.sort(key=lambda s: s["usedUp"])
     return summaries[:limit] if limit else summaries
+
+
+def load_lot_refs(cur, lot_ids=None) -> dict:
+    """{lot id: [{"rowIdx", "lotNumber", "deleted"}, ...]}: what each lot was
+    connected to, for the tags on the Production Log. A lot deleted since
+    stays, shown as deleted, as it does on the form."""
+    params: tuple = ()
+    lot_filter = ""
+    if lot_ids is not None:
+        lot_filter = "WHERE r.production_id = ANY(%s)"
+        params = (list(lot_ids),)
+    cur.execute(
+        f"""
+        SELECT r.production_id, p.id, p.lot_number, p.deleted_at
+          FROM erp.production_lot_refs r
+          JOIN erp.production p ON p.id = r.ref_production_id
+          {lot_filter}
+         ORDER BY r.created_at, r.ref_production_id
+        """,
+        params,
+    )
+    refs: dict = {}
+    for row in cur.fetchall():
+        refs.setdefault(row["production_id"], []).append(
+            {
+                "rowIdx": row["id"],
+                "lotNumber": _text(row["lot_number"]),
+                "deleted": row["deleted_at"] is not None,
+            }
+        )
+    return refs
 
 
 def _saved_references(cur, lot_id: int, process_by_id: dict) -> list:
