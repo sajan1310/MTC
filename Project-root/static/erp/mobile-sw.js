@@ -214,7 +214,10 @@
 // v95: a lot's connections show as tags on its card, and a tap opens the lot.
 // On Log Lot for Packing, Fitting lots that look used up wait for a search
 // instead of showing first. mobile.js and mobile_styles.css carry it.
-const CACHE_NAME = 'erp-mobile-shell-v95';
+// v96: a custom role sees only its own pages in the tab bar, drawer, More,
+// Home and search, and rates, costs and money are for Admin and Super Admin.
+// api.js, mobile.js and the template carry it.
+const CACHE_NAME = 'erp-mobile-shell-v96';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

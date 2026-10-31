@@ -29,6 +29,11 @@
        standing prompt. A bool, never anything derived from the hash. -->
   <meta name="current-user-has-password"
         content="{{ 'yes' if current_user.has_password else 'no' }}">
+  <!-- What this account's shell shows, read by App.Dashboard.hasFigures and
+       App.Navigation.isLimited. "limited" is a custom role: only its granted
+       pages exist here. UX only; app/erp/rpc.py is the real gate. -->
+  <meta name="current-user-figures" content="{{ 'yes' if sees_figures else 'no' }}">
+  <meta name="current-user-access" content="{{ 'full' if permitted_tabs is none else 'limited' }}">
   <!-- "auto" or "off". When "off", App.Print skips the server render endpoint
        entirely rather than discovering it is unavailable once per session. -->
   <title>Maharaja Bikes ERP</title>
@@ -86,7 +91,7 @@
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
   </style>
 </head>
-<body>
+<body{% if not sees_figures %} class="no-financials"{% endif %}>
 
   <!-- Skip link (A11Y-002). The sidebar is 14 tab buttons; without this a
        keyboard or screen-reader user tabs through all of them on every page
@@ -357,7 +362,10 @@
            for them on a full desktop. From 800 to about 1240px they pushed
            the bell and the account menu off the right edge -- on a tablet in
            portrait both were gone and the page scrolled sideways by 267px.
-           Below 1200px these are icon buttons, named by their titles. -->
+           Below 1200px these are icon buttons, named by their titles.
+           A custom role sees them only with Items Master or Products &
+           Processes, the pages whose records use them. -->
+      {% if permitted_tabs is none or 'itemMaster' in permitted_tabs or 'productsTab' in permitted_tabs %}
       <div class="d-flex align-items-center gap-2 me-2">
         <button type="button" class="btn btn-sm btn-outline-secondary" title="Manage Unit Master" onclick="App.Unit.openModal()">
           <i class="bi bi-rulers"></i>
@@ -376,8 +384,10 @@
           <span class="d-none d-xl-inline">Process Types</span>
         </button>
       </div>
+      {% endif %}
 
       <!-- Logo Upload -->
+      {% if permitted_tabs is none %}
       <div class="d-flex align-items-center gap-2 me-2">
         <label for="logo-upload-input" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" title="Upload company logo" style="font-size:12px;padding:5px 10px;border-radius:8px;cursor:pointer;">
           <i class="bi bi-camera"></i>
@@ -388,6 +398,7 @@
           <i class="bi bi-x-lg"></i>
         </button>
       </div>
+      {% endif %}
 
       <div class="d-flex align-items-center gap-2 me-2">
         <button id="dark-mode-toggle" class="dark-mode-toggle" title="Switch to Dark Mode" type="button">
@@ -481,11 +492,13 @@
 
       <aside class="app-sidebar" id="app-sidebar">
         <ul class="nav flex-column" id="mainTabs" role="tablist">
+          {% if permitted_tabs is none %}
           <li class="nav-item" role="presentation">
             <button class="nav-link active fw-500" id="btn-dashboardTab" type="button" role="tab" aria-controls="dashboardTab" aria-selected="true" data-action="show-tab" data-tab="dashboardTab" title="Dashboard">
               <i class="bi bi-speedometer2"></i><span class="nav-label">Dashboard</span>
             </button>
           </li>
+          {% endif %}
           {% for tab_id, icon, label in [
             ('poLedger', 'bi-file-earmark-text', 'Purchase Orders'),
             ('billLedger', 'bi-receipt', 'Bill Ledger'),
@@ -606,7 +619,7 @@
   <script src="{{ url_for('static', filename='erp/print-templates.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/core.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/print.js') }}"></script>
-  <script src="{{ url_for('static', filename='erp/dashboard.js') }}?v=8"></script>
+  <script src="{{ url_for('static', filename='erp/dashboard.js') }}?v=9"></script>
 
 
 

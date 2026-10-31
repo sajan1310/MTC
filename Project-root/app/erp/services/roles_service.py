@@ -15,8 +15,14 @@ alongside the built-in ROLES/CREATE_ROLES).
 Enforcement lives in two places:
   - app/erp/rpc.py's dispatcher, via TAB_BY_SERVICE_MODULE below (the real
     security boundary -- gates the underlying RPC methods per tab+level).
-  - app/erp/pages.py's index() route computes which tabs to even render
-    for the sidebar/tab-content (UX only, not enforcement).
+  - app/erp/pages.py's two shell routes pass the role's tabs to the templates,
+    so neither shell shows a page the role can't open (UX only, not
+    enforcement). A custom role has no Dashboard: desktop lands on its first
+    granted tab, and the phone's Home is its launcher.
+
+A page depends on other pages' lists, so holding a tab also allows the
+read-only methods named for it in LOOKUPS_BY_TAB. Those other pages stay hidden
+and nothing on them can be written.
 
 Everything here is admin-only (roles=frozenset({"admin"}), which
 User.has_role() already treats super_admin as a superset of -- see
@@ -37,8 +43,9 @@ from ..envelope import build_response
 from ..registry import rpc_method
 
 # (tab_id, display label) -- the sidebar tabs a custom role can be granted.
-# dashboardTab is deliberately absent: every role sees it, it's the landing
-# page. usersTab is deliberately absent: never assignable to a custom role.
+# dashboardTab is deliberately absent: it is not a grant. Its figures follow
+# pages.py's DASHBOARD_FIGURE_ROLES, and a custom role has no Dashboard page.
+# usersTab is deliberately absent: never assignable to a custom role.
 ASSIGNABLE_TABS = [
     ("vendorMaster", "Vendors"),
     ("itemMaster", "Items Master"),
@@ -93,6 +100,69 @@ TAB_BY_SERVICE_MODULE = {
     "dispatch_service": "dispatchTab",
     "users_service": "usersTab",
     "roles_service": "usersTab",
+}
+
+# The read-only lists one page depends on from another page's module. Granting
+# Production means its forms can fill their process, item and contractor
+# dropdowns, without Items Master or Contractors appearing for that role and
+# without any write on them: rpc.py honours these for non-mutating methods only.
+#
+# Named method by method rather than tab by tab, because a whole tab would also
+# hand over things no other page reads, such as a contractor's account ledger.
+# Drawn from what both shells' code really calls on each page. A method absent
+# here stays refused, so a new cross-page read needs an entry. Whatever these
+# return, rpc.py blanks the rates, costs and money first (financials.py), so a
+# bill reaches a Production form as an item and a quantity, never an amount.
+_ITEM_LISTS = frozenset({"getItemsData", "getStockData"})
+_PURCHASE_HISTORY = frozenset(
+    {"getVendorsData", "getPOData", "getBillData", "getReturnData"}
+)
+_PROCESS_LISTS = frozenset({"getProcessData", "getProcessColorGroups"})
+
+LOOKUPS_BY_TAB = {
+    "vendorMaster": _ITEM_LISTS | _PURCHASE_HISTORY | {"getIssueData"},
+    "itemMaster": _ITEM_LISTS | _PURCHASE_HISTORY | {"getProcessesForItem"},
+    "poLedger": _ITEM_LISTS | _PURCHASE_HISTORY,
+    "billLedger": _ITEM_LISTS
+    | _PURCHASE_HISTORY
+    | _PROCESS_LISTS
+    | {"getContractorsData", "checkStockAdjustmentConflicts", "suggestPoAllocations"},
+    "returnLedger": _ITEM_LISTS
+    | _PURCHASE_HISTORY
+    | {"getProcessData", "getWarehousePoolData"},
+    "stockTab": _ITEM_LISTS
+    | _PURCHASE_HISTORY
+    | _PROCESS_LISTS
+    | {"getAllProcessColorGroups", "getBOMProductionData", "getItemLedgerData"},
+    "productsTab": _ITEM_LISTS
+    | {
+        "getContractorsData",
+        "getContractorRatesData",
+        "getContractorRateForProcessType",
+        "getProcessWipData",
+    },
+    "contractorsTab": frozenset({"getProcessData"}),
+    "productionTab": _ITEM_LISTS
+    | _PROCESS_LISTS
+    | {
+        "getProcessColorAxes",
+        "getProcessComponentsData",
+        "getBOMProductionData",
+        "getContractorsData",
+        "getContractorRateForProcessType",
+        "getContractorServiceChargesForContractor",
+        "getWarehousePoolData",
+    },
+    "inspectionTab": frozenset(),
+    "clientsTab": frozenset({"getDispatchData", "getBOMProductionData"}),
+    "dispatchTab": _ITEM_LISTS
+    | {
+        "getClientsData",
+        "getClientOrdersData",
+        "getContractorsData",
+        "getContractorRateForProcessType",
+        "getBOMProductionData",
+    },
 }
 
 _BUILTIN_ROLES = frozenset({"pending_approval", "user", "admin", "super_admin"})
@@ -154,6 +224,17 @@ def get_effective_tab_level(role: str, tab: str) -> str | None:
     if perms is None:
         return None
     return perms.get(tab)
+
+
+def page_needs_read(role: str, method: str) -> bool:
+    """True if a page `role` holds, at any level, reads `method` from another
+    page (see LOOKUPS_BY_TAB). Viewer counts: the page has to open for it too.
+    rpc.py asks this only for a method that isn't a write.
+    """
+    perms = get_role_permissions(role)
+    if not perms:
+        return False
+    return any(method in LOOKUPS_BY_TAB.get(tab, ()) for tab in perms)
 
 
 def _validate_permissions(permissions) -> dict[str, str]:

@@ -50,7 +50,7 @@
       <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteBills" type="button" onclick="App.Bill.bulkDelete()" style="white-space: nowrap;">
         <i class="bi bi-trash"></i> Delete Selected
       </button>
-      <button class="btn btn-primary fw-bold shadow-sm"
+      <button class="finance-only btn btn-primary fw-bold shadow-sm"
               type="button"
               onclick="App.Bill.openReceiveModal()"
               aria-label="Record a new bill receipt"
@@ -113,7 +113,7 @@
     <p style="margin-bottom: 20px;">
       Start by recording the first bill against a Purchase Order or as a direct bill.
     </p>
-    <button class="btn btn-primary"
+    <button class="finance-only btn btn-primary"
             type="button"
             onclick="App.Bill.openReceiveModal()">
       Record First Bill

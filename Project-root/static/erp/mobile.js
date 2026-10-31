@@ -477,6 +477,7 @@ MApp.Util = {
 
   // Mirrors formatCurrency() on desktop.
   formatCurrency(value) {
+    if (!MApp.Access.seesFigures()) return '—';
     return `₹${this.toNumber(value).toFixed(2)}`;
   },
 
@@ -1334,6 +1335,89 @@ MApp.SearchBox = {
 };
 
 // ================================================================
+// ACCESS — which pages this account's shell shows.
+//
+// A custom role grants a chosen set of pages, and a page it can't open is
+// only noise: the server refuses it anyway (app/erp/rpc.py is the real gate,
+// this is UX). Everything that lists destinations asks here, so the tab bar,
+// the drawer, More, Home and search cannot disagree.
+//
+// A need is a tab id from roles_service.ASSIGNABLE_TABS ('stockTab'), several
+// joined by | where any one will do, or one of three words: 'full' (any
+// built-in role), 'admin', or 'figures' (the Dashboard's numbers).
+//
+// With no window.MOBILE_CURRENT_USER everything is allowed: the page was not
+// rendered by pages.py, and the gate above still holds.
+// ================================================================
+MApp.Access = {
+  _user() { return window.MOBILE_CURRENT_USER || null; },
+
+  // {tab: level} for a custom role, null for every built-in role.
+  levels() {
+    const user = this._user();
+    return (user && user.tabLevels) || null;
+  },
+
+  isLimited() { return this.levels() !== null; },
+
+  hasNoPages() {
+    const levels = this.levels();
+    return !!levels && Object.keys(levels).length === 0;
+  },
+
+  seesFigures() {
+    const user = this._user();
+    return !user || user.seesFigures !== false;
+  },
+
+  _isAdmin() {
+    const user = this._user();
+    return !user || user.role === 'admin' || user.role === 'super_admin';
+  },
+
+  _has(need) {
+    if (need === 'figures') return this.seesFigures();
+    if (need === 'admin') return this._isAdmin();
+    const levels = this.levels();
+    if (levels === null) return true;
+    if (need === 'full') return false;
+    return Object.prototype.hasOwnProperty.call(levels, need);
+  },
+
+  allows(needs) {
+    return !needs || String(needs).split('|').some(need => this._has(need));
+  },
+
+  // Starting a job takes Editor. Viewer and Commenter can open the page but
+  // the server refuses the save, so offering the job is offering a failure.
+  // Jobs that carry a price go further: those need 'admin', whatever the tab.
+  canEdit(tab) {
+    const levels = this.levels();
+    return levels === null || levels[tab] === 'editor';
+  },
+
+  // Removes what this account can't use, then any More section left with
+  // nothing but its heading. Run over each cloned screen, and once at boot
+  // over the sheets, whose buttons are in the page from the start.
+  apply(root) {
+    if (!root) return;
+    root.querySelectorAll('[data-needs]').forEach(el => {
+      if (!this.allows(el.dataset.needs)) el.remove();
+    });
+    root.querySelectorAll('[data-needs-edit]').forEach(el => {
+      if (!this.canEdit(el.dataset.needsEdit)) el.remove();
+    });
+    root.querySelectorAll('[data-dest]').forEach(el => {
+      const dest = MApp.Shortcuts.destination(el.dataset.dest);
+      if (dest && !this.allows(dest.needs)) el.remove();
+    });
+    root.querySelectorAll('.mapp-group').forEach(el => {
+      if (![...el.children].some(child => child.tagName !== 'SUMMARY')) el.remove();
+    });
+  }
+};
+
+// ================================================================
 // SHELL — tab routing. Each tab root is a <template id="tpl-*"> in
 // mobile_views.html, cloned fresh into #mapp-content on every visit so a
 // tab always starts from its skeleton state rather than stale DOM.
@@ -1341,8 +1425,15 @@ MApp.SearchBox = {
 MApp.Shell = {
   TABS: ['home', 'stock', 'production', 'dispatch', 'more'],
   TITLES: { home: 'Home', stock: 'Stock', production: 'Production', dispatch: 'Dispatch', more: 'More' },
+  // Home and More are every account's: Home is the launcher, More holds the
+  // account and sign-out.
+  NEEDS: { stock: 'stockTab', production: 'productionTab', dispatch: 'dispatchTab' },
   LAST_TAB_KEY: 'maharaja-erp-mobile-last-tab',
   current: null,
+
+  allowed(tab) {
+    return this.TABS.indexOf(tab) > -1 && MApp.Access.allows(this.NEEDS[tab]);
+  },
 
   init() {
     window.addEventListener('hashchange', () => this.handleHashChange());
@@ -1351,7 +1442,7 @@ MApp.Shell = {
 
   tabFromHash() {
     const tab = String(location.hash || '').replace(/^#/, '');
-    return this.TABS.indexOf(tab) > -1 ? tab : null;
+    return this.allowed(tab) ? tab : null;
   },
 
   // Same split as the desktop shell's Navigation.resolveInitialTab: the URL
@@ -1364,7 +1455,7 @@ MApp.Shell = {
     if (fromHash) return fromHash;
     let stored = null;
     try { stored = localStorage.getItem(this.LAST_TAB_KEY); } catch (e) { /* storage inaccessible */ }
-    return this.TABS.indexOf(stored) > -1 ? stored : 'home';
+    return this.allowed(stored) ? stored : 'home';
   },
 
   // Written through the history API rather than by assigning location.hash
@@ -1415,7 +1506,7 @@ MApp.Shell = {
   },
 
   showTab(tab, opts) {
-    if (this.TABS.indexOf(tab) === -1) return;
+    if (!this.allowed(tab)) return;
     const changed = tab !== this.current;
     this.current = tab;
     this.syncHash(tab, !!(opts && opts.replace));
@@ -1435,6 +1526,7 @@ MApp.Shell = {
       content.classList.remove('mapp-screen-enter');
       content.innerHTML = '';
       if (tpl) content.appendChild(tpl.content.cloneNode(true));
+      MApp.Access.apply(content);
       content.scrollTop = 0;
       if (typeof MApp.PullToRefresh !== 'undefined') MApp.PullToRefresh.attach(content);
       void content.offsetWidth; // force reflow so the enter animation replays every switch
@@ -3246,10 +3338,15 @@ MApp.HomeLayout = {
 MApp.Home = {
   async mount() {
     this.renderGreeting();
+    this._dropEmptySections();
     // Before the await: the shortcuts are read from localStorage and owe
     // the network nothing, so they should be tappable while the figures are
     // still loading -- and they are the fastest route out of Home.
     MApp.Shortcuts.render();
+
+    // Home without the figures is the launcher above and nothing else, so
+    // there is nothing to fetch.
+    if (!MApp.Access.seesFigures()) return;
 
     const statsEl = document.getElementById('home-stats');
     const activityEl = document.getElementById('home-activity');
@@ -3278,6 +3375,16 @@ MApp.Home = {
       MApp.Util.renderError(statsEl, err && err.message, () => this.mount());
       if (activityEl) activityEl.innerHTML = '';
     }
+  },
+
+  // A heading over nothing reads as something failed to load.
+  _dropEmptySections() {
+    const quick = document.getElementById('home-quick');
+    if (quick && !quick.querySelector('button')) quick.remove();
+    const note = document.getElementById('home-no-pages');
+    if (!note) return;
+    if (MApp.Access.hasNoPages()) note.hidden = false;
+    else note.remove();
   },
 
   // Fills in the blocks that were rendered as placeholders. Failing here
@@ -14448,6 +14555,11 @@ MApp.Select = {
   }
 };
 
+// The masters are reference data for Items and for Processes & Recipes, so a
+// custom role reaches them through either page. Same rule as the header
+// shortcuts in index.html.
+const MASTER_DATA_NEEDS = 'itemMaster|productsTab';
+
 // ================================================================
 // GLOBAL SEARCH — one box over every dataset and every destination.
 //
@@ -14471,40 +14583,46 @@ MApp.GlobalSearch = {
   // actually type for a screen whose label they cannot remember.
   DESTINATIONS: [
     { label: 'Home', keywords: 'dashboard today activity', run: () => MApp.Shell.showTab('home') },
-    { label: 'Stock', keywords: 'items quantity low stock levels', run: () => MApp.Shell.showTab('stock') },
-    { label: 'Production', keywords: 'lots log lot process', run: () => MApp.Shell.showTab('production') },
-    { label: 'Dispatch', keywords: 'challan client delivery', run: () => MApp.Shell.showTab('dispatch') },
-    { label: 'Log Lot', keywords: 'new production lot create', run: () => MApp.Production.openLogLotSheet() },
-    { label: 'New Dispatch', keywords: 'challan create send', run: () => MApp.Dispatch.openNewDispatchSheet() },
-    { label: 'Log Return', keywords: 'returns vendor create', run: () => MApp.Returns.openNewReturnSheet() },
-    { label: 'Issued Stock', keywords: 'issue contractor material log', run: () => MApp.Issue.open() },
-    { label: 'Wastage', keywords: 'waste loss scrap log', run: () => MApp.Wastage.open() },
-    { label: 'PO Ledger', keywords: 'purchase orders pending', run: () => MApp.PO.openLedgerSheet() },
-    { label: 'Bill Ledger', keywords: 'bills invoices vendor', run: () => MApp.Bill.openLedgerSheet() },
-    { label: 'Items lookup', keywords: 'item master search parts', run: () => MApp.Items.openLookupSheet() },
-    { label: 'Vendors', keywords: 'suppliers directory contact', run: () => MApp.Directory.open('vendor') },
-    { label: 'Clients', keywords: 'customers directory contact', run: () => MApp.Directory.open('client') },
-    { label: 'Contractors', keywords: 'directory contact rates labour', run: () => MApp.Directory.open('contractor') },
-    { label: 'Processes', keywords: 'stages output recipe components', run: () => MApp.Process.open() },
-    { label: 'Product Recipes', keywords: 'bom bill of materials components', run: () => MApp.BOM.open() },
-    { label: 'Users & Roles', keywords: 'admin accounts permissions', run: () => MApp.Admin.open() },
+    { label: 'Stock', needs: 'stockTab', keywords: 'items quantity low stock levels', run: () => MApp.Shell.showTab('stock') },
+    { label: 'Production', needs: 'productionTab', keywords: 'lots log lot process', run: () => MApp.Shell.showTab('production') },
+    { label: 'Dispatch', needs: 'dispatchTab', keywords: 'challan client delivery', run: () => MApp.Shell.showTab('dispatch') },
+    { label: 'Log Lot', needs: 'productionTab', keywords: 'new production lot create', run: () => MApp.Production.openLogLotSheet() },
+    // Both forms carry prices, and saving one is Admin-only (financials.py).
+    { label: 'New Dispatch', needs: 'admin', keywords: 'challan create send', run: () => MApp.Dispatch.openNewDispatchSheet() },
+    { label: 'Log Return', needs: 'admin', keywords: 'returns vendor create', run: () => MApp.Returns.openNewReturnSheet() },
+    { label: 'Issued Stock', needs: 'productionTab', keywords: 'issue contractor material log', run: () => MApp.Issue.open() },
+    { label: 'Wastage', needs: 'returnLedger', keywords: 'waste loss scrap log', run: () => MApp.Wastage.open() },
+    { label: 'PO Ledger', needs: 'poLedger', keywords: 'purchase orders pending', run: () => MApp.PO.openLedgerSheet() },
+    { label: 'Bill Ledger', needs: 'billLedger', keywords: 'bills invoices vendor', run: () => MApp.Bill.openLedgerSheet() },
+    { label: 'Items lookup', needs: 'itemMaster', keywords: 'item master search parts', run: () => MApp.Items.openLookupSheet() },
+    { label: 'Vendors', needs: 'vendorMaster', keywords: 'suppliers directory contact', run: () => MApp.Directory.open('vendor') },
+    { label: 'Clients', needs: 'clientsTab', keywords: 'customers directory contact', run: () => MApp.Directory.open('client') },
+    { label: 'Contractors', needs: 'contractorsTab', keywords: 'directory contact rates labour', run: () => MApp.Directory.open('contractor') },
+    { label: 'Processes', needs: 'productsTab', keywords: 'stages output recipe components', run: () => MApp.Process.open() },
+    { label: 'Product Recipes', needs: 'productsTab', keywords: 'bom bill of materials components', run: () => MApp.BOM.open() },
+    { label: 'Users & Roles', needs: 'admin', keywords: 'admin accounts permissions', run: () => MApp.Admin.open() },
     { label: 'Sync Issues', keywords: 'offline outbox pending failed queue', run: () => MApp.SyncIssues.open() },
     { label: 'Account', keywords: 'profile name email password change my', run: () => MApp.Account.open() },
-    { label: 'Warehouse Pool', keywords: 'pool buckets negative available wip intermediate stock tab', run: () => MApp.Pool.open() },
-    { label: 'System Status', keywords: 'backup health activity log notifications audit', run: () => MApp.Status.open() },
+    { label: 'Warehouse Pool', needs: 'stockTab', keywords: 'pool buckets negative available wip intermediate stock tab', run: () => MApp.Pool.open() },
+    { label: 'System Status', needs: 'full', keywords: 'backup health activity log notifications audit', run: () => MApp.Status.open() },
     // The dashboard is Home now, so searching for it goes to Home rather
     // than opening a sheet that no longer exists.
-    { label: 'Dashboard', keywords: 'kpi totals payables ready low stock overview home', run: () => MApp.Shell.showTab('home') },
-    { label: 'Colours', keywords: 'colour color master paint shade', run: () => MApp.Master.open('color') },
-    { label: 'Models', keywords: 'model master kalpi ranger', run: () => MApp.Master.open('model') },
-    { label: 'Process Types', keywords: 'process type master stage', run: () => MApp.Master.open('processType') },
-    { label: 'Units', keywords: 'unit master conversion dozen kg factor', run: () => MApp.Master.open('unit') },
-    { label: 'Stock Groups', keywords: 'group set collection low stock report stickers bolts', run: () => MApp.StockGroups.open() },
-    { label: 'PI / Estimates', keywords: 'client order proforma invoice quote estimate confirm', run: () => MApp.ClientOrders.open() },
-    { label: 'Opening balances', keywords: 'pool opening stock credit rack correction warehouse', run: () => MApp.PoolOpenings.open() },
-    { label: 'Dispatch plan', keywords: 'plan planned loading bay tomorrow schedule challan client', run: () => MApp.DispatchPlan.open() },
-    { label: 'Custom Roles', keywords: 'permissions access admin role tab viewer editor', run: () => MApp.Roles.open() }
+    { label: 'Dashboard', needs: 'figures', keywords: 'kpi totals payables ready low stock overview home', run: () => MApp.Shell.showTab('home') },
+    { label: 'Colours', needs: MASTER_DATA_NEEDS, keywords: 'colour color master paint shade', run: () => MApp.Master.open('color') },
+    { label: 'Models', needs: MASTER_DATA_NEEDS, keywords: 'model master kalpi ranger', run: () => MApp.Master.open('model') },
+    { label: 'Process Types', needs: MASTER_DATA_NEEDS, keywords: 'process type master stage', run: () => MApp.Master.open('processType') },
+    { label: 'Units', needs: MASTER_DATA_NEEDS, keywords: 'unit master conversion dozen kg factor', run: () => MApp.Master.open('unit') },
+    { label: 'Stock Groups', needs: 'stockTab', keywords: 'group set collection low stock report stickers bolts', run: () => MApp.StockGroups.open() },
+    { label: 'PI / Estimates', needs: 'clientsTab', keywords: 'client order proforma invoice quote estimate confirm', run: () => MApp.ClientOrders.open() },
+    { label: 'Opening balances', needs: 'stockTab', keywords: 'pool opening stock credit rack correction warehouse', run: () => MApp.PoolOpenings.open() },
+    { label: 'Dispatch plan', needs: 'dispatchTab', keywords: 'plan planned loading bay tomorrow schedule challan client', run: () => MApp.DispatchPlan.open() },
+    { label: 'Custom Roles', needs: 'admin', keywords: 'permissions access admin role tab viewer editor', run: () => MApp.Roles.open() }
   ],
+
+  // What this account can reach, read at use rather than at load so a test
+  // or a role change cannot leave the list behind.
+  destinations() { return this.DESTINATIONS.filter(d => MApp.Access.allows(d.needs)); },
+  sources() { return this.SOURCES.filter(s => MApp.Access.allows(s.needs)); },
 
   DEST_SPEC: {
     fields: [
@@ -14519,7 +14637,7 @@ MApp.GlobalSearch = {
   // that dataset is added to MApp.Api.callCached's set.
   SOURCES: [
     {
-      id: 'stock', label: 'Stock', method: 'getStockData', tab: 'stock',
+      id: 'stock', label: 'Stock', method: 'getStockData', tab: 'stock', needs: 'stockTab',
       searchInput: 'stock-search',
       spec: { fields: [
         { key: 'name', weight: 10, label: 'Item' },
@@ -14530,7 +14648,7 @@ MApp.GlobalSearch = {
       term: r => r.name
     },
     {
-      id: 'production', label: 'Production', method: 'getProductionData', tab: 'production',
+      id: 'production', label: 'Production', method: 'getProductionData', tab: 'production', needs: 'productionTab',
       searchInput: 'production-search',
       spec: { fields: [
         { key: 'lotNumber', weight: 10, label: 'Lot' },
@@ -14542,7 +14660,7 @@ MApp.GlobalSearch = {
       term: r => r.lotNumber
     },
     {
-      id: 'dispatch', label: 'Dispatch', method: 'getDispatchData', tab: 'dispatch',
+      id: 'dispatch', label: 'Dispatch', method: 'getDispatchData', tab: 'dispatch', needs: 'dispatchTab',
       searchInput: 'dispatch-search',
       spec: { fields: [
         { key: 'dispatchNumber', weight: 10, label: 'Challan' },
@@ -14587,8 +14705,8 @@ MApp.GlobalSearch = {
   // (offline with nothing cached) simply contributes nothing rather than
   // breaking the whole search.
   async _loadSources() {
-    this._indexes.destinations = MApp.Search.index(this.DESTINATIONS, this.DEST_SPEC);
-    await Promise.all(this.SOURCES.map(async source => {
+    this._indexes.destinations = MApp.Search.index(this.destinations(), this.DEST_SPEC);
+    await Promise.all(this.sources().map(async source => {
       try {
         const res = await MApp.Api.callCached(source.method);
         if (res && res.success) {
@@ -14610,7 +14728,7 @@ MApp.GlobalSearch = {
     if (!term) {
       el.innerHTML = `
         <div class="mapp-section-label">Go to</div>
-        ${this._groupHtml('destinations', 'Screens', this.DESTINATIONS.slice(0, 6), null)}`;
+        ${this._groupHtml('destinations', 'Screens', this.destinations().slice(0, 6), null)}`;
       this._bind(el);
       return;
     }
@@ -14618,7 +14736,7 @@ MApp.GlobalSearch = {
     const destHits = MApp.Search.run(this._indexes.destinations || [], term);
     const groups = [{ id: 'destinations', label: 'Screens', rows: destHits, source: null }];
 
-    this.SOURCES.forEach(source => {
+    this.sources().forEach(source => {
       const entries = this._indexes[source.id];
       if (!entries) return;
       const hits = MApp.Search.run(entries, term);
@@ -20299,32 +20417,41 @@ MApp.Shortcuts = {
 
   // Catalogue order is the tie-break, so a fresh install shows a sensible
   // row rather than an arbitrary one: the four most commonly wanted first.
+  //
+  // `needs` is what MApp.Access checks. It names the same tab that guards the
+  // module's RPCs on the server (roles_service.TAB_BY_SERVICE_MODULE); an
+  // entry without it belongs to the device, not to a role.
   DESTINATIONS: [
-    { key: 'billLedger', label: 'Bills', open: () => MApp.Bill.openLedgerSheet() },
-    { key: 'poLedger', label: 'POs', open: () => MApp.PO.openLedgerSheet() },
-    { key: 'itemsLookup', label: 'Items', open: () => MApp.Items.openLookupSheet() },
-    { key: 'pool', label: 'Pool', open: () => MApp.Pool.open() },
-    { key: 'inspection', label: 'Inspection', open: () => MApp.Inspection.open() },
-    { key: 'vendors', label: 'Vendors', open: () => MApp.Directory.open('vendor') },
-    { key: 'clients', label: 'Clients', open: () => MApp.Directory.open('client') },
-    { key: 'contractors', label: 'Contractors', open: () => MApp.Directory.open('contractor') },
-    { key: 'dispatchPlan', label: 'Dispatch plan', open: () => MApp.DispatchPlan.open() },
-    { key: 'clientOrders', label: 'PI / Estimates', open: () => MApp.ClientOrders.open() },
-    { key: 'issued', label: 'Issued Stock', open: () => MApp.Issue.open() },
-    { key: 'wastage', label: 'Wastage', open: () => MApp.Wastage.open() },
-    { key: 'processes', label: 'Processes', open: () => MApp.Process.open() },
-    { key: 'recipes', label: 'Recipes', open: () => MApp.BOM.open() },
-    { key: 'stockGroups', label: 'Stock Groups', open: () => MApp.StockGroups.open() },
-    { key: 'colors', label: 'Colours', open: () => MApp.Master.open('color') },
-    { key: 'models', label: 'Models', open: () => MApp.Master.open('model') },
-    { key: 'processTypes', label: 'Process Types', open: () => MApp.Master.open('processType') },
-    { key: 'units', label: 'Units', open: () => MApp.Master.open('unit') },
+    { key: 'billLedger', label: 'Bills', needs: 'billLedger', open: () => MApp.Bill.openLedgerSheet() },
+    { key: 'poLedger', label: 'POs', needs: 'poLedger', open: () => MApp.PO.openLedgerSheet() },
+    { key: 'itemsLookup', label: 'Items', needs: 'itemMaster', open: () => MApp.Items.openLookupSheet() },
+    { key: 'pool', label: 'Pool', needs: 'stockTab', open: () => MApp.Pool.open() },
+    { key: 'inspection', label: 'Inspection', needs: 'inspectionTab', open: () => MApp.Inspection.open() },
+    { key: 'vendors', label: 'Vendors', needs: 'vendorMaster', open: () => MApp.Directory.open('vendor') },
+    { key: 'clients', label: 'Clients', needs: 'clientsTab', open: () => MApp.Directory.open('client') },
+    { key: 'contractors', label: 'Contractors', needs: 'contractorsTab', open: () => MApp.Directory.open('contractor') },
+    { key: 'dispatchPlan', label: 'Dispatch plan', needs: 'dispatchTab', open: () => MApp.DispatchPlan.open() },
+    { key: 'clientOrders', label: 'PI / Estimates', needs: 'clientsTab', open: () => MApp.ClientOrders.open() },
+    { key: 'issued', label: 'Issued Stock', needs: 'productionTab', open: () => MApp.Issue.open() },
+    { key: 'wastage', label: 'Wastage', needs: 'returnLedger', open: () => MApp.Wastage.open() },
+    { key: 'processes', label: 'Processes', needs: 'productsTab', open: () => MApp.Process.open() },
+    { key: 'recipes', label: 'Recipes', needs: 'productsTab', open: () => MApp.BOM.open() },
+    { key: 'stockGroups', label: 'Stock Groups', needs: 'stockTab', open: () => MApp.StockGroups.open() },
+    { key: 'colors', label: 'Colours', needs: MASTER_DATA_NEEDS, open: () => MApp.Master.open('color') },
+    { key: 'models', label: 'Models', needs: MASTER_DATA_NEEDS, open: () => MApp.Master.open('model') },
+    { key: 'processTypes', label: 'Process Types', needs: MASTER_DATA_NEEDS, open: () => MApp.Master.open('processType') },
+    { key: 'units', label: 'Units', needs: MASTER_DATA_NEEDS, open: () => MApp.Master.open('unit') },
     { key: 'syncIssues', label: 'Sync Issues', open: () => MApp.SyncIssues.open() },
-    { key: 'status', label: 'System Status', open: () => MApp.Status.open() }
+    { key: 'status', label: 'System Status', needs: 'full', open: () => MApp.Status.open() }
   ],
 
   destination(key) {
     return this.DESTINATIONS.find(d => d.key === key) || null;
+  },
+
+  // The ones this account can open. Everything that lists modules reads this.
+  available() {
+    return this.DESTINATIONS.filter(d => MApp.Access.allows(d.needs));
   },
 
   counts() {
@@ -20341,14 +20468,14 @@ MApp.Shortcuts = {
   // empty promise -- and the order starts moving from the first launch.
   top(limit) {
     const counts = this.counts();
-    const ranked = this.DESTINATIONS.map((d, i) => ({ d, i, n: counts[d.key] || 0 }));
+    const ranked = this.available().map((d, i) => ({ d, i, n: counts[d.key] || 0 }));
     ranked.sort((a, b) => (b.n - a.n) || (a.i - b.i));
     return ranked.slice(0, limit == null ? this.MAX : limit).map(r => r.d);
   },
 
   go(key) {
     const dest = this.destination(key);
-    if (!dest) return;
+    if (!dest || !MApp.Access.allows(dest.needs)) return;
     const counts = this.counts();
     counts[key] = (counts[key] || 0) + 1;
     try { localStorage.setItem(this.KEY, JSON.stringify(counts)); } catch (e) { /* storage inaccessible */ }
@@ -20361,11 +20488,16 @@ MApp.Shortcuts = {
   render() {
     const el = document.getElementById('home-shortcuts');
     if (!el) return;
-    el.innerHTML = this.top().map(d => `
+    // Sync Issues is on every device, so it alone is not a reason for a
+    // limited account to have a "Go to" row. It stays one tap away in More.
+    const shown = this.top().filter(d => d.needs || !MApp.Access.isLimited());
+    el.innerHTML = shown.map(d => `
       <button type="button" class="mb-quick-action mapp-shortcut"
               onclick="MApp.Shortcuts.go('${d.key}')">
         <span>${MApp.Util.escapeHtml(d.label)}</span>
       </button>`).join('');
+    const section = document.getElementById('home-goto');
+    if (section) section.hidden = shown.length === 0;
   }
 };
 
@@ -20455,6 +20587,15 @@ MApp.Drawer = {
     return dest ? dest.label : '';
   },
 
+  // Whether this account can open the entry. Returns is the one section of
+  // the More tab listed here, so it names its own need.
+  _reachable(item) {
+    if (item.tab) return MApp.Shell.allowed(item.tab);
+    if (item.group === 'returns') return MApp.Access.allows('returnLedger');
+    const dest = item.dest && MApp.Shortcuts.destination(item.dest);
+    return !dest || MApp.Access.allows(dest.needs);
+  },
+
   render() {
     const body = document.getElementById('mapp-drawer-body');
     if (!body) return;
@@ -20462,10 +20603,12 @@ MApp.Drawer = {
     const esc = MApp.Util.escapeHtml;
 
     body.innerHTML = this.GROUPS.map(g => {
+      const items = g.items.filter(item => this._reachable(item));
+      if (items.length === 0) return '';
       const isOpen = Object.prototype.hasOwnProperty.call(stored, g.key)
         ? stored[g.key]
         : !!g.open;
-      const rows = g.items.map(item => {
+      const rows = items.map(item => {
         const label = this._label(item);
         if (!label) return '';
         const action = item.tab
@@ -20581,8 +20724,10 @@ MApp.TabBar = {
   ],
 
   choices() {
-    return this.SCREENS.map(s => ({ key: s.key, label: s.label, kind: 'screen' }))
-      .concat(MApp.Shortcuts.DESTINATIONS.map(d => ({
+    return this.SCREENS
+      .filter(s => MApp.Shell.allowed(s.key))
+      .map(s => ({ key: s.key, label: s.label, kind: 'screen' }))
+      .concat(MApp.Shortcuts.available().map(d => ({
         key: d.key, label: d.label, kind: 'module'
       })));
   },
@@ -20591,17 +20736,31 @@ MApp.TabBar = {
     return this.choices().find(c => c.key === key) || null;
   },
 
+  // The usual five, or for a custom role: Home, its own screens, its modules
+  // up to the slots there are, and More, which holds the sign-out.
+  defaults() {
+    if (!MApp.Access.isLimited()) return this.DEFAULTS.slice();
+    const screens = this.DEFAULTS.filter(k => k !== 'more' && MApp.Shell.allowed(k));
+    const modules = MApp.Shortcuts.top(this.MAX)
+      .filter(d => d.needs)
+      .map(d => d.key);
+    return screens.concat(modules).slice(0, this.MAX - 1).concat('more');
+  },
+
   read() {
     let stored = null;
     try { stored = JSON.parse(localStorage.getItem(this.KEY) || 'null'); } catch (e) { stored = null; }
-    if (!Array.isArray(stored)) return this.DEFAULTS.slice();
-    // Filtered through the catalogue so a key from an older build cannot
-    // leave a dead slot, and re-pinned so Home cannot be lost by editing
-    // storage by hand.
+    if (!Array.isArray(stored)) return this.defaults();
+    // Filtered through the catalogue so a key from an older build, or a page
+    // this account no longer has, cannot leave a dead slot, and re-pinned so
+    // Home cannot be lost by editing storage by hand.
     const keys = stored.filter(k => this.choice(k));
     const withHome = keys.indexOf(this.FIXED) === -1
       ? [this.FIXED].concat(keys)
       : keys;
+    // A shared phone remembers the last person's tabs. If next to none of
+    // them are this account's, start it from its own rather than a bare bar.
+    if (withHome.length < this.MIN) return this.defaults();
     return withHome.slice(0, this.MAX);
   },
 
@@ -20720,7 +20879,7 @@ MApp.TabBar = {
   },
 
   reset() {
-    this.draft = this.DEFAULTS.slice();
+    this.draft = this.defaults();
     this.renderChoices();
   }
 };
@@ -20913,7 +21072,7 @@ MApp.More = {
     MApp.Theme.render();
     this._wireDesktopLink();
     this.loadAbout();
-    MApp.Returns.mount();
+    if (MApp.Access.allows('returnLedger')) MApp.Returns.mount();
     MApp.SyncIssues.updateSummary();
   },
 
@@ -20951,6 +21110,13 @@ MApp.More = {
   },
 
   async loadAbout() {
+    // The page already carries both values. Only the figures' own payload
+    // is worth reusing, and an account without figures never fetches it.
+    if (!MApp.Access.seesFigures()) {
+      const user = window.MOBILE_CURRENT_USER || {};
+      this._renderAbout({ appVersion: user.appVersion, userEmail: user.email });
+      return;
+    }
     if (MApp.State.lastDashboard) {
       this._renderAbout(MApp.State.lastDashboard);
       return;
@@ -20986,6 +21152,7 @@ document.addEventListener('DOMContentLoaded', () => {
   MApp.Theme.init();
   MApp.Density.init();
   MApp.PullToRefresh.init();
+  MApp.Access.apply(document.body);
   // Before Shell.init: it paints the active tab, and the buttons it paints
   // have to exist. The static bar in mobile.html is the no-JS fallback and
   // the default set; this replaces it with whatever was chosen.

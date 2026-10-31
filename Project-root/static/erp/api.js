@@ -391,7 +391,17 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+// Rates, costs and money are for Admin and Super Admin. The server blanks them
+// for everyone else (app/erp/services/financials.py), so what would print here
+// is a zero, and "₹0.00" reads as a real figure.
+function moneyIsHidden() {
+  if (window.MOBILE_CURRENT_USER) return window.MOBILE_CURRENT_USER.seesFigures === false;
+  const meta = document.querySelector('meta[name="current-user-figures"]');
+  return !!meta && meta.content === 'no';
+}
+
 function formatCurrency(value) {
+  if (moneyIsHidden()) return '—';
   return `₹${toNumber(value).toFixed(2)}`;
 }
 

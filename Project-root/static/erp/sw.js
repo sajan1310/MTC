@@ -519,7 +519,11 @@
 // opens the lot. On the Packing form, Fitting lots that look used up wait for
 // a search instead of showing first. lot-reference.js, production.js and
 // styles.css are precached.
-const CACHE_NAME = 'erp-shell-v104';
+// v105: a custom role sees only its own pages and no Dashboard, and rates,
+// costs and money are for Admin and Super Admin: everyone else sees a dash and
+// no way to start an entry that carries prices. api.js, core.js, dashboard.js,
+// items.js and styles.css are precached.
+const CACHE_NAME = 'erp-shell-v105';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

@@ -64,11 +64,15 @@ App.Item = {
       // The table's own "Pending Order" column/badge/filter (see
       // Utils.getPendingByItem) reads globalPOs -- ensured here alongside
       // Items' own data so it's never silently blank just because the PO
-      // tab hasn't been visited yet this session.
+      // tab hasn't been visited yet this session. A custom role without
+      // Items Master has no such table: the list is only a lookup for its
+      // forms, and loading POs would pull in vendors, bills and returns too.
+      const nav = App.Navigation;
+      const hasItemTable = !nav?.isLimited?.() || nav.isValidTab('itemMaster');
       const [res, stockRes] = await Promise.all([
         Api.call('getItemsData'),
         stockNeeded ? Api.call('getStockData') : Promise.resolve(null),
-        App.PO ? App.PO.ensureLoaded() : Promise.resolve()
+        App.PO && hasItemTable ? App.PO.ensureLoaded() : Promise.resolve()
       ]);
 
       if (stockRes?.success) {

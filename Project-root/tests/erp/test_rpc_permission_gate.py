@@ -141,7 +141,9 @@ def test_builtin_roles_are_never_gated(client_as, role):
 
 
 def test_a_custom_role_without_the_tab_is_refused_a_read(client_as):
-    client = client_as(None, {"billLedger": "editor"})  # a DIFFERENT tab
+    # A DIFFERENT tab, and one whose page doesn't read stock: most pages do,
+    # and may (roles_service.LOOKUPS_BY_TAB, pinned in test_financials.py).
+    client = client_as(None, {"inspectionTab": "editor"})
     assert _forbidden(_read(client))
 
 

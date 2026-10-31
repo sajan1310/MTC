@@ -55,6 +55,14 @@ App.Dashboard = {
   // a burst of saves (e.g. bulk status change) into one fetch.
   REFRESH_AFTER_MUTATION_MS: 2 * 1000,
 
+  // False for a role the figures are not for (see DASHBOARD_FIGURE_ROLES in
+  // app/erp/pages.py). The template leaves them out, so there is nothing to
+  // fill: no request, no chart library, no refresh timer.
+  hasFigures() {
+    const meta = document.querySelector('meta[name="current-user-figures"]');
+    return !meta || meta.content !== 'no';
+  },
+
   async ensureChartLib() {
     if (this.chartLibLoaded || typeof Chart !== 'undefined') {
       this.chartLibLoaded = true;
@@ -132,6 +140,7 @@ App.Dashboard = {
 
   startAutoRefresh() {
     this.stopAutoRefresh();
+    if (!this.hasFigures()) return;
     this._autoRefreshActive = true;
     if (!this._visibilityHandler) {
       this._visibilityHandler = () => {
@@ -226,7 +235,7 @@ App.Dashboard = {
   },
 
   async loadData() {
-    if (this.isLoading) return;
+    if (this.isLoading || !this.hasFigures()) return;
     this.isLoading = true;
     // Last ATTEMPT, not last success: a failing endpoint plus a user
     // switching browser tabs must not turn into an immediate-retry loop.

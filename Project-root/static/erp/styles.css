@@ -5354,3 +5354,7 @@ button.lot-ref-tag:hover { border-color: var(--secondary-color); }
 }
 
 button.lot-panel-lot:hover { border-color: var(--secondary-color); }
+
+/* Buttons that start an entry carrying prices, which is an Admin's job
+   (app/erp/services/financials.py). The server refuses the save either way. */
+.no-financials .finance-only { display: none !important; }
