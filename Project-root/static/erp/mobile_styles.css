@@ -3184,6 +3184,32 @@ span.mapp-lot-ref-link {
   align-items: center;
 }
 
+.mapp-picker-hint {
+  padding: var(--mb-sp-2) var(--mb-sp-4);
+}
+
+/* A lot's connections, as tags on its card in the Production list. */
+.mapp-lot-ref-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mb-sp-1);
+  margin-top: var(--mb-sp-2);
+}
+
+.mapp-lot-ref-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  padding: 0 var(--mb-sp-2);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--mb-ink);
+  text-decoration: underline;
+  background: var(--mb-surface);
+  border: 1px solid var(--mb-steel-faint);
+  border-radius: var(--mb-radius-sm);
+}
+
 .mapp-lot-ref-deleted {
   color: var(--mb-steel);
   text-decoration: line-through;

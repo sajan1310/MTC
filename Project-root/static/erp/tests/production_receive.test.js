@@ -125,6 +125,14 @@ describe('the Production Log shows what has come back', () => {
     expect(buttons(4)[0]).toBe('Receipts');
     expect(buttons(5)[0]).toBe('Receipts');
   });
+
+  test('a lot\'s connections show under its number', () => {
+    App.LotRef = { tagsHtml: refs => `<div class="tags">${refs.length}</div>` };
+    const html = App.Production.rowHtml(lot({ rowIdx: 9, lotNumber: 'LOT-PK-0001', qty: 5, lotRefs: [{ rowIdx: 1 }] }), 0);
+    delete App.LotRef;
+
+    expect(html).toMatch(/LOT-PK-0001<\/span><div class="tags">1<\/div><\/td>/);
+  });
 });
 
 describe('receiving', () => {

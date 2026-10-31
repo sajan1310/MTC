@@ -211,7 +211,10 @@
 // v94: Log Lot has an optional Lot Reference: a searchable list of the related
 // lots at the sequence before, and a read-only sheet to view one. mobile.js,
 // mobile_styles.css and the template carry it.
-const CACHE_NAME = 'erp-mobile-shell-v94';
+// v95: a lot's connections show as tags on its card, and a tap opens the lot.
+// On Log Lot for Packing, Fitting lots that look used up wait for a search
+// instead of showing first. mobile.js and mobile_styles.css carry it.
+const CACHE_NAME = 'erp-mobile-shell-v95';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

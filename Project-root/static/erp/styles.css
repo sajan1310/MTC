@@ -5229,6 +5229,32 @@
   border: 0;
 }
 
+/* A lot's connections, as tags under its number on the Production Log.
+   Outlined so they don't read as the lot's own badge above them. */
+.lot-ref-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.25rem;
+}
+
+.lot-ref-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  padding: 0.0625rem 0.375rem 0.0625rem 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text-primary);
+  white-space: nowrap;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+}
+
+button.lot-ref-tag:hover { border-color: var(--secondary-color); }
+
 .lot-ref-deleted {
   color: var(--text-secondary);
   text-decoration: line-through;
@@ -5238,7 +5264,8 @@
    dialog, opened from a link. From 992px the dialog narrows so the panel takes
    no room from the form; narrower than that there is no room beside it, so it
    overlays the form until closed. .modal-xl's width is !important (see above),
-   so this has to be too. */
+   so this has to be too. Opened from a tag on the Production Log it sits on
+   the page instead (.lot-panel-page): above the navbar, below any dialog. */
 .lot-panel {
   position: fixed;
   top: 0;
@@ -5254,6 +5281,7 @@
   box-shadow: -8px 0 24px rgb(15 23 42 / 18%);
 }
 .lot-panel[hidden] { display: none; }
+.lot-panel-page { z-index: 1040; }
 
 @media (min-width: 992px) {
   #editProductionModal.lot-panel-open .modal-dialog.modal-xl {

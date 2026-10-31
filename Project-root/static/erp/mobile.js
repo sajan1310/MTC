@@ -1668,7 +1668,9 @@ MApp.Picker = {
   _items: [],
   _selectedValue: null,
 
-  open({ title, items, selectedValue, searchable = true, allowCustom = false }) {
+  // An item with searchOnly stays out of the list until someone types. `hint`
+  // says so, above the list, for as long as nothing has been typed.
+  open({ title, items, selectedValue, searchable = true, allowCustom = false, hint = '' }) {
     // A picker session is already pending (e.g. a fast double-tap on two
     // different "Choose an item" buttons) -- resolve it with null so it
     // doesn't hang forever, and so this new session's selection can't get
@@ -1683,6 +1685,7 @@ MApp.Picker = {
       this._items = items || [];
       this._selectedValue = selectedValue;
       this._allowCustom = allowCustom;
+      this._hint = hint;
 
       const titleEl = document.getElementById('mapp-picker-title');
       if (titleEl) titleEl.textContent = title || 'Choose';
@@ -1695,7 +1698,7 @@ MApp.Picker = {
       this._entries = MApp.Search.index(this._items, this.SEARCH);
       MApp.SearchBox.attach('mapp-picker-search', t => this.onSearch(t));
 
-      this._renderList(this._items, '');
+      this._renderList(this._listed(this._items, ''), '');
       // onDismiss so a Back press or Escape settles the pending promise
       // (as cancel() does) instead of closing the DOM and leaving whoever
       // awaited open() hanging forever.
@@ -1719,7 +1722,11 @@ MApp.Picker = {
   },
 
   onSearch(term) {
-    this._renderList(MApp.Search.run(this._entries || [], term), term || '');
+    this._renderList(this._listed(MApp.Search.run(this._entries || [], term), term), term || '');
+  },
+
+  _listed(items, term) {
+    return String(term || '').trim() ? items : items.filter(item => !item.searchOnly);
   },
 
   _renderList(items, term) {
@@ -1733,13 +1740,23 @@ MApp.Picker = {
     const trimmedTerm = String(term || '').trim();
     const exactMatch = trimmedTerm && (items || []).some(i => String(i.label || '').toLowerCase() === trimmedTerm.toLowerCase());
     const showCustomOption = this._allowCustom && trimmedTerm && !exactMatch;
+    const hint = trimmedTerm ? '' : this._hint;
 
     if ((!items || items.length === 0) && !showCustomOption) {
-      MApp.Util.renderEmpty(list, { title: 'No matches', body: 'Try a different search term.' });
+      MApp.Util.renderEmpty(list, hint
+        ? { title: 'Nothing to show yet', body: hint }
+        : { title: 'No matches', body: 'Try a different search term.' });
       return;
     }
 
     list.innerHTML = '';
+
+    if (hint) {
+      const hintEl = document.createElement('div');
+      hintEl.className = 'mb-field-hint mapp-picker-hint';
+      hintEl.textContent = hint;
+      list.appendChild(hintEl);
+    }
 
     if (showCustomOption) {
       const customBtn = document.createElement('button');
@@ -5762,6 +5779,7 @@ MApp.Production = {
               </div>
             </div>
             ${extras.length ? `<div class="mapp-lot-extras">${extras.join('')}</div>` : ''}
+            ${MApp.LotRef.tagsHtml(l.lotRefs)}
             <!-- Status and date together on the left, actions on the right.
                  The date was stacked under the process name, which left
                  everything hugging the left edge with the quantity marooned
@@ -5824,6 +5842,13 @@ MApp.Production = {
           else if (btn.dataset.lotAction === 'sheet') MApp.ProductionSheet.open(lot);
           else if (btn.dataset.lotAction === 'receive') this.openReceiveSheet(lot);
           else this.deleteLot(lot);
+        });
+      });
+
+      listEl.querySelectorAll('button[data-lot-ref]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          // While selecting, a tap on a card toggles that lot.
+          if (!MApp.Select.isActive(this.SELECT.key)) MApp.LotRef.view(Number(btn.dataset.lotRef));
         });
       });
 
@@ -7711,11 +7736,17 @@ MApp.LotRef = {
     const items = this._available().map(lot => ({
       value: lot.rowIdx,
       label: lot.lotNumber,
-      sublabel: [lot.outputItemName, lot.status === 'Completed' ? '' : lot.status].filter(Boolean).join(' · '),
+      sublabel: [lot.outputItemName, lot.status === 'Completed' ? '' : lot.status, lot.usedUp ? 'Looks used up' : ''].filter(Boolean).join(' · '),
       // Not searched: typing a lot number must not match a date.
-      detail: this._dateText(lot)
+      detail: this._dateText(lot),
+      // Waits for someone to type: a wrong quantity must never put the right
+      // lot out of reach (the owner, 2026-10-31).
+      searchOnly: lot.usedUp
     }));
-    const picked = await MApp.Picker.open({ title: this._scope(), items });
+    const hint = items.some(item => item.searchOnly)
+      ? 'Lots that look used up are hidden. Type a lot number to find them.'
+      : '';
+    const picked = await MApp.Picker.open({ title: this._scope(), items, hint });
     if (!picked) return;
     const lot = this._data.lots.find(l => l.rowIdx === picked.value);
     if (lot && !this._picked.includes(lot)) this._picked.push(lot);
@@ -7725,6 +7756,17 @@ MApp.LotRef = {
   remove(rowIdx) {
     this._picked = this._picked.filter(lot => lot.rowIdx !== rowIdx);
     this._render();
+  },
+
+  // A lot's connections, as tags on its card in the Production list. Only the
+  // number: the sheet opens when one is tapped.
+  tagsHtml(refs) {
+    if (!refs || !refs.length) return '';
+    const e = MApp.Util.escapeHtml;
+    const tags = refs.map(lot => (lot.deleted
+      ? `<span class="mapp-lot-ref-tag mapp-lot-ref-deleted">${e(lot.lotNumber)}</span>`
+      : `<button type="button" class="mapp-lot-ref-tag" data-lot-ref="${Number(lot.rowIdx)}">${e(lot.lotNumber)}</button>`));
+    return `<div class="mapp-lot-ref-tags">${tags.join('')}</div>`;
   },
 
   _scope() {
@@ -7748,9 +7790,11 @@ MApp.LotRef = {
         </div>`;
       return;
     }
-    const left = this._available().length;
+    const available = this._available();
+    const left = available.length;
     let placeholder = 'No more lots to add';
-    if (left) placeholder = 'Search by lot number…';
+    if (available.some(lot => lot.usedUp)) placeholder = 'Search by lot number, used-up lots too…';
+    else if (left) placeholder = 'Search by lot number…';
     else if (this._data.lots.length === 0) placeholder = `No ${this._scope()}`;
     // Each picked lot is only a link to it, as on desktop: the sheet opens
     // when it is tapped, and the form gives its details no room of its own.

@@ -3,9 +3,10 @@
 // form (migration 057). App.LotRef is the field: a searchable dropdown of the
 // lots related to the chosen process, and a link to each lot picked -- only a
 // link, so the field stays small (the owner, 2026-10-30). App.LotPanel shows a
-// lot beside the form when its link is clicked. Which lots are related, and
-// which date a lot shows, is decided in lot_reference_service.py, so this and
-// the phone (MApp.LotRef, mobile.js) agree.
+// lot beside the form when its link is clicked, or from a tag on the Production
+// Log. Which lots are related, which date a lot shows and which look used up is
+// decided in lot_reference_service.py, so this and the phone (MApp.LotRef,
+// mobile.js) agree.
 
 const LOT_STATUS_BADGE = {
   Pending: 'bg-secondary',
@@ -89,13 +90,19 @@ App.LotRef = {
     section.style.display = '';
     const scope = [data.model, data.size].filter(v => v && v !== 'General').join(' ');
     this._part('.lot-ref-scope').textContent = [`Stage ${data.sequence}`, scope].filter(Boolean).join(', ');
-    this._fillSelect(data.lots, data.lots.length ? 'Search by lot number...' : 'No related lots');
+    this._fillSelect(data.lots, this._prompt(data.lots));
     this._renderConnected();
+  },
+
+  _prompt(lots) {
+    if (!lots.length) return 'No related lots';
+    return lots.some(lot => lot.usedUp) ? 'Search by lot number, used-up lots too...' : 'Search by lot number...';
   },
 
   _optionText(lot) {
     const parts = [lot.lotNumber, lot.outputItemName];
     if (lot.status !== 'Completed') parts.push(lot.status);
+    if (lot.usedUp) parts.push('Looks used up');
     parts.push(`${lot.dateLabel} ${lot.date}`);
     return parts.join(' · ');
   },
@@ -112,6 +119,10 @@ App.LotRef = {
       placeholder: prompt,
       width: '100%',
       matcher: (params, option) => this._matches(params, option),
+      // Every lot can look used up, and an empty list must not read as "none".
+      ...(lots.some(lot => lot.usedUp) && {
+        language: { noResults: () => 'No lots to show. Type a lot number to find used-up lots.' }
+      }),
       dropdownParent: App.Utils.select2DropdownParent(select)
     }).on('select2:select.lotRef', ev => {
       this.connect(Number(ev.params.data.id));
@@ -120,9 +131,14 @@ App.LotRef = {
   },
 
   // A connected lot leaves the list, as it does on the phone. Disabling its
-  // <option> does nothing here: Select2 keeps the copy it read first.
+  // <option> does nothing here: Select2 keeps the copy it read first. A lot
+  // that looks used up waits for someone to type: a wrong quantity must never
+  // put the right lot out of reach (the owner, 2026-10-31).
   _matches(params, option) {
-    return this._picked.includes(Number(option.id)) ? null : App.Utils.select2Matcher(params, option);
+    const rowIdx = Number(option.id);
+    if (this._picked.includes(rowIdx)) return null;
+    if (this._lots.get(rowIdx)?.usedUp && !String(params.term || '').trim()) return null;
+    return App.Utils.select2Matcher(params, option);
   },
 
   connect(rowIdx) {
@@ -155,15 +171,31 @@ App.LotRef = {
       ? `<span class="lot-ref-link lot-ref-deleted" title="This lot was deleted">${number}</span>`
       : `<button type="button" class="lot-ref-link" title="View ${number}" onclick="App.LotPanel.open(${lot.rowIdx})">${number}</button>`;
     return `<span class="lot-ref-chip">${link}<button type="button" class="btn-close" aria-label="Remove ${number}" onclick="App.LotRef.disconnect(${lot.rowIdx})"></button></span>`;
+  },
+
+  // A lot's connections, as tags under its number on the Production Log. Only
+  // the number again: the side window opens when one is clicked.
+  tagsHtml(refs) {
+    if (!refs || !refs.length) return '';
+    const tags = refs.map(lot => {
+      const number = escapeHtml(lot.lotNumber || `#${lot.rowIdx}`);
+      const icon = '<i class="bi bi-link-45deg" aria-hidden="true"></i>';
+      return lot.deleted
+        ? `<span class="lot-ref-tag lot-ref-deleted" title="This lot was deleted">${icon}${number}</span>`
+        : `<button type="button" class="lot-ref-tag" title="View ${number}" onclick="App.LotPanel.open(${Number(lot.rowIdx)})">${icon}${number}</button>`;
+    });
+    return `<div class="lot-ref-tags">${tags.join('')}</div>`;
   }
 };
 
-// ── A lot, beside the form ─────────────────────────────────────────────
-// Read-only. Mounted inside the form's dialog for the reason App.PhotoViewer
-// is (core.js): Bootstrap's focus trap pulls focus back out of anything
-// outside it. It is not a dialog of its own: from 992px the form narrows
-// beside it and stays usable (.lot-panel-open, styles.css). Escape closes
-// only this, and no key pressed in here reaches the form's Nav shortcuts.
+// ── A lot, beside the form or the Production Log ───────────────────────
+// Read-only. With the form open it is mounted inside the dialog for the reason
+// App.PhotoViewer is (core.js): Bootstrap's focus trap pulls focus back out of
+// anything outside it. It is not a dialog of its own: from 992px the form
+// narrows beside it and stays usable (.lot-panel-open, styles.css). Escape
+// closes only this, and no key pressed in here reaches the form's Nav
+// shortcuts. A tag on the Production Log has no dialog around it, so there it
+// is mounted on the page, and clicking anywhere else closes it.
 App.LotPanel = {
   _el: null,
   _seq: 0,
@@ -179,14 +211,22 @@ App.LotPanel = {
     return !!this._el && !this._el.hidden;
   },
 
+  _isOnPage() {
+    return this.isOpen() && this._el.parentElement === document.body;
+  },
+
   open(rowIdx) {
     const dialog = this._dialog();
     if (!dialog) return;
     if (!this._el) this._el = this._build(dialog);
+    const inForm = dialog.classList.contains('show');
+    const host = inForm ? dialog : document.body;
+    if (this._el.parentElement !== host) host.appendChild(this._el);
+    this._el.classList.toggle('lot-panel-page', !inForm);
     if (!this.isOpen()) this._returnFocus = document.activeElement;
     this._trail = [rowIdx];
     this._el.hidden = false;
-    dialog.classList.add('lot-panel-open');
+    dialog.classList.toggle('lot-panel-open', inForm);
     this._show();
     this._el.querySelector('.lot-panel-close').focus();
   },
@@ -239,6 +279,16 @@ App.LotPanel = {
       this.close();
     }, true);
     dialog.addEventListener('hidden.bs.modal', () => this.close());
+    document.addEventListener('keydown', ev => {
+      if (ev.key === 'Escape' && this._isOnPage()) this.close();
+    });
+    // Which is also how it leaves with the Production Log: nothing tells it
+    // the tab changed. Focus stays where that click put it.
+    document.addEventListener('click', ev => {
+      if (!this._isOnPage() || ev.target.closest('.lot-panel, .lot-ref-tag')) return;
+      this._returnFocus = null;
+      this.close();
+    });
     dialog.appendChild(el);
     return el;
   },

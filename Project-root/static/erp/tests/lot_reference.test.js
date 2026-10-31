@@ -194,6 +194,193 @@ describe('App.LotRef', () => {
 
     expect(document.querySelector('.lot-ref-list img')).toBeNull();
   });
+
+  // The owner, 2026-10-31: a wrong quantity, a bad count or a bug must never
+  // stop someone connecting the right lot, so these wait for a search and
+  // are never taken away.
+  describe('a lot that looks used up', () => {
+    const gone = lot({ rowIdx: 2, lotNumber: 'LOT-FTD003-0042', usedUp: true });
+    const option = { id: '2', text: 'LOT-FTD003-0042' };
+
+    beforeEach(() => {
+      App.Utils.select2Matcher = (_params, opt) => opt;
+      Api.call.mockResolvedValue({ success: true, data: related({ lots: [lot(), gone] }) });
+    });
+
+    test('stays out of the first list, and search finds it', async () => {
+      await App.LotRef.load('PRC-1');
+
+      expect(App.LotRef._matches({}, option)).toBeNull();
+      expect(App.LotRef._matches({ term: '   ' }, option)).toBeNull();
+      expect(App.LotRef._matches({ term: '0042' }, option)).toBe(option);
+    });
+
+    test('the rest of the list is not affected', async () => {
+      await App.LotRef.load('PRC-1');
+      const live = { id: '1', text: 'LOT-FTD003-0043' };
+
+      expect(App.LotRef._matches({}, live)).toBe(live);
+    });
+
+    test('says so in the list and in the prompt', async () => {
+      await App.LotRef.load('PRC-1');
+
+      expect(select().options[2].textContent).toContain('Looks used up');
+      expect(select().options[1].textContent).not.toContain('Looks used up');
+      expect(prompt()).toBe('Search by lot number, used-up lots too...');
+    });
+
+    test('connects like any other lot', async () => {
+      await App.LotRef.load('PRC-1');
+
+      App.LotRef.connect(2);
+
+      expect(JSON.parse(input().value)).toEqual([2]);
+      expect(list()).toBe('LOT-FTD003-0042');
+    });
+
+    test('when every lot looks used up the field can still be searched', async () => {
+      Api.call.mockResolvedValue({ success: true, data: related({ lots: [gone] }) });
+
+      await App.LotRef.load('PRC-1');
+
+      expect(select().disabled).toBe(false);
+      expect(prompt()).toBe('Search by lot number, used-up lots too...');
+    });
+  });
+});
+
+describe('App.LotRef.tagsHtml', () => {
+  const tags = refs => {
+    document.body.innerHTML = `<div id="cell">${App.LotRef.tagsHtml(refs)}</div>`;
+    return document.getElementById('cell');
+  };
+
+  beforeEach(() => {
+    jest.resetModules();
+    load();
+  });
+
+  test('a lot connected to nothing has no tags', () => {
+    expect(App.LotRef.tagsHtml([])).toBe('');
+    expect(App.LotRef.tagsHtml(undefined)).toBe('');
+  });
+
+  test('a tag is the lot number, and a click opens that lot', () => {
+    App.LotPanel.open = jest.fn();
+    const cell = tags([
+      { rowIdx: 4, lotNumber: 'LOT-FTD003-0043', deleted: false },
+      { rowIdx: 5, lotNumber: 'LOT-FTD003-0042', deleted: false }
+    ]);
+
+    const buttons = cell.querySelectorAll('button.lot-ref-tag');
+    expect([...buttons].map(b => b.textContent)).toEqual(['LOT-FTD003-0043', 'LOT-FTD003-0042']);
+
+    buttons[1].click();
+    expect(App.LotPanel.open).toHaveBeenCalledWith(5);
+  });
+
+  test('a lot deleted since is named but cannot be opened', () => {
+    const cell = tags([{ rowIdx: 4, lotNumber: 'LOT-OLD-0001', deleted: true }]);
+
+    expect(cell.querySelector('.lot-ref-deleted').textContent).toBe('LOT-OLD-0001');
+    expect(cell.querySelector('button')).toBeNull();
+  });
+
+  test('a lot number is shown as text, not markup', () => {
+    const cell = tags([{ rowIdx: 4, lotNumber: '<img src=x>', deleted: false }]);
+
+    expect(cell.querySelector('img')).toBeNull();
+  });
+});
+
+describe('App.LotPanel from a tag on the Production Log', () => {
+  const panel = () => document.querySelector('.lot-panel');
+  const dialog = () => document.getElementById('editProductionModal');
+  const flush = () => new Promise(res => setTimeout(res));
+
+  beforeEach(() => {
+    jest.resetModules();
+    load();
+    // The form is on the page but closed, so Bootstrap gives it no .show.
+    document.body.innerHTML = `
+      <div class="modal" id="editProductionModal"></div>
+      <button class="lot-ref-tag" id="tag"></button>
+      <button class="lot-ref-tag" id="tag2"></button>
+      <button id="elsewhere"></button>`;
+    global.Api = { call: jest.fn(async () => ({ success: true, data: detail() })) };
+  });
+
+  test('opens on the page, because the form it would sit in is closed', async () => {
+    App.LotPanel.open(1);
+    await flush();
+
+    expect(panel().parentElement).toBe(document.body);
+    expect(panel().classList.contains('lot-panel-page')).toBe(true);
+    expect(dialog().classList.contains('lot-panel-open')).toBe(false);
+    expect(panel().querySelector('.lot-panel-title').textContent).toBe('LOT-FTD003-0043');
+  });
+
+  test('moves into the form when it opens there next', async () => {
+    App.LotPanel.open(1);
+    await flush();
+    App.LotPanel.close();
+
+    dialog().classList.add('show');
+    App.LotPanel.open(1);
+    await flush();
+
+    expect(panel().parentElement).toBe(dialog());
+    expect(panel().classList.contains('lot-panel-page')).toBe(false);
+    expect(dialog().classList.contains('lot-panel-open')).toBe(true);
+  });
+
+  test('Escape closes it from anywhere on the page, and gives focus back', async () => {
+    const tag = document.getElementById('tag');
+    tag.focus();
+    App.LotPanel.open(1);
+    await flush();
+    document.getElementById('elsewhere').focus();
+
+    document.getElementById('elsewhere').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    expect(panel().hidden).toBe(true);
+    expect(document.activeElement).toBe(tag);
+  });
+
+  test('a click anywhere else closes it, and leaves focus where that click put it', async () => {
+    document.getElementById('tag').focus();
+    App.LotPanel.open(1);
+    await flush();
+    const elsewhere = document.getElementById('elsewhere');
+
+    elsewhere.focus();
+    elsewhere.click();
+
+    expect(panel().hidden).toBe(true);
+    expect(document.activeElement).toBe(elsewhere);
+  });
+
+  test('a click inside it does not close it', async () => {
+    App.LotPanel.open(1);
+    await flush();
+
+    panel().querySelector('.lot-panel-body').click();
+
+    expect(panel().hidden).toBe(false);
+  });
+
+  test('another tag shows that lot instead of closing', async () => {
+    App.LotPanel.open(1);
+    await flush();
+
+    App.LotPanel.open(2);
+    document.getElementById('tag2').click();
+    await flush();
+
+    expect(panel().hidden).toBe(false);
+    expect(Api.call).toHaveBeenLastCalledWith('getLotDetail', 2);
+  });
 });
 
 describe('App.LotPanel', () => {
@@ -204,7 +391,7 @@ describe('App.LotPanel', () => {
   beforeEach(() => {
     jest.resetModules();
     load();
-    document.body.innerHTML = '<div class="modal" id="editProductionModal"><button id="view">View</button></div>';
+    document.body.innerHTML = '<div class="modal show" id="editProductionModal"><button id="view">View</button></div>';
     global.Api = { call: jest.fn(async () => ({ success: true, data: detail() })) };
   });
 
