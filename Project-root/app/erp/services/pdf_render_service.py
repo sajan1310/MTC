@@ -505,12 +505,53 @@ def dedupe_filenames(names: list[str]) -> list[str]:
     return out
 
 
-def render_batch(documents: list[dict]) -> tuple[bytes, list[str]]:
+def combine_pdfs(parts: list[tuple[str, bytes]]) -> bytes | None:
+    """Every document's pages, in order, as ONE PDF -- None when it cannot.
+
+    For Share: a browser hands at most ten files to the share sheet at once
+    (Chrome's limit, on Windows and Android alike), so a stack of 25 sheets
+    could only go out ten at a time, a tap per round. One file carries them
+    all in one share.
+
+    The finished PDFs are joined rather than the documents laid out again
+    together, so each keeps exactly what it was rendered as -- including a
+    Production Sheet that ONE_PAGE_ZOOMS shrank onto its page. Each document
+    is a bookmark under its own name, so a 25-page file can still be read a
+    sheet at a time.
+
+    pypdf is in requirements.txt; a server without it says so in the log and
+    the client offers the ten-at-a-time route instead of failing.
+    """
+    try:
+        from pypdf import PdfWriter
+    except ImportError:
+        logging.getLogger(__name__).warning(
+            "[PDF] pypdf is not installed -- shares of more than ten documents "
+            "go ten at a time (pip install -r requirements.txt)"
+        )
+        return None
+    writer = PdfWriter()
+    for name, pdf in parts:
+        stem = name[:-4] if name.lower().endswith(".pdf") else name
+        writer.append(io.BytesIO(pdf), outline_item=stem)
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+def render_batch(
+    documents: list[dict], combined_name: str | None = None
+) -> tuple[bytes, list[str]]:
     """Render many documents into one ZIP of separately-named PDFs.
 
     `documents` is [{"filename": str, "html": str, "landscape": bool,
     "density": str, "onePage": bool}, ...] -- see render_pdf for the last two.
     Returns (zip_bytes, names_used).
+
+    `combined_name`, when given, adds one more entry LAST: every document in
+    one PDF under that name (see combine_pdfs). A client tells it apart by
+    count -- one entry more than it sent documents -- so a server that cannot
+    combine simply returns the documents, and the client works with those.
 
     One request for the whole batch, deliberately. The predecessor of this
     feature issued one HTTP request and one render per record, with a
@@ -538,6 +579,7 @@ def render_batch(documents: list[dict]) -> tuple[bytes, list[str]]:
     )
 
     buffer = io.BytesIO()
+    rendered = []
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as archive:
         for name, doc in zip(names, documents):
             pdf = render_pdf(
@@ -547,6 +589,15 @@ def render_batch(documents: list[dict]) -> tuple[bytes, list[str]]:
                 one_page=bool(doc.get("onePage")),
             )
             archive.writestr(name, pdf)
+            rendered.append((name, pdf))
+        if combined_name:
+            combined = combine_pdfs(rendered)
+            if combined is not None:
+                name = dedupe_filenames(
+                    [*names, safe_filename(combined_name, "Documents")]
+                )[-1]
+                archive.writestr(name, combined)
+                names = [*names, name]
     return buffer.getvalue(), names
 
 

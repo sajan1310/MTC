@@ -223,7 +223,10 @@
 // v98: the inspection checklist shows what is on hand for each item, under
 // its quantity or in an In stock column. mobile.js and mobile_styles.css
 // carry it.
-const CACHE_NAME = 'erp-mobile-shell-v98';
+// v99: Share past ten files offers one joined PDF or ten at a time, and a
+// file already made is shared without rendering it again. mobile.js carries
+// it.
+const CACHE_NAME = 'erp-mobile-shell-v99';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

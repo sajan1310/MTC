@@ -126,6 +126,8 @@ beforeEach(() => {
   document.getElementById('printWithTotal').checked = true;
 
   App.Print.serverPdfAvailable = null;
+  // print.js is loaded once for this file, and keeps the files it was sent.
+  App.Print._renderCache.clear();
   serve();
   saved = [];
   App.Print.saveBlob = (blob, name) => saved.push(name);
@@ -179,13 +181,14 @@ describe('a PO row', () => {
     buttonIn(rowOf('1205'), 'Share').click();
     await settle();
 
-    expect(requests).toHaveLength(2);
-    const [download, share] = requests;
-    expect(share.url).toBe('/erp/render-pdf');
-    expect(share.body.filename).toBe(NAMES[1]);
-    expect(share.body.html).toBe(download.body.html);
-    expect(share.body.html).toContain('1205');
-    expect(share.body.html).toContain('Rim');
+    // Share asked for exactly what Download did -- same document, same name
+    // -- so the file Download was sent is shared, and nothing renders twice.
+    expect(requests).toHaveLength(1);
+    const [download] = requests;
+    expect(download.url).toBe('/erp/render-pdf');
+    expect(download.body.filename).toBe(NAMES[1]);
+    expect(download.body.html).toContain('1205');
+    expect(download.body.html).toContain('Rim');
 
     expect(navigator.share).toHaveBeenCalledTimes(1);
     const { files } = navigator.share.mock.calls[0][0];
@@ -236,9 +239,10 @@ describe('Share Selected', () => {
     await App.PO.bulkDownloadPDF();
     await App.PO.bulkShare();
 
-    expect(requests.map(r => r.url)).toEqual(['/erp/render-pdf-batch', '/erp/render-pdf-batch']);
-    expect(requests[1].body.documents).toEqual(requests[0].body.documents);
-    expect(requests[1].body.zipName).toBe(App.Print.bulkZipName('PO'));
+    // Share Selected asked for exactly what Download PDFs did, so it shares
+    // the files Download was sent without rendering them again.
+    expect(requests.map(r => r.url)).toEqual(['/erp/render-pdf-batch']);
+    expect(requests[0].body.zipName).toBe(App.Print.bulkZipName('PO'));
 
     const { files } = navigator.share.mock.calls[0][0];
     expect(files.map(f => f.name)).toEqual(NAMES);

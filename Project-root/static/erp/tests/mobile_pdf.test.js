@@ -97,6 +97,8 @@ describe('rendering the PDF', () => {
     await MApp.Print.download('print-doc-container', 'Challan_1041');
     expect(JSON.parse(global.fetch.mock.calls[0][1].body).filename).toBe('Challan_1041.pdf');
 
+    // The same request again would be answered from the page's own copy.
+    MApp.Print._renderCache.clear();
     await MApp.Print.download('print-doc-container', 'Challan_1041.pdf');
     expect(JSON.parse(global.fetch.mock.calls[1][1].body).filename).toBe('Challan_1041.pdf');
   });

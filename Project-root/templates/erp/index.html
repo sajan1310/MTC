@@ -194,10 +194,14 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
         <div class="modal-body">
-          <ul class="small mb-0" id="shareReadyFiles"></ul>
+          <p class="small mb-2 d-none" id="shareReadyNote"></p>
+          <ul class="small mb-0" id="shareReadyFiles" style="max-height: 40vh; overflow-y: auto;"></ul>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <!-- Second choice, shown only when there is one to make: more than
+               ten documents go as one PDF (the dark button) or ten at a time. -->
+          <button type="button" class="btn btn-outline-dark d-none" id="shareReadyAltBtn"></button>
           <button type="button" class="btn btn-dark" id="shareReadyBtn"><i class="bi bi-share me-1"></i>Share</button>
         </div>
       </div>

@@ -528,7 +528,12 @@
 // and styles.css are precached.
 // v107: the inspection checklist shows what is on hand for each item, in an
 // In stock column. inspection.js is precached.
-const CACHE_NAME = 'erp-shell-v107';
+// v108: printing no longer sends Windows a page-sized picture per page (the
+// body's faint background gradients, cleared in print), so a bulk print
+// spools in moments; Share past ten files offers one joined PDF, and a file
+// already made is shared without rendering it again. styles.css and print.js
+// are precached.
+const CACHE_NAME = 'erp-shell-v108';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

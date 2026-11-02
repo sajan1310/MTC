@@ -171,11 +171,12 @@ describe('the Production Sheet dialog', () => {
     await App.Production.downloadProductionSheetPDF();
     await App.Production.shareProductionSheetPDF();
 
-    const [download, share] = requests;
-    expect(share.url).toBe('/erp/render-pdf');
-    expect(share.body.html).toBe(download.body.html);
-    expect(share.body.html).toContain('Primer');
-    expect(share.body.filename).toBe(NAME);
+    // Share asked for exactly what Download did, so the file Download was
+    // sent is the one shared, and nothing renders twice.
+    expect(requests).toHaveLength(1);
+    const [download] = requests;
+    expect(download.url).toBe('/erp/render-pdf');
+    expect(download.body.html).toContain('Primer');
     expect(download.body.filename).toBe(NAME);
     expect(sharedNames()).toEqual([[NAME]]);
   });
@@ -190,6 +191,8 @@ describe('the Production Sheet dialog', () => {
   // is told to keep the sheet on one page rather than spill the last rule.
   test('Download and Share both ask for the sheet on one page', async () => {
     await App.Production.downloadProductionSheetPDF();
+    // Each asked on its own: the same request again is answered from memory.
+    App.Print._renderCache.clear();
     await App.Production.shareProductionSheetPDF();
     expect(requests.map(r => r.body.onePage)).toEqual([true, true]);
   });
@@ -227,10 +230,10 @@ describe('the Work Order preview', () => {
     await App.Production.downloadWorkOrderPdf();
     await App.Production.shareWorkOrderPdf();
 
-    const [download, share] = requests;
-    expect(share.body.html).toBe(download.body.html);
-    expect(share.body.html).toContain('Ramesh Kumar');
-    expect(share.body.filename).toBe(download.body.filename);
+    // The same request as Download's, so its file, not a second render.
+    expect(requests).toHaveLength(1);
+    expect(requests[0].body.html).toContain('Ramesh Kumar');
+    expect(requests[0].body.filename).toBe('WO_RameshKumar_260912.pdf');
     expect(sharedNames()).toEqual([['WO_RameshKumar_260912.pdf']]);
   });
 
@@ -273,11 +276,12 @@ describe('Share Selected', () => {
     await App.Production.bulkDownloadPDF();
     await App.Production.bulkShare();
 
-    expect(requests.map(r => r.url)).toEqual(['/erp/render-pdf-batch', '/erp/render-pdf-batch']);
-    expect(requests[1].body.documents).toEqual(requests[0].body.documents);
-    expect(requests[1].body.zipName).toBe(App.Print.bulkZipName('PRD'));
+    // Share Selected asked for exactly what Download PDFs did, so it shares
+    // the files Download was sent without rendering them again.
+    expect(requests.map(r => r.url)).toEqual(['/erp/render-pdf-batch']);
+    expect(requests[0].body.zipName).toBe(App.Print.bulkZipName('PRD'));
 
-    const docs = requests[1].body.documents;
+    const docs = requests[0].body.documents;
     expect(docs.map(d => d.filename)).toEqual([
       'Painted Frame Kalpi 20 inch_120926.pdf',
       'Packed Kalpi 20 inch_130926.pdf'

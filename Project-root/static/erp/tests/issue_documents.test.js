@@ -272,6 +272,75 @@ describe('the share sheet', () => {
     expect(navigator.share).toHaveBeenCalledTimes(1);
   });
 
+  // serve() above is a server from before the joined PDF; this one is
+  // render_batch as it is now -- with combineAs, every document joined into
+  // one PDF, as one entry more, last.
+  describe('past ten, from a server that joins them', () => {
+    beforeEach(() => {
+      requests = [];
+      global.fetch = jest.fn(async (url, init) => {
+        const body = JSON.parse(init.body);
+        requests.push({ url, body });
+        const entries = body.documents.map(d => [d.filename, `%PDF-${d.filename}`]);
+        if (body.combineAs) entries.push([body.combineAs, '%PDF-joined']);
+        return { ok: true, status: 200, blob: async () => storeZip(entries) };
+      });
+    });
+
+    test('asks for the joined PDF in the same render, and offers it beside ten at a time', async () => {
+      const choose = jest.spyOn(App.Print, '_askShare').mockResolvedValue('one');
+      await App.Print.shareMany(many(23), 'ISS_260928.zip');
+
+      expect(requests).toHaveLength(1);
+      expect(requests[0].body.combineAs).toBe('ISS_260928_All_23.pdf');
+      const asked = choose.mock.calls[0][0];
+      expect(asked.title).toBe('23 PDFs ready');
+      expect(asked.note).toMatch(/at most\. Send all 23 as one PDF, or as separate files in 3 shares/);
+      expect(asked.choices.map(c => [c.value, c.label]))
+        .toEqual([['one', 'Share as one PDF'], ['tens', 'Share 10 at a time']]);
+      expect(asked.names).toHaveLength(23);
+    });
+
+    test('one PDF is shared on the choice\'s own click, with no "Ready to share" after it', async () => {
+      jest.spyOn(App.Print, '_askShare').mockResolvedValue('one');
+      const ready = jest.spyOn(App.Print, '_askToShare');
+      const ok = await App.Print.shareMany(many(23), 'ISS_260928.zip');
+
+      expect(ok).toBe(true);
+      expect(navigator.share).toHaveBeenCalledTimes(1);
+      const { files } = navigator.share.mock.calls[0][0];
+      expect(files.map(f => [f.name, f.type])).toEqual([['ISS_260928_All_23.pdf', 'application/pdf']]);
+      expect(ready).not.toHaveBeenCalled();
+    });
+
+    test('ten at a time: the first ten on the choice\'s click, a click for each ten after', async () => {
+      jest.spyOn(App.Print, '_askShare').mockResolvedValue('tens');
+      const ready = jest.spyOn(App.Print, '_askToShare').mockResolvedValue(true);
+      await App.Print.shareMany(many(23), 'ISS_260928.zip');
+
+      expect(navigator.share.mock.calls.map(c => c[0].files.length)).toEqual([10, 10, 3]);
+      expect(ready).toHaveBeenCalledTimes(2);
+      const shared = navigator.share.mock.calls.flatMap(c => c[0].files.map(f => f.name));
+      expect(shared).toHaveLength(23);
+      expect(shared).not.toContain('ISS_260928_All_23.pdf');
+    });
+
+    test('closing the choice shares nothing', async () => {
+      jest.spyOn(App.Print, '_askShare').mockResolvedValue(null);
+      const ok = await App.Print.shareMany(many(12), 'ISS_260928.zip');
+      expect(ok).toBe(false);
+      expect(navigator.share).not.toHaveBeenCalled();
+    });
+
+    test('ten or fewer ask for no joined file and offer no choice', async () => {
+      const choose = jest.spyOn(App.Print, '_askShare');
+      await App.Print.shareMany(many(10), 'ISS_260928.zip');
+      expect(requests[0].body).not.toHaveProperty('combineAs');
+      expect(choose).not.toHaveBeenCalled();
+      expect(navigator.share.mock.calls.map(c => c[0].files.length)).toEqual([10]);
+    });
+  });
+
   test('a render that outlived its click asks for another, then shares', async () => {
     const lapsed = Object.assign(new Error('no activation'), { name: 'NotAllowedError' });
     navigator.share = jest.fn()
@@ -299,6 +368,51 @@ describe('the share sheet', () => {
     await App.Issue.bulkShare();
     expect(navigator.share).not.toHaveBeenCalled();
     expect(toasts[0].msg).toMatch(/no PDF renderer/);
+  });
+});
+
+// A share sheet opens only within ~5 s of a click; a stack takes the server
+// longer, so the first Share asks for a second click. The second Share of
+// the same stack must not have to.
+describe('a file this tab was already sent', () => {
+  test('Share Selected again renders nothing new', async () => {
+    selectBoth();
+    await App.Issue.bulkShare();
+    await App.Issue.bulkShare();
+    expect(requests).toHaveLength(1);
+    expect(navigator.share).toHaveBeenCalledTimes(2);
+    expect(navigator.share.mock.calls[1][0].files.map(f => f.name)).toEqual(NAMES);
+  });
+
+  test('a receipt changed since is rendered fresh', async () => {
+    selectBoth();
+    await App.Issue.bulkShare();
+    App.State.globalIssues[0].remarks = 'returned two';
+    await App.Issue.bulkShare();
+    expect(requests).toHaveLength(2);
+  });
+
+  test('a failed render is not kept: the next press asks the server again', async () => {
+    global.fetch = jest.fn(async () => ({ ok: false, status: 500 }));
+    selectBoth();
+    await App.Issue.bulkShare();
+    serve();
+    await App.Issue.bulkShare();
+    expect(requests).toHaveLength(1);
+    expect(navigator.share).toHaveBeenCalledTimes(1);
+  });
+
+  test('only the last few are kept', async () => {
+    for (let i = 0; i < App.Print.RENDER_CACHE_MAX_ENTRIES + 3; i++) {
+      await App.Print._postForBlob('/erp/render-pdf', { html: `<p>${i}</p>`, filename: `D${i}.pdf` });
+    }
+    expect(App.Print._renderCache.size).toBe(App.Print.RENDER_CACHE_MAX_ENTRIES);
+    // The newest is still here; the oldest made room.
+    await App.Print._postForBlob('/erp/render-pdf', { html: '<p>0</p>', filename: 'D0.pdf' });
+    expect(requests).toHaveLength(App.Print.RENDER_CACHE_MAX_ENTRIES + 4);
+    const newest = App.Print.RENDER_CACHE_MAX_ENTRIES + 2;
+    await App.Print._postForBlob('/erp/render-pdf', { html: `<p>${newest}</p>`, filename: `D${newest}.pdf` });
+    expect(requests).toHaveLength(App.Print.RENDER_CACHE_MAX_ENTRIES + 4);
   });
 });
 
@@ -378,5 +492,64 @@ describe('the Ready to share dialog', () => {
 
     document.getElementById('shareReadyBtn').click();
     await expect(answer).resolves.toBe(true);
+  });
+
+  describe('with a choice to make', () => {
+    const ask = () => App.Print._askShare({
+      title: '23 PDFs ready',
+      note: 'A share can carry 10 files at most.',
+      names: ['a.pdf', 'b.pdf'],
+      choices: [
+        { value: 'one', label: 'Share as one PDF', icon: 'bi-file-earmark-pdf' },
+        { value: 'tens', label: 'Share 10 at a time', icon: 'bi-files' }
+      ]
+    });
+    const alt = () => document.getElementById('shareReadyAltBtn');
+
+    test('shows both, the one PDF on the dark button, and says why', async () => {
+      const answer = ask();
+      await Promise.resolve();
+
+      expect(document.getElementById('shareReadyTitle').textContent).toBe('23 PDFs ready');
+      const note = document.getElementById('shareReadyNote');
+      expect(note.textContent).toBe('A share can carry 10 files at most.');
+      expect(note.classList.contains('d-none')).toBe(false);
+      expect(document.getElementById('shareReadyBtn').textContent.trim()).toBe('Share as one PDF');
+      expect(document.getElementById('shareReadyBtn').classList.contains('btn-dark')).toBe(true);
+      expect(alt().classList.contains('d-none')).toBe(false);
+      expect(alt().textContent.trim()).toBe('Share 10 at a time');
+
+      alt().click();
+      await expect(answer).resolves.toBe('tens');
+    });
+
+    test('the dark button answers one PDF; closing answers nothing', async () => {
+      let answer = ask();
+      await Promise.resolve();
+      document.getElementById('shareReadyBtn').click();
+      await expect(answer).resolves.toBe('one');
+
+      answer = ask();
+      await Promise.resolve();
+      bootstrap.Modal.getInstance(modal()).hide();
+      await expect(answer).resolves.toBeNull();
+    });
+
+    test('the plain Ready to share after it is back to one button, its title and no note', async () => {
+      const first = ask();
+      await Promise.resolve();
+      alt().click();
+      await first;
+
+      const answer = App.Print._askToShare('Share 10 PDFs (11–20 of 23)', ['c.pdf']);
+      await Promise.resolve();
+      expect(document.getElementById('shareReadyTitle').textContent).toBe('Ready to share');
+      expect(document.getElementById('shareReadyNote').classList.contains('d-none')).toBe(true);
+      expect(alt().classList.contains('d-none')).toBe(true);
+      // The hidden button's old press must not answer for this dialog.
+      alt().click();
+      document.getElementById('shareReadyBtn').click();
+      await expect(answer).resolves.toBe(true);
+    });
   });
 });

@@ -14,6 +14,7 @@ trains people to ignore it.
 
 import io
 import logging
+import sys
 import zipfile
 
 import pytest
@@ -433,6 +434,19 @@ class TestOnePage:
         assert len(self._pages(archive.read("a.pdf"))) == 1
         assert len(self._pages(archive.read("b.pdf"))) == 2
 
+    def test_the_joined_pdf_keeps_each_documents_own_fit(self):
+        """Joined from the finished files, not laid out again together: the
+        sheet shrunk onto one page stays on one page in the joined PDF."""
+        blob, _ = svc.render_batch(
+            [
+                {"filename": "a.pdf", "html": self.JUST_OVER, "onePage": True},
+                {"filename": "b.pdf", "html": self.JUST_OVER},
+            ],
+            combined_name="both.pdf",
+        )
+        joined = self._pages(zipfile.ZipFile(io.BytesIO(blob)).read("both.pdf"))
+        assert len(joined) == 1 + 2
+
 
 @needs_renderer
 class TestBatch:
@@ -461,6 +475,46 @@ class TestBatch:
     def test_archive_is_well_formed(self):
         blob, _ = svc.render_batch([{"filename": "a.pdf", "html": "<p>a</p>"}])
         assert zipfile.ZipFile(io.BytesIO(blob)).testzip() is None
+
+    # Share past ten files: a browser takes at most ten in one share, so the
+    # batch can also carry every document joined into one PDF.
+    def test_a_combined_name_adds_every_document_joined_as_one_entry_more_last(self):
+        pypdf = pytest.importorskip("pypdf")
+        blob, names = svc.render_batch(
+            [{"filename": f"PO_{i}.pdf", "html": f"<p>PO-{i}</p>"} for i in (1, 2, 3)],
+            combined_name="PO_261102_All_3.pdf",
+        )
+        archive = zipfile.ZipFile(io.BytesIO(blob))
+        assert (
+            archive.namelist()
+            == names
+            == ["PO_1.pdf", "PO_2.pdf", "PO_3.pdf", "PO_261102_All_3.pdf"]
+        )
+        joined = pypdf.PdfReader(io.BytesIO(archive.read("PO_261102_All_3.pdf")))
+        assert [p.extract_text().strip() for p in joined.pages] == [
+            "PO-1",
+            "PO-2",
+            "PO-3",
+        ]
+        # A bookmark per document, under its own name.
+        assert [item.title for item in joined.outline] == ["PO_1", "PO_2", "PO_3"]
+
+    def test_the_joined_file_never_takes_a_documents_name(self):
+        pytest.importorskip("pypdf")
+        _, names = svc.render_batch(
+            [{"filename": "All.pdf", "html": "<p>a</p>"}], combined_name="All.pdf"
+        )
+        assert names == ["All.pdf", "All_2.pdf"]
+
+    def test_without_pypdf_the_documents_still_come_back(self, monkeypatch, caplog):
+        """The client counts entries: none extra, and it shares in tens."""
+        monkeypatch.setitem(sys.modules, "pypdf", None)
+        with caplog.at_level(logging.WARNING):
+            _, names = svc.render_batch(
+                [{"filename": "a.pdf", "html": "<p>a</p>"}], combined_name="All.pdf"
+            )
+        assert names == ["a.pdf"]
+        assert "pypdf is not installed" in caplog.text
 
 
 # ── Endpoints ────────────────────────────────────────────────────────
@@ -572,6 +626,26 @@ class TestEndpointSuccess:
         assert res.mimetype == "application/zip"
         assert "Purchase_Orders_190826.zip" in res.headers["Content-Disposition"]
         assert zipfile.ZipFile(io.BytesIO(res.data)).namelist() == ["A.pdf", "B.pdf"]
+
+    @pytest.mark.parametrize(
+        "combine_as, last",
+        [("PO_261102_All_2.pdf", "PO_261102_All_2.pdf"), (5, "B.pdf"), ("", "B.pdf")],
+    )
+    def test_batch_joins_them_only_when_named(self, erp_client, combine_as, last):
+        pytest.importorskip("pypdf")
+        res = erp_client.post(
+            "/erp/render-pdf-batch",
+            json={
+                "documents": [
+                    {"filename": "A.pdf", "html": "<p>A</p>"},
+                    {"filename": "B.pdf", "html": "<p>B</p>"},
+                ],
+                "zipName": "PO_261102.zip",
+                "combineAs": combine_as,
+            },
+        )
+        assert res.status_code == 200
+        assert zipfile.ZipFile(io.BytesIO(res.data)).namelist()[-1] == last
 
     def test_response_is_not_cached(self, erp_client):
         res = erp_client.post("/erp/render-pdf", json={"html": "<p>x</p>"})
