@@ -386,8 +386,10 @@ def render_pdf_batch():
 
     Contract:
       request  {"documents": [{"filename": ..., "html": ..., "landscape": ...}],
-                "zipName": "Purchase_Orders_190826.zip"}
-      200      application/zip
+                "zipName": "Purchase_Orders_190826.zip",
+                "combineAs": "PO_261102_All_25.pdf"}   (optional)
+      200      application/zip; with combineAs, one more entry last: every
+               document in one PDF (Share's way past the browser's ten files)
       400 / 503 as above.
     """
     from .services import pdf_render_service
@@ -397,8 +399,12 @@ def render_pdf_batch():
         return refused
 
     payload = request.get_json(silent=True) or {}
+    combine_as = payload.get("combineAs")
     try:
-        blob, _names = pdf_render_service.render_batch(payload.get("documents"))
+        blob, _names = pdf_render_service.render_batch(
+            payload.get("documents"),
+            combined_name=combine_as if isinstance(combine_as, str) else None,
+        )
     except ValueError as exc:
         return jsonify({"success": False, "message": str(exc)}), 400
     except pdf_render_service.PdfRenderUnavailable as exc:
