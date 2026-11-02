@@ -667,6 +667,38 @@ def _stock_key(name, size) -> str:
     return f"{str(name or '').strip().lower()}|{str(size or '').strip().lower()}"
 
 
+def current_stock_of(cur, pairs) -> dict:
+    """{"name|size": Current Stock} for the items among `pairs` ((name, size),
+    any case) that have a Stock row -- the figure the Stock page shows, for
+    just those items. An item with no Stock row is left out, as the Stock
+    page leaves it out."""
+    keys = list(
+        {
+            (str(name or "").strip().lower(), str(size or "").strip().lower())
+            for name, size in pairs
+            if str(name or "").strip()
+        }
+    )
+    if not keys:
+        return {}
+    cur.execute(
+        "SELECT item_name, size, initial_stock FROM erp.stock "
+        "WHERE deleted_at IS NULL "
+        "AND (lower(item_name), lower(COALESCE(size, ''))) IN %s",
+        (tuple(keys),),
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return {}
+    terms = _get_stock_terms(cur, keys)
+    return {
+        _stock_key(r["item_name"], r["size"]): terms.current(
+            _stock_key(r["item_name"], r["size"]), r["initial_stock"]
+        )
+        for r in rows
+    }
+
+
 def _stock_record(row, terms: StockTerms) -> dict:
     key = _stock_key(row["item_name"], row["size"])
     initial = float(row["initial_stock"])

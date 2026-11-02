@@ -220,7 +220,10 @@
 // v97: Prices & amounts is a grant in the role editor, so a custom role can
 // see amounts or also enter bills and POs. api.js, mobile.js and the template
 // carry it.
-const CACHE_NAME = 'erp-mobile-shell-v97';
+// v98: the inspection checklist shows what is on hand for each item, under
+// its quantity or in an In stock column. mobile.js and mobile_styles.css
+// carry it.
+const CACHE_NAME = 'erp-mobile-shell-v98';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so
