@@ -277,37 +277,6 @@ def _photo_key(item) -> tuple:
     return (_text(item.get("itemName")).lower(), _text(item.get("size")).lower())
 
 
-def attach_photos(cur, items) -> None:
-    """Gives each checklist row its Items Master photo's address as
-    `photoUrl` ("" when it has none), so the inspector can compare the
-    material with a picture of it, and `canSetPhoto` when the row has an
-    Items Master item for the inspector to photograph.
-
-    The match is exact, name and size: a rim photographed in 16 inch must
-    not stand in for the 20 inch rim the row asks for, because checking the
-    size is part of the inspection. A Warehouse Pool row (a painted frame, a
-    fitted rim) has no Items Master entry, so no photo and nowhere to put
-    one. Only the address is sent; the photo itself loads when shown."""
-    names = list({_photo_key(i)[0] for i in items if i.get("itemName")})
-    found: dict = {}
-    if names:
-        cur.execute(
-            "SELECT id, lower(item_name) AS n, lower(size) AS s, row_version, "
-            "image <> '' AS has_photo "
-            "FROM erp.items WHERE deleted_at IS NULL AND lower(item_name) = ANY(%s)",
-            (names,),
-        )
-        found = {(r["n"], r["s"]): r for r in cur.fetchall()}
-    for item in items:
-        match = found.get(_photo_key(item))
-        item["canSetPhoto"] = match is not None
-        item["photoUrl"] = (
-            items_service.photo_url(match["id"], match["row_version"])
-            if match is not None and match["has_photo"]
-            else ""
-        )
-
-
 def _recorded_components(components_consumed) -> tuple[dict, dict]:
     """The lot's recorded components by item|size|colour and by item|size,
     first one wins: a saved sheet's rows carry no source or bucket, so each
@@ -321,6 +290,103 @@ def _recorded_components(components_consumed) -> tuple[dict, dict]:
         exact.setdefault((name, size, _color_key(comp).lower()), comp)
         loose.setdefault((name, size), comp)
     return exact, loose
+
+
+def _component_for(recorded, item):
+    exact, loose = recorded
+    name, size = _photo_key(item)
+    return exact.get((name, size, _text(item.get("color")).lower())) or loose.get(
+        (name, size)
+    )
+
+
+def _row_source(comp, in_items, in_pool) -> str:
+    """Whose item a checklist row is: "pool" (a Warehouse Pool item) or
+    "stock" (an Items Master item), or "" when neither knows it. The row's
+    recorded component says, by its sourceType. A row a saved sheet added on
+    its own is an Items Master item when `in_items`, else a pool item when
+    `in_pool`. Photos and stock on hand both go by this rule, each answering
+    `in_items` and `in_pool` from what it has already looked up."""
+    if comp is not None:
+        return "pool" if _text(comp.get("sourceType")).upper() == "POOL" else "stock"
+    if in_items:
+        return "stock"
+    if in_pool:
+        return "pool"
+    return ""
+
+
+def _photo_targets(cur, lot, items) -> list[tuple[str, dict | None]]:
+    """Each row's photo owner, as (source, Items Master row): ("pool",
+    None) for a Warehouse Pool item, ("stock", the matching Items Master row
+    or None) for an Items Master item, ("", None) for a row neither knows.
+
+    The Items Master match is exact, name and size: a rim photographed in
+    16 inch must not stand in for the 20 inch rim the row asks for, because
+    checking the size is part of the inspection."""
+    names = list({_photo_key(i)[0] for i in items if i.get("itemName")})
+    found: dict = {}
+    if names:
+        cur.execute(
+            "SELECT id, lower(item_name) AS n, lower(size) AS s, row_version, "
+            "image <> '' AS has_photo "
+            "FROM erp.items WHERE deleted_at IS NULL AND lower(item_name) = ANY(%s)",
+            (names,),
+        )
+        found = {(r["n"], r["s"]): r for r in cur.fetchall()}
+    recorded = _recorded_components(lot["components_consumed"])
+    comps = [_component_for(recorded, item) for item in items]
+    unknown = [
+        item.get("itemName")
+        for item, comp in zip(items, comps)
+        if comp is None and _photo_key(item) not in found
+    ]
+    in_pool = warehouse_service.pool_item_names(cur, unknown) if unknown else {}
+    targets = []
+    for item, comp in zip(items, comps):
+        key = _photo_key(item)
+        source = _row_source(comp, key in found, key[0] in in_pool)
+        targets.append((source, found.get(key) if source == "stock" else None))
+    return targets
+
+
+def attach_photos(cur, lot, items) -> None:
+    """Gives each checklist row a photo to hold the material against:
+
+      photoUrl     its address, "" when there is none yet. Only the address
+                   is sent; the photo itself loads when shown.
+      photoSource  "pool" for a Warehouse Pool item (a painted frame, a
+                   fitted rim): one photo per item name, every colour of it,
+                   the one the Warehouse Pool screens show. "stock" for an
+                   Items Master item: that item's photo, by name and size.
+                   "" for a row neither knows.
+      canSetPhoto  whether the inspector can add or change it: every pool
+                   row, and every row with an Items Master item.
+
+    A pool row used to get none of this, and showed a camera only when its
+    name and size happened to match an Items Master item (the owner,
+    2026-11-02: it must be there uniformly)."""
+    targets = _photo_targets(cur, lot, items)
+    pool_urls = warehouse_service.pool_photo_urls(
+        cur,
+        [
+            item.get("itemName")
+            for item, (src, _) in zip(items, targets)
+            if src == "pool"
+        ],
+    )
+    for item, (source, match) in zip(items, targets):
+        item["photoSource"] = source
+        if source == "pool":
+            item["canSetPhoto"] = True
+            item["photoUrl"] = pool_urls.get(_photo_key(item)[0], "")
+            continue
+        item["canSetPhoto"] = match is not None
+        item["photoUrl"] = (
+            items_service.photo_url(match["id"], match["row_version"])
+            if match is not None and match["has_photo"]
+            else ""
+        )
 
 
 def attach_stock(cur, lot, items) -> None:
@@ -346,7 +412,7 @@ def attach_stock(cur, lot, items) -> None:
     added on its own is an Items Master item if it has a Stock row, else a
     pool item if a bucket holds it. Read only: an inspection never moves
     stock."""
-    exact, loose = _recorded_components(lot["components_consumed"])
+    recorded = _recorded_components(lot["components_consumed"])
     pool = warehouse_service._get_pool_available_qty_map(cur)
     on_hand = stock_service.current_stock_of(
         cur, [(i.get("itemName"), i.get("size")) for i in items]
@@ -365,18 +431,12 @@ def attach_stock(cur, lot, items) -> None:
     for item in items:
         item["stock"] = None
         name, size = _photo_key(item)
-        comp = exact.get((name, size, _text(item.get("color")).lower())) or loose.get(
-            (name, size)
-        )
+        comp = _component_for(recorded, item)
         stock_key = f"{name}|{size}"
-        if comp is not None:
-            is_pool = _text(comp.get("sourceType")).upper() == "POOL"
-        elif stock_key in on_hand:
-            is_pool = False
-        elif name in pool:
-            is_pool = True
-        else:
+        source = _row_source(comp, stock_key in on_hand, name in pool)
+        if not source:
             continue
+        is_pool = source == "pool"
 
         need = float(item.get("qty") or 0)
         unit = _text(item.get("unit"))
@@ -772,7 +832,7 @@ def get_inspection(row_idx):
         items, removed = merge_checklist(
             rows, checks, inspection["baseline"] if inspection else None
         )
-        attach_photos(cur, items)
+        attach_photos(cur, lot, items)
         attach_stock(cur, lot, items)
         header = _lot_header(lot, _process_name(cur, lot["process_id"]))
         identity = _identity(cur)
@@ -882,7 +942,7 @@ def set_inspection_check(conn, cur, row_idx, item_key, result, item_fingerprint)
     # untick turns a row back into (pending, or still revised).
     merged = next((i for i in items if i["key"] == row["key"]), None)
     if merged is not None:
-        attach_photos(cur, [merged])
+        attach_photos(cur, lot, [merged])
     summary = summarize(items, removed)
     return build_response(
         True,
@@ -901,15 +961,17 @@ def set_inspection_check(conn, cur, row_idx, item_key, result, item_fingerprint)
 @rpc_method("setInspectionItemPhoto", mutation=True)
 @database.transactional
 def set_inspection_item_photo(conn, cur, row_idx, item_key, image):
-    """Puts a new photo on the Items Master item behind one checklist row --
-    the inspector found it missing, or out of date.
+    """Puts a new photo on the item behind one checklist row -- the
+    inspector found it missing, or out of date. A Warehouse Pool row's photo
+    is its pool item's (warehouse_service.save_pool_photo), any other row's
+    is its Items Master item's: whichever attach_photos showed.
 
     Only the photo, and only for an item on this lot's live Production
-    Sheet: an inspector need not be able to edit Items Master to keep its
-    photos current, so this sits under the Inspection permission rather than
-    going through saveItem. It is the item's photo everywhere -- Items
-    Master, the phone's Items list, every other lot's checklist. The
-    inspection itself is untouched, cleared or not."""
+    Sheet: an inspector need not be able to edit Items Master or the
+    Warehouse Pool to keep their photos current, so this sits under the
+    Inspection permission. It is the item's photo everywhere -- Items Master
+    or the Warehouse Pool, the phone's lists, every other lot's checklist.
+    The inspection itself is untouched, cleared or not."""
     lot = _load_lot(cur, row_idx)
     key = _text(item_key)
     row = next(
@@ -925,6 +987,19 @@ def set_inspection_item_photo(conn, cur, row_idx, item_key, image):
             "That item is no longer on this lot's Production Sheet. Reload the checklist."
         )
     image = items_service.check_servable_photo(image)
+    if _photo_targets(cur, lot, [row])[0][0] == "pool":
+        saved = warehouse_service.save_pool_photo(cur, row["itemName"], image)
+        return build_response(
+            True,
+            {
+                "key": key,
+                "itemName": row["itemName"],
+                "size": row["size"],
+                "photoSource": "pool",
+                "photoUrl": saved["photoUrl"],
+            },
+            f"Photo saved for {row['itemName']}, every colour of it.",
+        )
     cur.execute(
         "SELECT id, item_name FROM erp.items WHERE deleted_at IS NULL "
         "AND lower(item_name) = lower(%s) AND lower(size) = lower(%s) FOR UPDATE",
@@ -949,6 +1024,7 @@ def set_inspection_item_photo(conn, cur, row_idx, item_key, image):
             "key": key,
             "itemName": row["itemName"],
             "size": row["size"],
+            "photoSource": "stock",
             "photoUrl": items_service.photo_url(item["id"], version),
         },
         f"Photo saved for {label}.",

@@ -585,6 +585,25 @@ MApp.Util = {
       };
       reader.readAsDataURL(file);
     });
+  },
+
+  // One photo from the camera (`camera`) or the gallery, or null. Two
+  // routes because Chrome on Android 14+ offers only the gallery to a plain
+  // image input; capture="environment" is what opens the camera.
+  pickImageFile(camera) {
+    return new Promise(resolve => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      if (camera) input.setAttribute('capture', 'environment');
+      input.hidden = true;
+      input.addEventListener('change', () => {
+        resolve(input.files && input.files[0] ? input.files[0] : null);
+        input.remove();
+      });
+      document.body.appendChild(input);
+      input.click();
+    });
   }
 };
 
@@ -17097,9 +17116,9 @@ MApp.Inspection = {
     // wide screen the details and the review move beside the checklist.
     const facts = [lot.lotNumber, lot.date, `${MApp.Util.formatQty(lot.qty)} units`]
       .concat(lot.colors.length ? [lot.colors.join(', ')] : []);
-    // A photo column when anything on this sheet has a photo, or an Items
-    // Master item the inspector can photograph; a lot of Warehouse Pool
-    // rows alone looks exactly as it did.
+    // A photo column when anything on this sheet has a photo, or an item
+    // the inspector can photograph -- every Warehouse Pool row, and every
+    // row with an Items Master item.
     this._withPhotos = d.items.some(i => i.photoUrl || i.canSetPhoto);
     // An "In stock" column when the records know any row's item.
     this._withStock = d.items.some(i => i.stock);
@@ -17165,10 +17184,12 @@ MApp.Inspection = {
     return [item.itemName, item.size].filter(Boolean).join(' · ');
   },
 
-  // The item's Items Master photo, small, beside its box: a tap shows it
-  // full screen, with "Change photo" under it. An item with none shows a
-  // camera to add one. A row with no Items Master item (Warehouse Pool)
-  // keeps an empty slot so the names stay in line.
+  // The item's photo, small, beside its box: a tap shows it full screen,
+  // with "Change photo" under it. An item with none shows a camera to add
+  // one. A Warehouse Pool row's photo is its pool item's (photoSource
+  // "pool": every colour of it, the one the Warehouse Pool shows); any
+  // other row's is its Items Master item's. A row neither knows keeps an
+  // empty slot so the names stay in line.
   _photoHtml(item, e) {
     if (!this._withPhotos) return '';
     const title = e(this._photoTitle(item));
@@ -17185,9 +17206,9 @@ MApp.Inspection = {
     return '<span class="mb-insp-photo mb-insp-photo-none" aria-hidden="true"></span>';
   },
 
-  // Take a photo or pick one, shrink it, and put it on the row's Items
-  // Master item (setInspectionItemPhoto). Two routes, as on the item form:
-  // Chrome on Android 14+ offers only the gallery to a plain image input.
+  // Take a photo or pick one, shrink it, and put it on the row's item
+  // (setInspectionItemPhoto). Two routes, as on the item form: Chrome on
+  // Android 14+ offers only the gallery to a plain image input.
   async choosePhoto(key) {
     const item = this.data && this.data.items.find(i => i.key === key);
     if (!item || !item.canSetPhoto) return;
@@ -17213,19 +17234,7 @@ MApp.Inspection = {
   },
 
   _pickFile(camera) {
-    return new Promise(resolve => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/*';
-      if (camera) input.setAttribute('capture', 'environment');
-      input.hidden = true;
-      input.addEventListener('change', () => {
-        resolve(input.files && input.files[0] ? input.files[0] : null);
-        input.remove();
-      });
-      document.body.appendChild(input);
-      input.click();
-    });
+    return MApp.Util.pickImageFile(camera);
   },
 
   async savePhoto(key, dataUrl) {
@@ -17237,9 +17246,14 @@ MApp.Inspection = {
         MApp.Toast.error((res && res.message) || 'The photo was not saved.');
         return;
       }
-      // The photo is the item's: every row of the same item and size shows it.
+      // The photo is the item's: every row of the same item shows it -- of
+      // the same size for an Items Master item, of any size or colour for a
+      // pool item.
+      const pool = res.data.photoSource === 'pool';
       const same = i => String(i.itemName).toLowerCase() === String(res.data.itemName).toLowerCase()
-        && String(i.size || '').toLowerCase() === String(res.data.size || '').toLowerCase();
+        && (pool
+          ? i.photoSource === 'pool'
+          : i.photoSource !== 'pool' && String(i.size || '').toLowerCase() === String(res.data.size || '').toLowerCase());
       d.items.filter(same).forEach(i => {
         i.photoUrl = res.data.photoUrl;
         if (this.data === d) this._repaintRow(i);
@@ -18706,6 +18720,10 @@ MApp.Pool = {
   filtered: [],
   searchTerm: '',
   filter: 'all',
+  // {item name, lower-cased: photo address} (getPoolItemPhotos): one photo
+  // per pool item, every colour of it -- the one its inspection checklist
+  // rows show.
+  photos: {},
 
   // producedQty === 0 with real consumption and a colour: the debit side
   // opened this bucket on its own, naming a colour no credit ever used.
@@ -18778,12 +18796,17 @@ MApp.Pool = {
     }
 
     try {
-      const res = await MApp.Api.call('getWarehousePoolData');
+      // Photos are extras: the buckets come up without them.
+      const [res, photosRes] = await Promise.all([
+        MApp.Api.call('getWarehousePoolData'),
+        MApp.Api.call('getPoolItemPhotos').catch(() => null)
+      ]);
       if (stale()) return;
       if (!res || !res.success) {
         MApp.Util.loadFailed(listEl, res && res.message, () => this.load(), keep);
         return;
       }
+      this.photos = (photosRes && photosRes.success && photosRes.data) || {};
       this.rows = res.data || [];
       this.entries = MApp.Search.index(this.rows, this.SEARCH);
       this._applyFilters();
@@ -18870,9 +18893,12 @@ MApp.Pool = {
       return `
         <div class="mb-card">
           <div class="mb-card-row">
-            <div>
-              <div class="mb-card-title">${MApp.Util.escapeHtml(r.outputItemName)}</div>
-              <div class="mb-card-sub">${r.color ? MApp.Util.escapeHtml(r.color) : 'No colour'}${r.productTag ? ' · ' + MApp.Util.escapeHtml(r.productTag) : ''}</div>
+            <div class="mb-item-ident">
+              ${this._photoHtml(r, i)}
+              <div>
+                <div class="mb-card-title">${MApp.Util.escapeHtml(r.outputItemName)}</div>
+                <div class="mb-card-sub">${r.color ? MApp.Util.escapeHtml(r.color) : 'No colour'}${r.productTag ? ' · ' + MApp.Util.escapeHtml(r.productTag) : ''}</div>
+              </div>
             </div>
             <div style="text-align:right;">
               <div class="mb-card-number${negative ? ' mb-alert' : ''}">${MApp.Util.formatQty(r.availableQty)}</div>
@@ -18913,6 +18939,85 @@ MApp.Pool = {
         if (row) this.setBucketCounts(row);
       });
     });
+
+    listEl.querySelectorAll('[data-pool-photo]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const row = page.rows[Number(btn.dataset.poolPhoto)];
+        if (row) this.openPhoto(row);
+      });
+      // Offline, or the photo was replaced since: no broken-image icon.
+      const img = btn.querySelector('img');
+      if (img) img.addEventListener('error', () => img.remove());
+    });
+  },
+
+  // ── The pool item's photo ──────────────────────────────────────────
+  // One per item, whatever the colour, so every bucket of an item shows
+  // the same one. A tap shows it full screen with "Change photo"; an item
+  // with none shows a camera to add one.
+  _photoUrl(row) {
+    return this.photos[String(row.outputItemName || '').trim().toLowerCase()] || '';
+  },
+
+  _photoHtml(row, i) {
+    if (!row.outputItemName) return '';
+    const name = MApp.Util.escapeHtml(row.outputItemName);
+    const url = this._photoUrl(row);
+    if (url) {
+      return `<button type="button" class="mb-item-thumb" data-pool-photo="${i}" aria-label="View photo of ${name}">
+          <img src="${MApp.Util.escapeHtml(url)}" alt="" loading="lazy" decoding="async">
+        </button>`;
+    }
+    return `<button type="button" class="mb-item-thumb mb-item-thumb-add" data-pool-photo="${i}" aria-label="Add a photo of ${name}">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h3l2-3h8l2 3h3v12H3z"/><circle cx="12" cy="13" r="3.5"/></svg>
+      </button>`;
+  },
+
+  openPhoto(row) {
+    const url = this._photoUrl(row);
+    if (!url) {
+      this.choosePhoto(row);
+      return;
+    }
+    MApp.PhotoViewer.open(url, row.outputItemName, { onChange: () => this.choosePhoto(row) });
+  },
+
+  // Take a photo or pick one, shrink it, and put it on the pool item
+  // (setPoolItemPhoto) -- the same photo its inspection rows show.
+  async choosePhoto(row) {
+    const picked = await MApp.Picker.open({
+      title: this._photoUrl(row) ? 'Change photo' : 'Add photo',
+      searchable: false,
+      items: [
+        { value: 'camera', label: 'Take photo' },
+        { value: 'gallery', label: 'Choose from gallery' }
+      ]
+    });
+    if (!picked) return;
+    const file = await MApp.Util.pickImageFile(picked.value === 'camera');
+    if (!file) return;
+    let dataUrl;
+    try {
+      dataUrl = await MApp.Util.resizeImageToBase64(file, 800);
+    } catch (err) {
+      MApp.Toast.error(err.message || 'Could not read that photo.');
+      return;
+    }
+    try {
+      const res = await MApp.Api.mutate('setPoolItemPhoto', row.outputItemName, dataUrl);
+      if (!res || !res.success) {
+        MApp.Toast.error((res && res.message) || 'The photo was not saved.');
+        return;
+      }
+      this.photos[String(res.data.outputItemName).trim().toLowerCase()] = res.data.photoUrl;
+      const listEl = document.getElementById('pool-list');
+      const restoreScroll = listEl ? MApp.Util.keepScroll(listEl) : () => {};
+      this.render();
+      restoreScroll();
+      MApp.Toast.success(res.message || 'Photo saved.');
+    } catch (err) {
+      MApp.Toast.error((err && err.message) || 'No connection. The photo was not saved.');
+    }
   },
 
   // Declare a bucket stock or a sub-group. Where a production lot credited

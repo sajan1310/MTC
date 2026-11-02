@@ -226,7 +226,10 @@
 // v99: Share past ten files offers one joined PDF or ten at a time, and a
 // file already made is shared without rendering it again. mobile.js carries
 // it.
-const CACHE_NAME = 'erp-mobile-shell-v99';
+// v100: every Warehouse Pool row of an inspection checklist can take a
+// photo, and the Warehouse Pool shows and sets the same photo. mobile.js and
+// mobile_styles.css carry it.
+const CACHE_NAME = 'erp-mobile-shell-v100';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

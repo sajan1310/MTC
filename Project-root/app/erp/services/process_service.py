@@ -247,6 +247,18 @@ def _rename_pool_output_item_name_everywhere(cur, old_name: str, new_name: str) 
             cur, table, "item_name", old, new, extra_where=" AND source_type = 'POOL'"
         )
 
+    # The pool item's photo (migration 058). One photo per name, so where the
+    # new name already has its own, that one stays and the old name's goes.
+    cur.execute(
+        "DELETE FROM erp.pool_item_photos WHERE lower(output_item_name) = lower(%s) "
+        "AND EXISTS (SELECT 1 FROM erp.pool_item_photos "
+        "WHERE lower(output_item_name) = lower(%s))",
+        (old, new),
+    )
+    rename_utils.rename_in_column(
+        cur, "erp.pool_item_photos", "output_item_name", old, new
+    )
+
     if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
         # Credit side: any lot's own output_item_name.
         rename_utils.rename_in_column(cur, table, "output_item_name", old, new)

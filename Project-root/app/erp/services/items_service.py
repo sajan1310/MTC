@@ -890,6 +890,20 @@ def photo_url(item_id, row_version) -> str:
     return f"/erp/item-photo/{int(item_id)}?v={photo_version(row_version)}"
 
 
+def decode_photo(image):
+    """(mimetype, bytes) for a stored photo, or None when it is not a raster
+    image. Also serves the Warehouse Pool's photos (warehouse_service)."""
+    header, sep, data = str(image or "").partition(",")
+    mimetype = header[len("data:") :].split(";", 1)[0].strip().lower()
+    if not sep or ";base64" not in header or mimetype not in _SERVABLE_PHOTO_TYPES:
+        return None
+    try:
+        payload = base64.b64decode(data, validate=False)
+    except ValueError:  # binascii.Error, a malformed payload
+        return None
+    return mimetype, payload
+
+
 def get_item_photo(item_id: int):
     """(mimetype, bytes, version) for a live item's photo, or None when it
     has none, is deleted, or holds something that is not a raster image."""
@@ -905,15 +919,10 @@ def get_item_photo(item_id: int):
         row = cur.fetchone()
     if row is None:
         return None
-    header, sep, data = str(row["image"]).partition(",")
-    mimetype = header[len("data:") :].split(";", 1)[0].strip().lower()
-    if not sep or ";base64" not in header or mimetype not in _SERVABLE_PHOTO_TYPES:
+    decoded = decode_photo(row["image"])
+    if decoded is None:
         return None
-    try:
-        payload = base64.b64decode(data, validate=False)
-    except ValueError:  # binascii.Error, a malformed payload
-        return None
-    return mimetype, payload, photo_version(row["row_version"])
+    return decoded[0], decoded[1], photo_version(row["row_version"])
 
 
 @rpc_method("getItemsData")

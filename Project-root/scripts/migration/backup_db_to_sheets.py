@@ -93,6 +93,9 @@ TABLES = [
     # sub-group's quantity back into its process total and into Ready to
     # Dispatch, which is the bug they were added to fix.
     "erp.warehouse_pool_bucket_flags",
+    # A photo per pool item (058). A photo too long for a Sheets cell is
+    # noted, not sent (_cell); the pg_dump snapshot keeps it whole.
+    "erp.pool_item_photos",
     "erp.po_headers",
     "erp.po_lines",
     "erp.bill_headers",

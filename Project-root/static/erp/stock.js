@@ -939,9 +939,11 @@ App.Stock = {
     if (tbody) App.Utils.tableLoading(tbody, 11, 'Loading Warehouse Pool...');
 
     try {
-      const [poolRes, colorsRes] = await Promise.all([
+      const [poolRes, colorsRes, photosRes] = await Promise.all([
         Api.call('getWarehousePoolData'),
-        Api.call('getAllProcessColorGroups')
+        Api.call('getAllProcessColorGroups'),
+        // Photos are extras: the pool comes up without them.
+        Api.call('getPoolItemPhotos').catch(() => null)
       ]);
       if (!poolRes?.success) {
         App.Utils.showToast(poolRes?.message || 'Failed to load Warehouse Pool data.', true);
@@ -949,6 +951,7 @@ App.Stock = {
       }
       App.State.globalWarehousePool = Array.isArray(poolRes.data) ? poolRes.data : [];
       App.State.warehousePoolColorsByProcess = colorsRes?.success ? (colorsRes.data || {}) : {};
+      App.State.poolItemPhotos = photosRes?.success ? (photosRes.data || {}) : {};
       App.State.selectedWarehousePool = [];
       this.renderWarehousePoolTable();
     } catch (err) {
@@ -1221,7 +1224,7 @@ App.Stock = {
         : '<span class="badge bg-warning text-dark ms-2">No Output Item configured</span>';
       const statusBadge = p.active ? '' : ' <span class="badge bg-danger ms-2">Inactive</span>';
       const tierCells = tierValues.map(v => `<td class="align-middle fw-semibold text-secondary bg-light">${escapeHtml(v)}</td>`).join('');
-      const processCell = `<td class="align-middle fw-bold">${escapeHtml(p.processName)}${outputBadge}${statusBadge}</td>`;
+      const processCell = `<td class="align-middle fw-bold"><div class="d-flex align-items-center gap-2">${this._poolPhotoHtml(p.outputItemName)}<span>${escapeHtml(p.processName)}${outputBadge}${statusBadge}</span></div></td>`;
 
       // Sub-group buckets are listed as their own combination but are not
       // units -- 'Kit Bag 24"' is recorded per color on units the primary
@@ -1262,6 +1265,78 @@ App.Stock = {
 
     tbody.innerHTML = html;
     this.updateWarehousePoolBulkButtons();
+  },
+
+  // ── A pool item's photo ──────────────────────────────────────────────
+  // One per Output Item (getPoolItemPhotos), every colour of it -- the one
+  // its inspection checklist rows show. A click shows it large, with
+  // "Change photo"; an item with none offers a camera. Inside the Process
+  // row, so a click here must not open the breakdown as well.
+  _poolPhotoUrl(name) {
+    return (App.State.poolItemPhotos || {})[String(name || '').trim().toLowerCase()] || '';
+  },
+
+  _poolPhotoHtml(name) {
+    if (!name) return '';
+    const enc = encodeURIComponent(name).replace(/'/g, '%27');
+    const label = escapeHtml(name);
+    const url = this._poolPhotoUrl(name);
+    if (url) {
+      return `<button type="button" class="pool-photo-btn" onclick="event.stopPropagation(); App.Stock.viewPoolPhoto('${enc}')" aria-label="View photo of ${label}" title="View photo">
+        <img src="${escapeHtml(url)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">
+      </button>`;
+    }
+    return `<button type="button" class="pool-photo-btn pool-photo-add" onclick="event.stopPropagation(); App.Stock.choosePoolPhoto('${enc}')" aria-label="Add a photo of ${label}" title="Add photo"><i class="bi bi-camera"></i></button>`;
+  },
+
+  viewPoolPhoto(encName) {
+    const name = decodeURIComponent(encName || '');
+    const url = this._poolPhotoUrl(name);
+    if (!url) {
+      this.choosePoolPhoto(encName);
+      return;
+    }
+    App.PhotoViewer.open(url, name, { onChange: () => this.choosePoolPhoto(encName) });
+  },
+
+  // Pick a photo, shrink it as the phone does, and put it on the pool item
+  // (setPoolItemPhoto).
+  choosePoolPhoto(encName) {
+    const name = decodeURIComponent(encName || '');
+    if (!name) return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.hidden = true;
+    input.addEventListener('change', async () => {
+      const file = input.files && input.files[0];
+      input.remove();
+      if (!file) return;
+      try {
+        await this.savePoolPhoto(name, await App.Utils.resizeImageFile(file, 800));
+      } catch (err) {
+        App.Utils.showToast((err && err.message) || 'Could not read that photo.', true);
+      }
+    });
+    // Inside an open dialog, for the reason App.PhotoViewer is.
+    (document.querySelector('.modal.show') || document.body).appendChild(input);
+    input.click();
+  },
+
+  async savePoolPhoto(name, dataUrl) {
+    const res = await Api.mutate('setPoolItemPhoto', name, dataUrl);
+    if (!res || !res.success) {
+      App.Utils.showToast((res && res.message) || 'The photo was not saved.', true);
+      return;
+    }
+    App.State.poolItemPhotos = App.State.poolItemPhotos || {};
+    App.State.poolItemPhotos[String(res.data.outputItemName).trim().toLowerCase()] = res.data.photoUrl;
+    this.renderWarehousePoolTable();
+    const processId = App.State.warehousePoolModalProcessId;
+    const process = processId && (App.State.globalProcesses || []).find(p => p.processId === processId);
+    const modal = document.getElementById('warehousePoolProcessModal');
+    if (process && modal && modal.classList.contains('show')) this.renderWarehousePoolProcessModalBody(process);
+    App.Utils.showToast(res.message || 'Photo saved.');
   },
 
   // Builds the dynamic <thead> row: one column per active Group-by tier
@@ -1353,7 +1428,10 @@ App.Stock = {
       const outputBadge = process.outputItemName
         ? ` <span class="badge bg-secondary ms-2">${escapeHtml(process.outputItemName)}</span>`
         : '';
-      titleEl.innerHTML = `<i class="bi bi-boxes me-2"></i>Warehouse Pool: ${escapeHtml(process.processName)}${outputBadge}`;
+      const photo = this._poolPhotoHtml(process.outputItemName);
+      titleEl.innerHTML = photo
+        ? `<span class="d-inline-flex align-items-center gap-2">${photo}<span>Warehouse Pool: ${escapeHtml(process.processName)}${outputBadge}</span></span>`
+        : `<i class="bi bi-boxes me-2"></i>Warehouse Pool: ${escapeHtml(process.processName)}${outputBadge}`;
     }
 
     const colCount = showItemName ? 8 : 7;

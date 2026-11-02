@@ -125,12 +125,15 @@ def test_each_row_carries_its_items_photo_address(erp_app, erp_client):
         == f"/erp/item-photo/{item['id']}?v={item['row_version']}"
     )
     assert rows[seat]["canSetPhoto"] is True
+    assert rows[seat]["photoSource"] == "stock"
     # The 16 inch rim's photo never stands in for the 20 inch row.
     assert rows[rim]["photoUrl"] == ""
     assert rows[rim]["canSetPhoto"] is True
-    # A Warehouse Pool row has no Items Master item.
+    # A Warehouse Pool row has no Items Master item: its photo is the pool
+    # item's (test_pool_item_photos.py), and it has none yet.
     assert rows[frame]["photoUrl"] == ""
-    assert rows[frame]["canSetPhoto"] is False
+    assert rows[frame]["canSetPhoto"] is True
+    assert rows[frame]["photoSource"] == "pool"
 
 
 # ── The photo by its own address ────────────────────────────────────────
@@ -215,6 +218,7 @@ def test_an_inspector_adds_a_missing_photo_from_the_checklist(erp_app, erp_clien
         body["data"]["photoUrl"]
         == f"/erp/item-photo/{item['id']}?v={item['row_version']}"
     )
+    assert body["data"]["photoSource"] == "stock"
     assert body["message"] == f"Photo saved for {rim} 20 inch."
     assert _rows(erp_client, lot_id)[rim]["photoUrl"] == body["data"]["photoUrl"]
     # Only that size: the 16 inch rim keeps its own photo.
@@ -239,19 +243,13 @@ def test_changing_a_photo_gives_it_a_new_address(erp_app, erp_client):
 
 
 def test_what_cannot_be_photographed_is_refused(erp_app, erp_client):
-    lot_id, seat, _rim, frame = _setup(erp_app, erp_client)
+    lot_id, seat, _rim, _frame = _setup(erp_app, erp_client)
     rows = _rows(erp_client, lot_id)
 
     def attempt(key, image):
         return _rpc(
             erp_client, "setInspectionItemPhoto", [lot_id, key, image], mutation=True
         ).get_json()
-
-    pool = attempt(rows[frame]["key"], JPEG_URL)
-    assert pool["success"] is False
-    assert pool["message"] == (
-        f"{frame} is not in Items Master, so there is no item to put a photo on."
-    )
 
     gone = attempt("not-on-the-sheet", JPEG_URL)
     assert gone["success"] is False

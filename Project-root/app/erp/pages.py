@@ -300,7 +300,23 @@ def item_photo(item_id):
 
     if getattr(current_user, "role", None) == "pending_approval":
         return Response(status=403)
-    photo = items_service.get_item_photo(item_id)
+    return _photo_response(items_service.get_item_photo(item_id))
+
+
+@erp_bp.route("/erp/pool-photo/<int:photo_id>")
+@login_required
+def pool_photo(photo_id):
+    """One Warehouse Pool item's photo (warehouse_service.get_pool_photo),
+    on item_photo's terms: any signed-in, approved user, kept for good while
+    ?v= matches."""
+    from .services import warehouse_service
+
+    if getattr(current_user, "role", None) == "pending_approval":
+        return Response(status=403)
+    return _photo_response(warehouse_service.get_pool_photo(photo_id))
+
+
+def _photo_response(photo):
     if photo is None:
         return Response(status=404)
     mimetype, payload, version = photo

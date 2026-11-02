@@ -1,9 +1,10 @@
 /**
  * Item photos on the desktop inspection checklist (asked 2026-10-29).
  *
- * A Photo column shows each item's Items Master photo; a click shows it
- * large (App.PhotoViewer, core.js) with "Change photo", and an item without
- * one offers "Add photo". The viewer lives inside the open dialog, so
+ * A Photo column shows each item's photo -- its Items Master item's, or for
+ * a Warehouse Pool row its pool item's (2026-11-02) -- and a click shows it
+ * large (App.PhotoViewer, core.js) with "Change photo"; an item without one
+ * offers "Add photo". The viewer lives inside the open dialog, so
  * Bootstrap's focus trap does not pull focus out of it, and Escape closes
  * the photo without closing the dialog.
  */
@@ -32,7 +33,9 @@ const item = (key, itemName, extra = {}) => ({
 });
 const SEAT = item('seat', 'Maharaja-SEAT', { photoUrl: '/erp/item-photo/12?v=40', canSetPhoto: true });
 const BAG = item('bag', 'BAG-KIT---WHITE', { canSetPhoto: true });
-const FRAME = item('frame', 'Fitted Frame 14 inch Crysta', { size: '' });
+const FRAME = item('frame', 'Fitted Frame 14 inch Crysta', { size: '', photoSource: 'pool', canSetPhoto: true });
+// A row neither Items Master nor the Warehouse Pool knows.
+const LOOSE = item('loose', 'Loose Part', { size: '', photoSource: '' });
 
 function detail(items) {
   return {
@@ -76,18 +79,19 @@ const headers = () => [...document.querySelectorAll('#inspectionDetailBody thead
 const viewer = () => document.querySelector('.photo-viewer-overlay');
 
 describe('the Photo column', () => {
-  test('a thumbnail, Add photo, or nothing for a pool row', async () => {
-    await open([SEAT, BAG, FRAME]);
+  test('a thumbnail, Add photo on an item or a pool row, nothing on a row neither knows', async () => {
+    await open([SEAT, BAG, FRAME, LOOSE]);
     expect(headers()).toEqual(['Ticked', 'Photo', 'Item', 'Size', 'Colour', 'Specification', 'Qty']);
     const img = rowOf('seat').querySelector('img.insp-photo-thumb');
     expect(img.getAttribute('src')).toBe('/erp/item-photo/12?v=40');
     expect(img.getAttribute('loading')).toBe('lazy');
     expect(rowOf('bag').querySelectorAll('td')[1].textContent.trim()).toBe('Add photo');
-    expect(rowOf('frame').querySelectorAll('td')[1].textContent.trim()).toBe('');
+    expect(rowOf('frame').querySelectorAll('td')[1].textContent.trim()).toBe('Add photo');
+    expect(rowOf('loose').querySelectorAll('td')[1].textContent.trim()).toBe('');
   });
 
   test('no column on a sheet with nothing to photograph', async () => {
-    await open([FRAME]);
+    await open([LOOSE]);
     expect(headers()).toEqual(['Ticked', 'Item', 'Size', 'Colour', 'Specification', 'Qty']);
   });
 });
@@ -134,6 +138,20 @@ describe('adding or changing a photo', () => {
     expect(mutations).toEqual([['setInspectionItemPhoto', 7, 'bag', 'data:image/jpeg;base64,NEW']]);
     expect(rowOf('bag').querySelector('img.insp-photo-thumb').getAttribute('src')).toBe('/erp/item-photo/13?v=2');
     expect(App.Utils.showToast).toHaveBeenCalledWith('Photo saved for BAG-KIT---WHITE 20 inch.');
+  });
+
+  test('a pool photo shows on every pool row of the item, any size or colour, and on no Items Master row', async () => {
+    const frameRed = item('frame#red', 'Fitted Frame 14 inch Crysta', { size: '14 inch', color: 'Red', photoSource: 'pool', canSetPhoto: true });
+    const sameNameItem = item('frame-item', 'Fitted Frame 14 inch Crysta', { size: '', photoSource: 'stock', canSetPhoto: true });
+    await open([FRAME, frameRed, sameNameItem], (method, rowIdx, key) => ({
+      success: true, message: 'Photo saved for Fitted Frame 14 inch Crysta, every colour of it.',
+      data: { key, itemName: 'Fitted Frame 14 inch Crysta', size: '', photoSource: 'pool', photoUrl: '/erp/pool-photo/3?v=9' }
+    }));
+    await App.Inspection.savePhoto('frame', 'data:image/jpeg;base64,NEW');
+    ['frame', 'frame#red'].forEach(key => {
+      expect(rowOf(key).querySelector('img.insp-photo-thumb').getAttribute('src')).toBe('/erp/pool-photo/3?v=9');
+    });
+    expect(rowOf('frame-item').querySelector('img')).toBeNull();
   });
 
   test('a refusal is said and nothing changes', async () => {

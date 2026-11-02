@@ -784,6 +784,18 @@ textarea:focus-visible,
   object-fit: cover;
 }
 
+/* No photo yet: a camera to take one (MApp.Pool, a pool item's card). */
+.mb-item-thumb-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+  border-color: var(--mb-steel);
+  background: transparent;
+  color: var(--mb-steel);
+  cursor: pointer;
+}
+
 .mb-item-photo-preview {
   width: 96px;
   height: 96px;

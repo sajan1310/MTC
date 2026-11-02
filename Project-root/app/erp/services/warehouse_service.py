@@ -3225,3 +3225,141 @@ def get_pool_available_qty(output_item_name):
     ):
         entry = _get_pool_available_qty_map(cur).get(target)
     return entry["total"] if entry else 0
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Pool item photos (migration 058)
+# ─────────────────────────────────────────────────────────────────────────
+#
+# One photo per pool item -- a Process's Output Item Name -- for every colour
+# and product tag of it. Seen and set on the Warehouse Pool screens and on an
+# inspection checklist (inspection_service.attach_photos), and served by its
+# own address like an Items Master photo (items_service), at
+# /erp/pool-photo/<id>?v=<row_version>, so it loads only when shown.
+
+
+def pool_photo_url(photo_id, row_version) -> str:
+    return (
+        f"/erp/pool-photo/{int(photo_id)}?v={items_service.photo_version(row_version)}"
+    )
+
+
+def _name_keys(names) -> list:
+    return sorted({str(n or "").strip().lower() for n in names} - {""})
+
+
+def pool_photo_urls(cur, names=None) -> dict:
+    """{item name, lower-cased: photo address} for the pool items that have a
+    photo -- every one, or only those among `names`."""
+    sql = (
+        "SELECT id, lower(output_item_name) AS n, row_version FROM erp.pool_item_photos"
+    )
+    params: tuple = ()
+    if names is not None:
+        keys = _name_keys(names)
+        if not keys:
+            return {}
+        sql += " WHERE lower(output_item_name) = ANY(%s)"
+        params = (keys,)
+    cur.execute(sql, params)
+    return {r["n"]: pool_photo_url(r["id"], r["row_version"]) for r in cur.fetchall()}
+
+
+def pool_item_names(cur, names) -> dict:
+    """{name lower-cased: the name as the pool spells it} for those of
+    `names` that are pool items: a live Process's Output Item, or a name a
+    bucket holds."""
+    keys = _name_keys(names)
+    if not keys:
+        return {}
+    cur.execute(
+        """
+        SELECT output_item_name FROM erp.warehouse_pool
+         WHERE lower(output_item_name) = ANY(%s)
+        UNION ALL
+        SELECT output_item_name FROM erp.process_master
+         WHERE deleted_at IS NULL AND lower(output_item_name) = ANY(%s)
+        """,
+        (keys, keys),
+    )
+    found: dict = {}
+    for row in cur.fetchall():
+        name = str(row["output_item_name"] or "").strip()
+        if name:
+            found.setdefault(name.lower(), name)
+    return found
+
+
+def save_pool_photo(cur, output_item_name, image) -> dict:
+    """Puts `image` on the pool item `output_item_name`, in place of any photo
+    it had: {"outputItemName", "photoUrl"}. The caller has checked that the
+    name is a pool item and that the user may do this."""
+    image = items_service.check_servable_photo(image)
+    name = str(output_item_name or "").strip()
+    if not name:
+        raise ValueError("Output Item Name is required.")
+    cur.execute(
+        """
+        INSERT INTO erp.pool_item_photos (output_item_name, image, updated_by)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (lower(output_item_name))
+        DO UPDATE SET image = EXCLUDED.image, updated_by = EXCLUDED.updated_by
+        RETURNING id, output_item_name, row_version
+        """,
+        (name, image, get_current_user_id()),
+    )
+    row = cur.fetchone()
+    return {
+        "outputItemName": row["output_item_name"],
+        "photoUrl": pool_photo_url(row["id"], row["row_version"]),
+    }
+
+
+def get_pool_photo(photo_id: int):
+    """(mimetype, bytes, version) for a pool item's photo, or None when there
+    is no such photo or it is not a raster image."""
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
+        cur.execute(
+            "SELECT image, row_version FROM erp.pool_item_photos WHERE id = %s",
+            (photo_id,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    decoded = items_service.decode_photo(row["image"])
+    if decoded is None:
+        return None
+    return decoded[0], decoded[1], items_service.photo_version(row["row_version"])
+
+
+@rpc_method("getPoolItemPhotos")
+def get_pool_item_photos():
+    """{item name, lower-cased: photo address} for every pool item with a
+    photo. The Warehouse Pool screens look a row up by its Output Item Name;
+    a Process with no bucket yet still finds its photo."""
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
+        return build_response(True, pool_photo_urls(cur))
+
+
+@rpc_method("setPoolItemPhoto", mutation=True)
+@database.transactional
+def set_pool_item_photo(conn, cur, output_item_name, image):
+    """Adds or changes a pool item's photo from the Warehouse Pool screens.
+    It is the item's photo everywhere: every colour of it, and every
+    inspection checklist row that uses it."""
+    name = pool_item_names(cur, [output_item_name]).get(
+        str(output_item_name or "").strip().lower()
+    )
+    if name is None:
+        raise ValueError(
+            f"{str(output_item_name or '').strip() or 'That item'} is not an "
+            "Output Item of any Process, so it is not a Warehouse Pool item."
+        )
+    saved = save_pool_photo(cur, name, image)
+    return build_response(True, saved, f"Photo saved for {saved['outputItemName']}.")

@@ -1,8 +1,9 @@
 /**
  * Item photos on the phone/tablet inspection checklist (asked 2026-10-29).
  *
- * Each row shows its Items Master photo beside the box; a tap shows it full
- * screen with "Change photo", and a row whose item has no photo shows a
+ * Each row shows its item's photo beside the box -- its Items Master item's,
+ * or for a Warehouse Pool row its pool item's (2026-11-02); a tap shows it
+ * full screen with "Change photo", and a row whose item has no photo shows a
  * camera to add one. The row is the box's label, so a tap on the photo must
  * never tick the item. A sheet with nothing to photograph looks as before.
  */
@@ -67,7 +68,9 @@ function checklist(items) {
 
 const SEAT = item('seat', 'Maharaja-SEAT', { photoUrl: '/erp/item-photo/12?v=40', canSetPhoto: true });
 const BAG = item('bag', 'BAG-KIT---WHITE', { canSetPhoto: true });
-const FRAME = item('frame', 'Fitted Frame 14 inch Crysta', { size: '' });
+const FRAME = item('frame', 'Fitted Frame 14 inch Crysta', { size: '', photoSource: 'pool', canSetPhoto: true });
+// A row neither Items Master nor the Warehouse Pool knows.
+const LOOSE = item('loose', 'Loose Part', { size: '', photoSource: '' });
 
 const body = () => document.getElementById('inspection-body');
 const rowOf = key => [...body().querySelectorAll('[data-insp-row]')].find(r => r.dataset.inspRow === key);
@@ -81,20 +84,22 @@ async function open(items) {
 describe('photos on the checklist', () => {
   beforeEach(mount);
 
-  test('a photo beside its item, a camera where the item has none, an empty slot for a pool row', async () => {
-    await open([SEAT, BAG, FRAME]);
+  test('a photo beside its item, a camera where an item or a pool row has none, an empty slot for a row neither knows', async () => {
+    await open([SEAT, BAG, FRAME, LOOSE]);
     expect(body().querySelector('.mb-insp-list').classList.contains('mb-insp-with-photos')).toBe(true);
     const img = rowOf('seat').querySelector('.mb-insp-photo img');
     expect(img.getAttribute('src')).toBe('/erp/item-photo/12?v=40');
     expect(img.getAttribute('loading')).toBe('lazy');
     expect(rowOf('bag').querySelector('.mb-insp-photo-add').getAttribute('aria-label'))
       .toBe('Add a photo of BAG-KIT---WHITE · 20 inch');
-    expect(rowOf('frame').querySelector('.mb-insp-photo-none')).not.toBeNull();
+    expect(rowOf('frame').querySelector('.mb-insp-photo-add').getAttribute('aria-label'))
+      .toBe('Add a photo of Fitted Frame 14 inch Crysta');
+    expect(rowOf('loose').querySelector('.mb-insp-photo-none')).not.toBeNull();
     expect(body().querySelector('.mb-insp-thead').textContent).toContain('Photo');
   });
 
   test('a sheet with nothing to photograph looks as it did', async () => {
-    await open([FRAME]);
+    await open([LOOSE]);
     expect(body().querySelector('.mb-insp-photo')).toBeNull();
     expect(body().querySelector('.mb-insp-list').classList.contains('mb-insp-with-photos')).toBe(false);
     expect(body().querySelector('.mb-insp-thead').textContent).not.toContain('Photo');
@@ -153,6 +158,21 @@ describe('adding or changing a photo', () => {
     ['seat', 'seat#2'].forEach(key => {
       expect(rowOf(key).querySelector('.mb-insp-photo img').getAttribute('src')).toBe('/erp/item-photo/12?v=41');
     });
+  });
+
+  test('a pool photo shows on every pool row of the item, any size or colour, and on no Items Master row', async () => {
+    const frameRed = item('frame#red', 'Fitted Frame 14 inch Crysta', { size: '14 inch', color: 'Red', photoSource: 'pool', canSetPhoto: true });
+    const sameNameItem = item('frame-item', 'Fitted Frame 14 inch Crysta', { size: '', photoSource: 'stock', canSetPhoto: true });
+    await open([FRAME, frameRed, sameNameItem]);
+    MApp.Api.mutate = jest.fn(async () => ({
+      success: true, message: 'Photo saved for Fitted Frame 14 inch Crysta, every colour of it.',
+      data: { key: 'frame', itemName: 'Fitted Frame 14 inch Crysta', size: '', photoSource: 'pool', photoUrl: '/erp/pool-photo/3?v=9' }
+    }));
+    await MApp.Inspection.savePhoto('frame', 'data:image/jpeg;base64,NEW');
+    ['frame', 'frame#red'].forEach(key => {
+      expect(rowOf(key).querySelector('.mb-insp-photo img').getAttribute('src')).toBe('/erp/pool-photo/3?v=9');
+    });
+    expect(rowOf('frame-item').querySelector('.mb-insp-photo img')).toBeNull();
   });
 
   test('Change photo in the viewer starts the same choice', async () => {
