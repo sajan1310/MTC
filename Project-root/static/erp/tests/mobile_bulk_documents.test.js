@@ -402,6 +402,8 @@ describe('sharing a long stack', () => {
     navigator.share = jest.fn(async () => {});
   });
 
+  // serveBatch is a server from before the joined PDF: it sends only the
+  // documents, and the stack goes in tens as it always did.
   test('goes ten files at a time, each ten after the first on a tap of its own', async () => {
     MApp.Picker.open = jest.fn(async ({ items }) => items[0]);
     await choose(() => MApp.PO.printMany(many(23)), 'share');
@@ -410,6 +412,83 @@ describe('sharing a long stack', () => {
     expect(MApp.Picker.open).toHaveBeenCalledTimes(2);
     expect(MApp.Picker.open.mock.calls[0][0].items[0].label).toBe('Share 10 PDFs (11–20 of 23)');
     expect(MApp.Picker.open.mock.calls[1][0].items[0].label).toBe('Share 3 PDFs (21–23 of 23)');
+  });
+
+  describe('from a server that joins them into one PDF', () => {
+    // render_batch: with combineAs, every document joined, as one entry
+    // more, last.
+    beforeEach(() => {
+      requests = [];
+      global.fetch = jest.fn(async (url, init) => {
+        const body = JSON.parse(init.body);
+        requests.push({ url, body });
+        const entries = body.documents.map(d => [d.filename, `%PDF-${d.filename}`]);
+        if (body.combineAs) entries.push([body.combineAs, '%PDF-joined']);
+        return { ok: true, status: 200, blob: async () => storeZip(entries) };
+      });
+    });
+
+    const zipStem = () => MApp.Print.bulkZipName('PO').replace(/\.zip$/, '');
+
+    test('past ten, the operator picks one PDF, and the pick opens the share sheet on it', async () => {
+      MApp.Picker.open = jest.fn(async ({ items }) => items.find(i => i.value === 'one'));
+      await choose(() => MApp.PO.printMany(many(23)), 'share');
+
+      expect(requests[0].body.combineAs).toBe(`${zipStem()}_All_23.pdf`);
+      const pick = MApp.Picker.open.mock.calls[0][0];
+      expect(pick.title).toBe('23 PDFs ready');
+      expect(pick.items.map(i => i.label)).toEqual(['Share as one PDF', 'Share 10 at a time']);
+      expect(pick.items[1].sublabel).toContain('3 shares');
+
+      // One share, on the pick's own tap: no "Ready to share" after it.
+      expect(MApp.Picker.open).toHaveBeenCalledTimes(1);
+      expect(navigator.share).toHaveBeenCalledTimes(1);
+      expect(navigator.share.mock.calls[0][0].files.map(f => f.name)).toEqual([`${zipStem()}_All_23.pdf`]);
+    });
+
+    test('or ten at a time, the first ten on the pick\'s own tap', async () => {
+      MApp.Picker.open = jest.fn(async ({ items }) => items.find(i => i.value === 'tens') || items[0]);
+      await choose(() => MApp.PO.printMany(many(23)), 'share');
+
+      expect(navigator.share.mock.calls.map(c => c[0].files.length)).toEqual([10, 10, 3]);
+      // The pick, then one tap for each later ten -- the joined file not among them.
+      expect(MApp.Picker.open).toHaveBeenCalledTimes(3);
+      const shared = navigator.share.mock.calls.flatMap(c => c[0].files.map(f => f.name));
+      expect(shared).not.toContain(`${zipStem()}_All_23.pdf`);
+      expect(shared).toHaveLength(23);
+    });
+
+    test('dismissing the pick shares nothing', async () => {
+      MApp.Picker.open = jest.fn(async () => null);
+      await choose(() => MApp.PO.printMany(many(12)), 'share');
+      expect(navigator.share).not.toHaveBeenCalled();
+    });
+
+    test('ten or fewer ask for no joined file, and share in one go', async () => {
+      MApp.Picker.open = jest.fn(async ({ items }) => items[0]);
+      await choose(() => MApp.PO.printMany(many(10)), 'share');
+      expect(requests[0].body).not.toHaveProperty('combineAs');
+      expect(MApp.Picker.open).not.toHaveBeenCalled();
+      expect(navigator.share.mock.calls.map(c => c[0].files.length)).toEqual([10]);
+    });
+  });
+
+  test('sharing the same stack again renders nothing new, so nothing waits on the server', async () => {
+    MApp.Picker.open = jest.fn(async ({ items }) => items[0]);
+    await choose(() => MApp.PO.printMany(POS), 'share');
+    await choose(() => MApp.PO.printMany(POS), 'share');
+    expect(requests).toHaveLength(1);
+    expect(navigator.share).toHaveBeenCalledTimes(2);
+    expect(navigator.share.mock.calls[1][0].files.map(f => f.name))
+      .toEqual(navigator.share.mock.calls[0][0].files.map(f => f.name));
+  });
+
+  test('a record changed since is rendered fresh', async () => {
+    MApp.Picker.open = jest.fn(async ({ items }) => items[0]);
+    await choose(() => MApp.PO.printMany(POS), 'share');
+    const edited = POS.map((po, i) => (i === 0 ? { ...po, poNumber: '9999' } : po));
+    await choose(() => MApp.PO.printMany(edited), 'share');
+    expect(requests).toHaveLength(2);
   });
 
   test('stops when the operator declines the next batch', async () => {

@@ -2527,12 +2527,51 @@ MApp.Print = {
     }
   },
 
+  // A file this page was already sent comes from memory: desktop's
+  // App.Print render cache, for the same reason. A share sheet opens only
+  // within about five seconds of a tap and a stack of sheets takes the
+  // server longer, so the first Share asks for a second tap ("Ready to
+  // share"); sharing the same stack again, or after Download PDFs, needs
+  // none. Keyed by the whole request, HTML included, so never stale.
+  RENDER_CACHE_MAX_ENTRIES: 8,
+  RENDER_CACHE_MAX_BYTES: 16 * 1024 * 1024,
+  _renderCache: new Map(),
+
+  _renderCacheBytes(key, blob) {
+    return key.length * 2 + ((blob && blob.size) || 0);
+  },
+
+  _cachedRender(key) {
+    const blob = this._renderCache.get(key);
+    if (!blob) return null;
+    this._renderCache.delete(key);
+    this._renderCache.set(key, blob);
+    return blob;
+  },
+
+  _rememberRender(key, blob) {
+    if (this._renderCacheBytes(key, blob) > this.RENDER_CACHE_MAX_BYTES / 2) return;
+    this._renderCache.set(key, blob);
+    let total = 0;
+    this._renderCache.forEach((b, k) => { total += this._renderCacheBytes(k, b); });
+    for (const [k, b] of this._renderCache) {
+      if (this._renderCache.size <= this.RENDER_CACHE_MAX_ENTRIES &&
+          total <= this.RENDER_CACHE_MAX_BYTES) break;
+      total -= this._renderCacheBytes(k, b);
+      this._renderCache.delete(k);
+    }
+  },
+
   // Same status taxonomy as desktop's App.Print._postForBlob: which of
   // these five happened decides what the operator is told, and "could not
   // reach the renderer" covers four situations that need different
   // answers.
   async _postForBlob(body, url = '/erp/render-pdf') {
     this.lastPdfMessage = null;
+    const payload = JSON.stringify(body);
+    const cacheKey = `${url}\n${payload}`;
+    const cached = this._cachedRender(cacheKey);
+    if (cached) { this.lastPdfError = null; return cached; }
     if (this.serverPdfAvailable === false) return null;
 
     const controller = typeof AbortController === 'function' ? new AbortController() : null;
@@ -2542,7 +2581,7 @@ MApp.Print = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': this._csrfToken() },
         credentials: 'same-origin',
-        body: JSON.stringify(body),
+        body: payload,
         signal: controller ? controller.signal : undefined
       }));
     } catch (err) {
@@ -2582,6 +2621,7 @@ MApp.Print = {
     }
     if (blob === this.TIMED_OUT) { this.lastPdfError = 'cut-off'; return null; }
     this.lastPdfError = null;
+    this._rememberRender(cacheKey, blob);
     return blob;
   },
 
@@ -2737,13 +2777,18 @@ MApp.Print = {
   //
   // `documents` is [{ filename, html, landscape }] -- the html already in
   // the self-contained form _pdfFor sends, one document per entry.
-  async _renderMany(documents, zipName) {
+  //
+  // `combineAs` also asks for every document joined into one PDF of that
+  // name, which comes back as one entry more, last (render_batch).
+  async _renderMany(documents, zipName, combineAs = null) {
     const sized = documents.map(doc => ({
       ...doc,
       landscape: doc.landscape === true,
       density: doc.density || this.fitDensityFor(doc.html)
     }));
-    const blob = await this._postForBlob({ documents: sized, zipName }, '/erp/render-pdf-batch');
+    const body = { documents: sized, zipName };
+    if (combineAs) body.combineAs = combineAs;
+    const blob = await this._postForBlob(body, '/erp/render-pdf-batch');
     if (!blob) { this.reportPdfUnavailable(); return null; }
     const files = await this.unzip(blob);
     if (!files.length) {
@@ -2764,17 +2809,54 @@ MApp.Print = {
   },
 
   // Chrome turns down a share of more than ten files, so a longer stack
-  // goes in tens.
+  // goes either as one joined PDF or in tens -- the operator picks.
   SHARE_MAX_FILES: 10,
+
+  // Desktop's App.Print.combinedShareName: "PRD_261102_All_25.pdf".
+  combinedShareName(title, count) {
+    return `${title}_All_${count}.pdf`;
+  },
 
   async shareMany(documents, zipName) {
     if (!documents || !documents.length) return false;
     MApp.Toast.show(`Preparing ${documents.length} PDF${documents.length === 1 ? '' : 's'}…`);
-    const rendered = await this._renderMany(documents, zipName);
+    const title = String(zipName || '').replace(/\.zip$/i, '') || 'Documents';
+    // More than one share can carry: the server joins them into one PDF as
+    // well, in the same render, so either way out is ready on one tap.
+    const overLimit = documents.length > this.SHARE_MAX_FILES;
+    const rendered = await this._renderMany(documents, zipName,
+      overLimit ? this.combinedShareName(title, documents.length) : null);
     if (!rendered) return false;
 
-    const files = rendered.map(f => new File([f.blob], f.name, { type: 'application/pdf' }));
-    const title = String(zipName || '').replace(/\.zip$/i, '') || 'Documents';
+    const asFile = f => new File([f.blob], f.name, { type: 'application/pdf' });
+    // One entry more than was sent is the joined PDF; a server from before
+    // it sends none, and the stack goes in tens as it always did.
+    const combined = overLimit && rendered.length === documents.length + 1
+      ? asFile(rendered.pop())
+      : null;
+    const files = rendered.map(asFile);
+
+    if (combined) {
+      // The pick is a fresh tap, so the share sheet opens on it either way.
+      const rounds = Math.ceil(files.length / this.SHARE_MAX_FILES);
+      const picked = await MApp.Picker.open({
+        title: `${files.length} PDFs ready`,
+        searchable: false,
+        items: [
+          { value: 'one', label: 'Share as one PDF', sublabel: `All ${files.length} in ${combined.name}` },
+          {
+            value: 'tens',
+            label: `Share ${this.SHARE_MAX_FILES} at a time`,
+            sublabel: `Separate files, in ${rounds} shares — one share carries ${this.SHARE_MAX_FILES} at most`
+          }
+        ]
+      });
+      if (!picked) return false;
+      if (picked.value === 'one') {
+        return (await this._shareFiles([combined], title, false, `Share ${combined.name}`)) === 'shared';
+      }
+    }
+
     const batches = [];
     for (let i = 0; i < files.length; i += this.SHARE_MAX_FILES) {
       batches.push(files.slice(i, i + this.SHARE_MAX_FILES));

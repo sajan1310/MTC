@@ -607,9 +607,60 @@ App.Print = {
     return Promise.race([settled, limit]).finally(() => clearTimeout(timer));
   },
 
+  // ── A file made once is not made again ───────────────────────
+  //
+  // The same request is answered with the same file, so this tab keeps the
+  // last few it was sent. It matters most to Share: a share sheet opens only
+  // within about five seconds of a click, and the server takes longer than
+  // that over a stack of sheets -- so the first Share of seven sheets has to
+  // ask for a second click ("Ready to share"). Shared again, to another chat,
+  // or after Download PDFs of the same selection, the files are already here
+  // and the sheet opens on the first click.
+  //
+  // Keyed by the whole request, which carries the document's HTML: a record
+  // edited since is a different request and is rendered fresh, so nothing
+  // here can be stale. Only replies that were files are kept.
+  RENDER_CACHE_MAX_ENTRIES: 8,
+  RENDER_CACHE_MAX_BYTES: 24 * 1024 * 1024,
+  _renderCache: new Map(),
+
+  // UTF-16: the key string's own size counts against the cap too.
+  _renderCacheBytes(key, blob) {
+    return key.length * 2 + ((blob && blob.size) || 0);
+  },
+
+  _cachedRender(key) {
+    const blob = this._renderCache.get(key);
+    if (!blob) return null;
+    // Most recently used goes last, so the oldest is what makes room.
+    this._renderCache.delete(key);
+    this._renderCache.set(key, blob);
+    return blob;
+  },
+
+  _rememberRender(key, blob) {
+    if (this._renderCacheBytes(key, blob) > this.RENDER_CACHE_MAX_BYTES / 2) return;
+    this._renderCache.set(key, blob);
+    let total = 0;
+    this._renderCache.forEach((b, k) => { total += this._renderCacheBytes(k, b); });
+    for (const [k, b] of this._renderCache) {
+      if (this._renderCache.size <= this.RENDER_CACHE_MAX_ENTRIES &&
+          total <= this.RENDER_CACHE_MAX_BYTES) break;
+      total -= this._renderCacheBytes(k, b);
+      this._renderCache.delete(k);
+    }
+  },
+
   // POSTs `body` and returns a Blob, or null when this server cannot render.
   async _postForBlob(url, body) {
     this.lastDownloadMessage = null;
+    const payload = JSON.stringify(body);
+    const cacheKey = `${url}\n${payload}`;
+    const cached = this._cachedRender(cacheKey);
+    if (cached) {
+      this.lastDownloadError = null;
+      return cached;
+    }
     if (this.serverPdfAvailable === false) return null;
 
     const controller = typeof AbortController === 'function' ? new AbortController() : null;
@@ -620,7 +671,7 @@ App.Print = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': this._csrfToken() },
         credentials: 'same-origin',
-        body: JSON.stringify(body),
+        body: payload,
         signal: controller ? controller.signal : undefined
       }));
     } catch (err) {
@@ -710,6 +761,7 @@ App.Print = {
       return null;
     }
     this.lastDownloadError = null;
+    this._rememberRender(cacheKey, blob);
     return blob;
   },
 
@@ -922,7 +974,10 @@ App.Print = {
 
   // The batch render behind downloadMany and shareMany: [{ name, blob }] per
   // document, or null once the reader has been told why not.
-  async _renderMany(documents, zipName, buttonId) {
+  //
+  // `combineAs` also asks for every document joined into one PDF of that
+  // name, which comes back as one entry more, last (render_batch).
+  async _renderMany(documents, zipName, buttonId, combineAs = null) {
     // Per document, not per batch: a 40-challan export is uniform, but an
     // export mixing a 6-column challan with a 16-column pivot is not, and
     // shrinking the challan to match the pivot would be wrong.
@@ -930,9 +985,11 @@ App.Print = {
       density: doc.density || this.fitDensityFor(doc.html)
     }));
 
+    const body = { documents: sized, zipName };
+    if (combineAs) body.combineAs = combineAs;
     const blob = await this._whileBusy(
       buttonId, `Preparing ${documents.length}…`, () =>
-        this._postForBlob(this.SERVER_PDF_BATCH_URL, { documents: sized, zipName })
+        this._postForBlob(this.SERVER_PDF_BATCH_URL, body)
     );
 
     if (!blob) {
@@ -957,9 +1014,16 @@ App.Print = {
   // browsers that support it, so a Share button that cannot share says
   // which of the two stopped it rather than doing nothing.
 
-  // Chrome refuses a share of more than ten files, so a longer selection
-  // goes in tens.
+  // Chrome refuses a share of more than ten files (on Windows and Android
+  // alike), so a longer selection goes either as one joined PDF or in tens --
+  // the reader picks.
   SHARE_MAX_FILES: 10,
+
+  // The joined PDF's name: the batch's own, and how many it holds --
+  // "PRD_261102_All_25.pdf".
+  combinedShareName(title, count) {
+    return `${title}_All_${count}.pdf`;
+  },
 
   // Probed with a real File: canShare({ files }) is the only reliable test --
   // navigator.share exists in browsers that cannot take files at all.
@@ -1029,11 +1093,47 @@ App.Print = {
       return false;
     }
 
-    const rendered = await this._renderMany(documents, zipName, buttonId);
+    const title = String(zipName || '').replace(/\.zip$/i, '') || 'Documents';
+    // More than one share can carry: the server joins them into one PDF as
+    // well, in the same render, so either way out is ready on one click.
+    const overLimit = documents.length > this.SHARE_MAX_FILES;
+    const rendered = await this._renderMany(documents, zipName, buttonId,
+      overLimit ? this.combinedShareName(title, documents.length) : null);
     if (!rendered) return false;
 
-    const files = rendered.map(f => new File([f.blob], f.name, { type: 'application/pdf' }));
-    const title = String(zipName || '').replace(/\.zip$/i, '') || 'Documents';
+    const asFile = f => new File([f.blob], f.name, { type: 'application/pdf' });
+    // One entry more than was sent is the joined PDF. A server from before
+    // it sends none, and the selection goes in tens as it always did.
+    const combined = overLimit && rendered.length === documents.length + 1
+      ? asFile(rendered.pop())
+      : null;
+    const files = rendered.map(asFile);
+
+    if (combined) {
+      // The choice is a fresh click, so whichever way is picked, the share
+      // sheet opens on it -- no "Ready to share" after it.
+      const rounds = Math.ceil(files.length / this.SHARE_MAX_FILES);
+      const picked = await this._askShare({
+        title: `${files.length} PDFs ready`,
+        note: `A share can carry ${this.SHARE_MAX_FILES} files at most. Send all ` +
+          `${files.length} as one PDF, or as separate files in ${rounds} shares.`,
+        names: files.map(f => f.name),
+        choices: [
+          { value: 'one', label: 'Share as one PDF', icon: 'bi-file-earmark-pdf' },
+          { value: 'tens', label: `Share ${this.SHARE_MAX_FILES} at a time`, icon: 'bi-files' }
+        ]
+      });
+      if (!picked) return false;
+      if (picked === 'one') {
+        return (await this._shareFiles([combined], title, false, `Share ${combined.name}`)) === 'shared';
+      }
+    }
+    return this._shareInTens(files, title);
+  },
+
+  // Ten files a share, each ten after the first on a click of its own: one
+  // share sheet uses its click up.
+  async _shareInTens(files, title) {
     for (let i = 0; i < files.length; i += this.SHARE_MAX_FILES) {
       const batch = files.slice(i, i + this.SHARE_MAX_FILES);
       const range = files.length > this.SHARE_MAX_FILES
@@ -1081,8 +1181,18 @@ App.Print = {
   // button is pressed -- the fresh click the share sheet needs -- and false
   // when it is dismissed.
   async _askToShare(label, names) {
+    return (await this._askShare({
+      names, choices: [{ value: 'share', label, icon: 'bi-share' }]
+    })) === 'share';
+  },
+
+  // The dialog itself. Resolves with the `value` of the choice pressed, or
+  // null when it is dismissed. One choice is "share these"; two are a
+  // decision -- more than ten documents: one PDF, or ten at a time -- the
+  // first on the dark button. Either press is a fresh click.
+  async _askShare({ title = 'Ready to share', note = '', names = [], choices = [] }) {
     const el = document.getElementById('shareReadyModal');
-    if (!el || typeof bootstrap === 'undefined') return false;
+    if (!el || typeof bootstrap === 'undefined' || !choices.length) return null;
 
     // Still fading out after the previous batch: Bootstrap ignores show()
     // mid-transition, and the next hidden event would read as a dismissal.
@@ -1090,9 +1200,20 @@ App.Print = {
       await new Promise(done => el.addEventListener('hidden.bs.modal', done, { once: true }));
     }
 
+    const heading = document.getElementById('shareReadyTitle');
+    if (heading) heading.textContent = title;
+    const noteEl = document.getElementById('shareReadyNote');
+    if (noteEl) {
+      noteEl.textContent = note;
+      noteEl.classList.toggle('d-none', !note);
+    }
     const list = document.getElementById('shareReadyFiles');
     if (list) list.innerHTML = names.map(n => `<li>${escapeHtml(n)}</li>`).join('');
-    const btn = document.getElementById('shareReadyBtn');
+    // Markup from before the second button offers the first choice alone.
+    const buttons = [
+      document.getElementById('shareReadyBtn'),
+      document.getElementById('shareReadyAltBtn')
+    ];
 
     return new Promise(resolve => {
       let answered = false;
@@ -1101,14 +1222,19 @@ App.Print = {
         answered = true;
         resolve(value);
       };
-      if (btn) {
-        btn.innerHTML = `<i class="bi bi-share me-1"></i>${escapeHtml(label)}`;
+      buttons.forEach((btn, i) => {
+        if (!btn) return;
+        const choice = choices[i];
+        btn.classList.toggle('d-none', !choice);
+        btn.onclick = null;
+        if (!choice) return;
+        btn.innerHTML = `<i class="bi ${choice.icon || 'bi-share'} me-1"></i>${escapeHtml(choice.label)}`;
         btn.onclick = () => {
-          answer(true);
+          answer(choice.value);
           bootstrap.Modal.getInstance(el)?.hide();
         };
-      }
-      el.addEventListener('hidden.bs.modal', () => answer(false), { once: true });
+      });
+      el.addEventListener('hidden.bs.modal', () => answer(null), { once: true });
       bootstrap.Modal.getOrCreateInstance(el).show();
     });
   },
