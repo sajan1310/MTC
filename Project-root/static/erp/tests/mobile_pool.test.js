@@ -33,6 +33,14 @@ function loadAsGlobal(relPath, exportName) {
 
 const MOBILE_JS = fs.readFileSync(path.join(__dirname, '..', 'mobile.js'), 'utf8');
 
+// MApp.Pool.open() navigates and returns nothing, so it cannot be awaited
+// for the load it starts; a macrotask lets that load (two calls, the
+// buckets and their photos) finish and render.
+async function openPool() {
+  MApp.Pool.open();
+  await new Promise(resolve => setTimeout(resolve, 0));
+}
+
 // Modelled on the real shape: a composite bucket that produced, a bare
 // bucket whose colour is one segment of it (the attribution case), and a
 // bucket that genuinely went negative after real movement in both
@@ -103,7 +111,7 @@ describe('MApp.Pool classification', () => {
   });
 
   test('names the sibling buckets whose colour contains this one', async () => {
-    await MApp.Pool.open();
+    await openPool();
 
     expect(MApp.Pool.siblings(ROWS[1])).toEqual(['Purple-Wine / Black']);
     // A genuine negative has no sibling to point at.
@@ -118,7 +126,7 @@ describe('MApp.Pool classification', () => {
         { outputItemName: 'Frame 26', color: 'Black', producedQty: 0, consumedQty: 25, availableQty: -25 },
       ],
     }));
-    await MApp.Pool.open();
+    await openPool();
 
     // Both are bare; neither can be where the units went.
     expect(MApp.Pool.siblings(MApp.Pool.rows[1])).toEqual([]);
@@ -154,7 +162,7 @@ describe('MApp.Pool screen', () => {
   const list = () => document.getElementById('pool-list').textContent;
 
   test('summarises the negatives by kind, not just by count', async () => {
-    await MApp.Pool.open();
+    await openPool();
 
     expect(list()).toContain('2 negative buckets');
     expect(list()).toContain('1 look like attribution');
@@ -162,7 +170,7 @@ describe('MApp.Pool screen', () => {
   });
 
   test('an attribution bucket says where the units probably are', async () => {
-    await MApp.Pool.open();
+    await openPool();
 
     expect(list()).toContain('Never produced in this colour');
     expect(list()).toContain('Likely belongs to: Purple-Wine / Black');
@@ -170,7 +178,7 @@ describe('MApp.Pool screen', () => {
   });
 
   test('a genuine negative says a count may be owed', async () => {
-    await MApp.Pool.open();
+    await openPool();
     expect(list()).toContain('may need a physical count');
   });
 
@@ -179,13 +187,13 @@ describe('MApp.Pool screen', () => {
       success: true,
       data: [{ outputItemName: 'Frame 26', color: 'Teal', producedQty: 0, consumedQty: 4, availableQty: -4 }],
     }));
-    await MApp.Pool.open();
+    await openPool();
 
     expect(list()).toContain('No sibling bucket carries this colour');
   });
 
   test('the filters isolate each kind', async () => {
-    await MApp.Pool.open();
+    await openPool();
 
     MApp.Pool.filterBy('attribution');
     expect(MApp.Pool.filtered.map(r => r.rowIdx)).toEqual([2]);
@@ -201,7 +209,7 @@ describe('MApp.Pool screen', () => {
   });
 
   test('search composes with the filter', async () => {
-    await MApp.Pool.open();
+    await openPool();
     MApp.Pool.filterBy('negative');
     MApp.Pool.onSearch('fork');
 
@@ -212,7 +220,7 @@ describe('MApp.Pool screen', () => {
     // Api.call is variadic: passing these as one array yields HTTP 200,
     // success true and a silently EMPTY ledger. The server's own
     // docstring calls that trap out.
-    await MApp.Pool.open();
+    await openPool();
     MApp.Api.call = jest.fn(async () => ({ success: true, data: [] }));
 
     await MApp.Pool.openLedger(ROWS[1]);
@@ -223,7 +231,7 @@ describe('MApp.Pool screen', () => {
   });
 
   test('the ledger renders movements with the running balance', async () => {
-    await MApp.Pool.open();
+    await openPool();
     MApp.Api.call = jest.fn(async () => ({
       success: true,
       data: [
@@ -243,7 +251,7 @@ describe('MApp.Pool screen', () => {
 
   test('a failed load offers a retry rather than an empty list', async () => {
     MApp.Api.call = jest.fn(async () => { throw new Error('offline'); });
-    await MApp.Pool.open();
+    await openPool();
 
     expect(document.querySelector('#pool-list .mb-state-retry')).not.toBeNull();
   });

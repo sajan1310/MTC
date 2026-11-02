@@ -255,10 +255,12 @@ App.Inspection = {
   },
 
   // ── Item photos ───────────────────────────────────────────────────────
-  // Each row shows its Items Master photo (photoUrl, loaded only when the
-  // row is shown); a click shows it large, with "Change photo". An item
-  // with none offers "Add photo". A Warehouse Pool row has no Items Master
-  // item, so no photo. The column appears when any row has either.
+  // Each row shows its item's photo (photoUrl, loaded only when the row is
+  // shown); a click shows it large, with "Change photo". An item with none
+  // offers "Add photo". A Warehouse Pool row's photo is its pool item's
+  // (photoSource "pool": one per item name, every colour of it, the one the
+  // Warehouse Pool shows), so every pool row offers one; any other row's is
+  // its Items Master item's. The column appears when any row has either.
   _withPhotos() {
     const d = this._current;
     return !!(d && d.items.some(i => i.photoUrl || i.canSetPhoto));
@@ -290,8 +292,8 @@ App.Inspection = {
   },
 
   // Pick a photo, shrink it as the phone does, and put it on the row's
-  // Items Master item (setInspectionItemPhoto -- the inspector need not be
-  // able to edit Items Master for this).
+  // item (setInspectionItemPhoto -- the inspector need not be able to edit
+  // Items Master or the Warehouse Pool for this).
   choosePhoto(key) {
     const item = this._current && this._current.items.find(i => i.key === key);
     if (!item || !item.canSetPhoto) return;
@@ -322,10 +324,14 @@ App.Inspection = {
       App.Utils.showToast((res && res.message) || 'The photo was not saved.', true);
       return;
     }
-    // The photo is the item's: every row of the same item and size shows it.
+    // The photo is the item's: every row of the same item shows it -- of
+    // the same size for an Items Master item, of any size or colour for a
+    // pool item.
     const lower = s => String(s || '').toLowerCase();
+    const pool = res.data.photoSource === 'pool';
     d.items
-      .filter(i => lower(i.itemName) === lower(res.data.itemName) && lower(i.size) === lower(res.data.size))
+      .filter(i => lower(i.itemName) === lower(res.data.itemName)
+        && (pool ? i.photoSource === 'pool' : i.photoSource !== 'pool' && lower(i.size) === lower(res.data.size)))
       .forEach(i => {
         i.photoUrl = res.data.photoUrl;
         if (this._current === d) this._repaintRow(i);

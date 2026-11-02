@@ -533,7 +533,10 @@
 // spools in moments; Share past ten files offers one joined PDF, and a file
 // already made is shared without rendering it again. styles.css and print.js
 // are precached.
-const CACHE_NAME = 'erp-shell-v108';
+// v109: every Warehouse Pool row of an inspection checklist can take a photo,
+// and the Warehouse Pool shows and sets the same photo. inspection.js,
+// stock.js and styles.css are precached.
+const CACHE_NAME = 'erp-shell-v109';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
