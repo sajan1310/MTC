@@ -4224,9 +4224,22 @@
 
   @media print {
 
-    /* Reset body for printing */
+    /* Reset body for printing.
+
+       `background`, the shorthand, and not `background-color`: the shorthand
+       also clears body's background-image -- two faint radial gradients (and
+       a dark-theme pair), painted at 5-8% opacity. Left in, they reached
+       every printed page as two page-sized soft-masked patterns whenever the
+       print dialog's "Background graphics" box was ticked (Chrome remembers
+       it). A Windows printer driver cannot take a soft mask, so Chrome's
+       PDFium turned each page into one big picture before spooling it:
+       measured on a 20-sheet Print Selected, 10 MB and 7.3 s per page at
+       600 dpi -- 201 MB and 2.5 minutes of "Spooling" -- against 66 KB and
+       5 ms per page with the gradients gone (2026-11-02). Invisible on
+       paper, so nothing printed changes. The phone shell's print block
+       already used the shorthand. */
     body {
-      background-color: white !important;
+      background: #fff !important;
       margin: 0 !important;
       padding: 0 !important;
       overflow: visible !important;
