@@ -17019,6 +17019,8 @@ MApp.Inspection = {
     // Master item the inspector can photograph; a lot of Warehouse Pool
     // rows alone looks exactly as it did.
     this._withPhotos = d.items.some(i => i.photoUrl || i.canSetPhoto);
+    // An "In stock" column when the records know any row's item.
+    this._withStock = d.items.some(i => i.stock);
     body.innerHTML = `
       <div class="mb-insp-layout">
         <div class="mb-insp-head">
@@ -17034,7 +17036,7 @@ MApp.Inspection = {
         <div class="mb-insp-main">
           ${this._bannerHtml(d, e)}
           <div class="mb-insp-progress" id="inspection-progress" role="status" aria-live="polite"></div>
-          <div class="mb-insp-list${this._withPhotos ? ' mb-insp-with-photos' : ''}" role="list">
+          <div class="mb-insp-list${this._withPhotos ? ' mb-insp-with-photos' : ''}${this._withStock ? ' mb-insp-with-stock' : ''}" role="list">
             ${d.items.length
               ? this._itemHeadHtml() + d.items.map(item => this._itemHtml(item, e, closed)).join('')
               : '<div class="mb-field-hint">This lot has nothing on its Production Sheet to inspect.</div>'}
@@ -17192,7 +17194,7 @@ MApp.Inspection = {
   _itemHeadHtml() {
     return `
       <div class="mb-insp-thead" aria-hidden="true">
-        <span></span>${this._withPhotos ? '<span>Photo</span>' : ''}<span>Item</span><span>Size</span><span>Colour</span><span>Specification</span><span class="mb-insp-num">Qty</span>
+        <span></span>${this._withPhotos ? '<span>Photo</span>' : ''}<span>Item</span><span>Size</span><span>Colour</span><span>Specification</span><span class="mb-insp-num">Qty</span>${this._withStock ? '<span class="mb-insp-num">In stock</span>' : ''}
       </div>`;
   },
 
@@ -17220,8 +17222,23 @@ MApp.Inspection = {
           <span class="mb-insp-cell">${e(item.color)}</span>
           <span class="mb-insp-cell">${e(item.narration)}</span>
           <span class="mb-insp-qty">${qty}${this._wasHtml(item, e)}</span>
+          ${this._stockHtml(item, e)}
         </span>
       </label>`;
+  },
+
+  // What the records say is on hand for the row's item (inspection_service
+  // attach_stock): its Current Stock, or the Warehouse Pool bucket it draws
+  // from. Red when the lot needs more than that, or the figure is below
+  // zero. A phone shows it under the quantity; a wider screen in a column.
+  _stockHtml(item, e) {
+    if (!this._withStock) return '';
+    const s = item.stock;
+    if (!s) return '<span class="mb-insp-stock mb-insp-stock-none">—</span>';
+    const where = s.source === 'pool' ? `Pool${s.color ? ` · ${e(s.color)}` : ''}` : 'Stock';
+    const qty = `${e(MApp.Util.formatQty(s.qty))}${s.unit ? ` ${e(s.unit)}` : ''}`;
+    const warn = s.short || Number(s.qty) < 0;
+    return `<span class="mb-insp-stock${warn ? ' is-short' : ''}"><span class="mb-insp-stock-where">${where}</span> ${qty}${s.short ? ' <span class="mb-insp-stock-note">less than this lot needs</span>' : ''}</span>`;
   },
 
   // "was 50" / spec was "Zinc": what a Revised row was when last seen.
@@ -17299,6 +17316,8 @@ MApp.Inspection = {
     const extra = [this.STAGES[this._stage(this.data.inspection)].label];
     if (s.revised) extra.push(`${s.revised} revised`);
     if (s.added) extra.push(`${s.added} new`);
+    const short = this.data.items.filter(i => i.stock && i.stock.short).length;
+    if (short) extra.push(`${short} short of stock`);
     el.innerHTML = `
       <div class="mb-insp-progress-text"><strong>${s.checked}/${s.total}</strong> items ticked · ${extra.join(' · ')}</div>
       <div class="mb-insp-progress-bar" role="progressbar" aria-label="Items ticked" aria-valuemin="0" aria-valuemax="${s.total}" aria-valuenow="${s.checked}"><span style="width:${pct}%"></span></div>`;

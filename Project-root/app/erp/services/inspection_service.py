@@ -34,6 +34,13 @@ saved sheet, so this always follows the lot. Each row carries:
                specification (narration). Change either and a check made
                against the old values stops counting.
 
+Stock on hand (attach_stock)
+----------------------------
+Each checklist row also shows what the records say is on hand for its item
+-- the Stock page's Current Stock, or the Warehouse Pool bucket it draws
+from -- marked when an open lot needs more than that. Read only, for the
+inspector to hold against the shelf; getInspection alone sends it.
+
 Ticks, review, and the stage a lot is at (owner, 2026-10-26)
 ------------------------------------------------------------
 A tick says the item is there as the sheet says. The first version had
@@ -94,7 +101,12 @@ from flask_login import current_user
 import database
 
 from . import items_service
+from . import lot_receipts
 from . import process_service
+from . import production_service
+from . import stock_service
+from . import units_service
+from . import warehouse_service
 from .current_user import (
     get_current_user_email,
     get_current_user_id,
@@ -294,6 +306,133 @@ def attach_photos(cur, items) -> None:
             if match is not None and match["has_photo"]
             else ""
         )
+
+
+def _recorded_components(components_consumed) -> tuple[dict, dict]:
+    """The lot's recorded components by item|size|colour and by item|size,
+    first one wins: a saved sheet's rows carry no source or bucket, so each
+    row borrows them from the component it came from."""
+    exact: dict = {}
+    loose: dict = {}
+    for comp in components_consumed if isinstance(components_consumed, list) else []:
+        if not isinstance(comp, dict) or not _text(comp.get("itemName")):
+            continue
+        name, size = _photo_key(comp)
+        exact.setdefault((name, size, _color_key(comp).lower()), comp)
+        loose.setdefault((name, size), comp)
+    return exact, loose
+
+
+def attach_stock(cur, lot, items) -> None:
+    """Gives each checklist row `stock`, what the records say is on hand for
+    it right now, so the inspector can hold the shelf against the sheet:
+
+      qty     the Stock page's Current Stock for an Items Master item, or the
+              Warehouse Pool's available quantity for a pool item (a painted
+              frame, a fitted rim) -- the bucket of the row's colour, or
+              every colour's for a COMMON row
+      unit    the unit that figure counts in (the item's Base Unit)
+      source  "stock" or "pool"
+      color   the pool bucket's colour; "" for all colours, or for Stock
+      short   True when the figure is below what the sheet needs from it,
+              every row drawing on the same item (or bucket) together. Only
+              an open lot with nothing received is judged: it has taken
+              nothing out yet, so its whole need must still be there. Once a
+              lot is received in part or Completed, its own use is already
+              out of the figure, and `short` is None.
+
+    `stock` is None for a row neither ledger knows. A row's source is the
+    one its recorded component names (sourceType); a row the saved sheet
+    added on its own is an Items Master item if it has a Stock row, else a
+    pool item if a bucket holds it. Read only: an inspection never moves
+    stock."""
+    exact, loose = _recorded_components(lot["components_consumed"])
+    pool = warehouse_service._get_pool_available_qty_map(cur)
+    on_hand = stock_service.current_stock_of(
+        cur, [(i.get("itemName"), i.get("size")) for i in items]
+    )
+    unit_maps: dict = {
+        "items": items_service.get_item_unit_info_map(cur),
+        "units": units_service.get_units_map(cur),
+    }
+    judge = lot_receipts.is_open(lot["status"]) and not lot_receipts.load_receipts(
+        cur, [lot["id"]]
+    )
+
+    # Each row's figure and need, then the sheet's need per figure.
+    placed = []
+    needs: dict = {}
+    for item in items:
+        item["stock"] = None
+        name, size = _photo_key(item)
+        comp = exact.get((name, size, _text(item.get("color")).lower())) or loose.get(
+            (name, size)
+        )
+        stock_key = f"{name}|{size}"
+        if comp is not None:
+            is_pool = _text(comp.get("sourceType")).upper() == "POOL"
+        elif stock_key in on_hand:
+            is_pool = False
+        elif name in pool:
+            is_pool = True
+        else:
+            continue
+
+        need = float(item.get("qty") or 0)
+        unit = _text(item.get("unit"))
+        if is_pool:
+            bucket = (
+                production_service._pool_bucket_color(comp)
+                if comp is not None
+                else _text(item.get("color"))
+            )
+            color = bucket if production_service._is_color_scoped(bucket) else ""
+            qty = production_service._pool_available_qty(pool.get(name), color)
+            info = items_service.lookup_item_unit_info(
+                unit_maps["items"], item.get("itemName"), ""
+            )
+            need = warehouse_service.pool_component_qty(
+                cur, {"itemName": item.get("itemName"), "unit": unit}, need, unit_maps
+            )
+            group = ("pool", name, color.lower())
+        else:
+            if stock_key not in on_hand:
+                continue
+            qty = on_hand[stock_key]
+            color = ""
+            info = items_service.lookup_item_unit_info(
+                unit_maps["items"], item.get("itemName"), item.get("size")
+            )
+            try:
+                # A saved sheet's row has no unit: its figure is already in
+                # the Base Unit, the unit the Production Sheet shows it in.
+                need = (
+                    units_service.convert_qty_to_base_unit(
+                        need, unit, info, unit_maps["units"]
+                    )
+                    if unit
+                    else need
+                )
+            except ValueError:
+                need = None
+            group = ("stock", stock_key, "")
+        if need is None or needs.get(group, 0.0) is None:
+            needs[group] = None
+        else:
+            needs[group] = needs.get(group, 0.0) + need
+        item["stock"] = {
+            "qty": round(qty, 4),
+            "unit": info["baseUnit"],
+            "source": "pool" if is_pool else "stock",
+            "color": color,
+            "short": None,
+        }
+        placed.append((item, group, qty))
+
+    if judge:
+        for item, group, qty in placed:
+            if needs[group] is not None:
+                item["stock"]["short"] = qty + 0.0001 < needs[group]
 
 
 def summarize(items, removed=()) -> dict:
@@ -634,6 +773,7 @@ def get_inspection(row_idx):
             rows, checks, inspection["baseline"] if inspection else None
         )
         attach_photos(cur, items)
+        attach_stock(cur, lot, items)
         header = _lot_header(lot, _process_name(cur, lot["process_id"]))
         identity = _identity(cur)
     summary = summarize(items, removed)

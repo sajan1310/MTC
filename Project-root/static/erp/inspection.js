@@ -230,7 +230,28 @@ App.Inspection = {
       <td>${escapeHtml(item.color)}</td>
       <td>${escapeHtml(item.narration)}</td>
       <td class="text-end text-nowrap">${escapeHtml(formatQty(item.qty))}${unit}${this._was(item)}</td>
+      ${this._withStock() ? `<td class="text-end text-nowrap">${this._stockCell(item)}</td>` : ''}
     </tr>`;
+  },
+
+  // ── Stock on hand ─────────────────────────────────────────────────────
+  // What the records say is on hand for each row's item (inspection_service
+  // attach_stock): its Current Stock, or the Warehouse Pool bucket it draws
+  // from. Red when the lot needs more than that, or the figure is below
+  // zero. The column appears when the records know any row's item.
+  _withStock() {
+    const d = this._current;
+    return !!(d && d.items.some(i => i.stock));
+  },
+
+  _stockCell(item) {
+    const s = item.stock;
+    if (!s) return '<span class="text-muted">—</span>';
+    const where = s.source === 'pool' ? `Pool${s.color ? ` · ${escapeHtml(s.color)}` : ''}` : 'Stock';
+    const warn = s.short || toNumber(s.qty) < 0;
+    const unit = s.unit ? ` ${escapeHtml(s.unit)}` : '';
+    return `<span class="${warn ? 'text-danger fw-bold' : ''}">${escapeHtml(formatQty(s.qty))}${unit}</span>`
+      + `<br><span class="small ${warn ? 'text-danger' : 'text-muted'}">${s.short ? `${where}: less than this lot needs` : where}</span>`;
   },
 
   // ── Item photos ───────────────────────────────────────────────────────
@@ -378,7 +399,7 @@ App.Inspection = {
           <div id="inspectionProgress" class="mb-2" role="status" aria-live="polite"></div>
           <div class="table-responsive">
             <table class="table table-sm table-bordered align-middle mb-2">
-              <thead class="table-light"><tr><th class="text-center" style="width: 4.5rem;">Ticked</th>${this._withPhotos() ? '<th class="text-center" style="width: 6rem;">Photo</th>' : ''}<th>Item</th><th>Size</th><th>Colour</th><th>Specification</th><th class="text-end">Qty</th></tr></thead>
+              <thead class="table-light"><tr><th class="text-center" style="width: 4.5rem;">Ticked</th>${this._withPhotos() ? '<th class="text-center" style="width: 6rem;">Photo</th>' : ''}<th>Item</th><th>Size</th><th>Colour</th><th>Specification</th><th class="text-end">Qty</th>${this._withStock() ? '<th class="text-end">In stock</th>' : ''}</tr></thead>
               <tbody>${d.items.length ? d.items.map(item => this._itemRow(item, closed)).join('') : '<tr><td colspan="6" class="text-center text-muted">Nothing on the Production Sheet to inspect.</td></tr>'}</tbody>
             </table>
           </div>
@@ -432,6 +453,8 @@ App.Inspection = {
     const extra = [INSPECTION_STAGES[this._stage(d.inspection)].label];
     if (s.revised) extra.push(`${toNumber(s.revised)} revised`);
     if (s.added) extra.push(`${toNumber(s.added)} new`);
+    const short = d.items.filter(i => i.stock && i.stock.short).length;
+    if (short) extra.push(`${short} short of stock`);
     el.innerHTML = `
       <div class="small mb-1"><strong>${checked}/${total}</strong> items ticked · ${extra.map(escapeHtml).join(' · ')}</div>
       <div class="progress" style="height: 6px;" role="progressbar" aria-label="Items ticked" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${checked}"><div class="progress-bar bg-success" style="width: ${pct}%;"></div></div>`;

@@ -3001,6 +3001,22 @@ fieldset.mb-field {
   color: var(--mb-enamel-amber-ink);
 }
 
+/* What the records say is on hand for the row's item (MApp.Inspection
+   ._stockHtml): a line under the quantity on a phone, a column from 46rem.
+   Red when the lot needs more than that, or the figure is below zero. */
+.mb-insp-stock {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--mb-ink-soft);
+}
+.mb-insp-stock-where { color: var(--mb-steel); }
+.mb-insp-stock.is-short { font-weight: 700; color: var(--mb-enamel-red-ink); }
+.mb-insp-stock.is-short .mb-insp-stock-where { color: inherit; }
+.mb-insp-stock-note::before { content: "· "; }
+.mb-insp-stock-none { display: none; }
+
 /* The checklist's table: on a phone the column names and the per-column
    cells are hidden and size · colour · specification run as one line under
    the name; from 46rem every row lays its cells out under the names. */
@@ -3044,11 +3060,27 @@ fieldset.mb-field {
     --mb-insp-cols: 2.25rem var(--mb-tap-min) minmax(11rem, 2.4fr) minmax(4.5rem, 0.8fr) minmax(5rem, 1fr) minmax(7rem, 1.8fr) minmax(7rem, 1fr);
   }
 
+  /* An "In stock" column after the quantity, when the records know any
+     row's item. */
+  .mb-insp-list.mb-insp-with-stock {
+    --mb-insp-cols: 2.25rem minmax(11rem, 2.4fr) minmax(4.5rem, 0.8fr) minmax(5rem, 1fr) minmax(7rem, 1.8fr) minmax(6rem, 1fr) minmax(7rem, 1fr);
+  }
+
+  .mb-insp-list.mb-insp-with-photos.mb-insp-with-stock {
+    --mb-insp-cols: 2.25rem var(--mb-tap-min) minmax(11rem, 2.4fr) minmax(4.5rem, 0.8fr) minmax(5rem, 1fr) minmax(7rem, 1.8fr) minmax(6rem, 1fr) minmax(7rem, 1fr);
+  }
+
   .mb-insp-row .mb-insp-item { display: contents; }
   .mb-insp-row .mb-insp-meta { display: none; }
   .mb-insp-row .mb-insp-cell { display: block; overflow-wrap: anywhere; }
   .mb-insp-row .mb-insp-qty { margin-top: 0; text-align: right; }
   .mb-insp-row .mb-insp-was { display: block; }
+  .mb-insp-row .mb-insp-stock { margin-top: 0; text-align: right; }
+
+  .mb-insp-row .mb-insp-stock-where,
+  .mb-insp-row .mb-insp-stock-note { display: block; font-size: 0.75rem; }
+  .mb-insp-row .mb-insp-stock-none { display: block; color: var(--mb-steel); }
+  .mb-insp-row .mb-insp-stock-note::before { content: none; }
 }
 
 .mb-insp-removed { display: grid; gap: var(--mb-sp-1); margin-top: var(--mb-sp-4); }
