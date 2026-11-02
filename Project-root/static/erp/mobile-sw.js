@@ -217,7 +217,10 @@
 // v96: a custom role sees only its own pages in the tab bar, drawer, More,
 // Home and search, and rates, costs and money are for Admin and Super Admin.
 // api.js, mobile.js and the template carry it.
-const CACHE_NAME = 'erp-mobile-shell-v96';
+// v97: Prices & amounts is a grant in the role editor, so a custom role can
+// see amounts or also enter bills and POs. api.js, mobile.js and the template
+// carry it.
+const CACHE_NAME = 'erp-mobile-shell-v97';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

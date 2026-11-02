@@ -640,11 +640,11 @@
   <div id="home-quick">
   <div class="mapp-section-label">Quick actions</div>
   <div class="mb-quick-actions">
-    <button type="button" class="mb-quick-action" data-needs="admin" onclick="MApp.PO.openNewSheet()">
+    <button type="button" class="mb-quick-action" data-needs="prices" data-needs-edit="poLedger" onclick="MApp.PO.openNewSheet()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2h9l3 3v17H6z"/><path d="M9 9h6M9 13h6M9 17h4"/></svg>
       <span>New PO</span>
     </button>
-    <button type="button" class="mb-quick-action" data-needs="admin" onclick="MApp.Bill.openForm(null)">
+    <button type="button" class="mb-quick-action" data-needs="prices" data-needs-edit="billLedger" onclick="MApp.Bill.openForm(null)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2h9l3 3v17l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>
       <span>Receive Bill</span>
     </button>
@@ -652,11 +652,11 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5-6-3.5z"/></svg>
       <span>New Lot</span>
     </button>
-    <button type="button" class="mb-quick-action" data-needs="admin" onclick="MApp.Dispatch.openNewDispatchSheet()">
+    <button type="button" class="mb-quick-action" data-needs="prices" data-needs-edit="dispatchTab" onclick="MApp.Dispatch.openNewDispatchSheet()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1" y="7" width="14" height="10" rx="1"/><path d="M15 10h4l3 3v4h-7z"/><circle cx="6" cy="19" r="1.6"/><circle cx="17.5" cy="19" r="1.6"/></svg>
       <span>Dispatch</span>
     </button>
-    <button type="button" class="mb-quick-action" data-needs="admin" onclick="MApp.Issue.openForm()">
+    <button type="button" class="mb-quick-action" data-needs="prices" data-needs-edit="productionTab" onclick="MApp.Issue.openForm()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>
       <span>Issue Stock</span>
     </button>
@@ -810,7 +810,7 @@
     <div class="mb-skel mb-skel-card"></div>
     <div class="mb-skel mb-skel-card"></div>
   </div>
-  <button type="button" class="mb-fab" data-needs="admin" onclick="MApp.Dispatch.openNewDispatchSheet()">
+  <button type="button" class="mb-fab" data-needs="prices" onclick="MApp.Dispatch.openNewDispatchSheet()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
     New Dispatch
   </button>
@@ -914,7 +914,7 @@
     <div class="mb-list" id="more-returns-list">
       <div class="mb-skel mb-skel-card"></div>
     </div>
-    <button type="button" class="mb-btn mb-btn-secondary" data-needs="admin" onclick="MApp.Returns.openNewReturnSheet()">Log Return</button>
+    <button type="button" class="mb-btn mb-btn-secondary" data-needs="prices" onclick="MApp.Returns.openNewReturnSheet()">Log Return</button>
   </details>
 
   <!-- System Status used to sit loose under Returns with no heading of
@@ -1391,7 +1391,7 @@
     </div>
     <div class="mb-list" id="po-ledger-list"></div>
   </div>
-  <button type="button" class="mb-fab" data-needs="admin" onclick="MApp.PO.openNewSheet()">
+  <button type="button" class="mb-fab" data-needs="prices" onclick="MApp.PO.openNewSheet()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
     New PO
   </button>
@@ -1434,7 +1434,7 @@
     </div>
     <div class="mb-list" id="bill-ledger-list"></div>
   </div>
-  <button type="button" class="mb-fab" data-needs="admin" onclick="MApp.Bill.openForm(null)">
+  <button type="button" class="mb-fab" data-needs="prices" onclick="MApp.Bill.openForm(null)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
     New Bill
   </button>
@@ -1668,7 +1668,7 @@
     </div>
     <div class="mb-list" id="items-lookup-list"></div>
   </div>
-  <button type="button" class="mb-fab" data-needs="admin" onclick="MApp.Items.openForm(null)">
+  <button type="button" class="mb-fab" data-needs="prices" onclick="MApp.Items.openForm(null)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
     Add Item
   </button>
@@ -1739,7 +1739,7 @@
     </div>
     <div class="mb-list" id="issue-log-list"></div>
   </div>
-  <button type="button" class="mb-fab" data-needs="admin" onclick="MApp.Issue.openForm()">
+  <button type="button" class="mb-fab" data-needs="prices" onclick="MApp.Issue.openForm()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
     Log Issue
   </button>
@@ -1888,7 +1888,7 @@
     </div>
     <div class="mb-list" id="bom-list-list"></div>
   </div>
-  <button type="button" class="mb-fab" data-needs="admin" onclick="MApp.BOM.openForm(null)">
+  <button type="button" class="mb-fab" data-needs="prices" onclick="MApp.BOM.openForm(null)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
     Add Recipe
   </button>

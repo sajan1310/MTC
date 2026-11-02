@@ -25,10 +25,11 @@ function loadDashboard() {
   eval(fs.readFileSync(path.join(__dirname, '..', 'dashboard.js'), 'utf8'));
 }
 
-function shell({ access, figures, tabs }) {
+function shell({ access, figures, tabs, money = figures }) {
   document.head.innerHTML = `
     <meta name="current-user-access" content="${access}">
-    <meta name="current-user-figures" content="${figures}">`;
+    <meta name="current-user-figures" content="${figures}">
+    <meta name="current-user-money" content="${money}">`;
   document.body.innerHTML = `
     <ul id="mainTabs">${tabs.map(id => `
       <li><button id="btn-${id}" class="nav-link" data-tab="${id}"></button></li>`).join('')}
@@ -151,6 +152,14 @@ describe('money', () => {
     loadApi();
 
     expect(global.formatCurrency(0)).toBe('—');
+  });
+
+  test('a custom role granted Prices sees amounts, though never the Dashboard', () => {
+    shell({ access: 'limited', figures: 'no', money: 'yes', tabs: ['billLedger'] });
+    loadApi();
+
+    expect(global.formatCurrency(1500)).toBe('₹1500.00');
+    expect(App.Dashboard.hasFigures()).toBe(false);
   });
 
   test('the phone shell, which shares this file, follows its own user', () => {

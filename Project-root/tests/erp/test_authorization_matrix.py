@@ -165,6 +165,10 @@ def test_every_assignable_tab_is_reachable_from_some_service_module():
     permission that silently does nothing."""
     mapped = set(roles_service.TAB_BY_SERVICE_MODULE.values())
     for tab, label in roles_service.ASSIGNABLE_TABS:
+        if tab == roles_service.PRICES_GRANT:
+            # Not a page: it gates what every reply carries, in rpc.py via
+            # services/financials.py, and is tested in test_financials.py.
+            continue
         assert tab in mapped, (
             f"{label} ({tab}) is grantable but gates no service module"
         )

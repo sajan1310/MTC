@@ -17,11 +17,12 @@ const ROLE_LABELS = {
   admin: 'Admin'
 };
 
-// The 12 areas a custom role can be granted, and at which access level --
+// The 13 areas a custom role can be granted, and at which access level --
 // mirrors app/erp/services/roles_service.py's ASSIGNABLE_TABS exactly
 // (dashboardTab/usersTab excluded there for the same reasons: every role
 // sees Dashboard, no custom role is ever usersTab-capable). Eleven are
-// sidebar tabs; Inspection is not -- inspectors work in the phone app.
+// sidebar tabs; Inspection is not -- inspectors work in the phone app -- and
+// Prices & amounts is a grant on top of the others (financials.py).
 const ASSIGNABLE_TABS = [
   ['vendorMaster', 'Vendors'],
   ['itemMaster', 'Items Master'],
@@ -34,8 +35,14 @@ const ASSIGNABLE_TABS = [
   ['productionTab', 'Production'],
   ['inspectionTab', 'Inspection'],
   ['clientsTab', 'Clients'],
-  ['dispatchTab', 'Dispatch']
+  ['dispatchTab', 'Dispatch'],
+  ['financials', 'Prices & amounts']
 ];
+
+// Said under a row whose meaning isn't its name.
+const ROLE_TAB_HINTS = {
+  financials: 'No Access: amounts show as a dash. Viewer or Commenter: amounts show on its pages. Editor: it can also enter bills, POs and other priced entries where it is Editor.'
+};
 
 function _currentUserId() {
   const raw = document.querySelector('meta[name="current-user-id"]')?.getAttribute('content');
@@ -455,7 +462,7 @@ App.Users = {
       const current = perms[tab] || 'none';
       return `
         <tr>
-          <td>${escapeHtml(label)}</td>
+          <td>${escapeHtml(label)}${ROLE_TAB_HINTS[tab] ? `<div class="small text-muted">${escapeHtml(ROLE_TAB_HINTS[tab])}</div>` : ''}</td>
           <td class="text-center">${radio(tab, 'none', current === 'none')}</td>
           <td class="text-center">${radio(tab, 'viewer', current === 'viewer')}</td>
           <td class="text-center">${radio(tab, 'commenter', current === 'commenter')}</td>

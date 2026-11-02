@@ -523,7 +523,10 @@
 // costs and money are for Admin and Super Admin: everyone else sees a dash and
 // no way to start an entry that carries prices. api.js, core.js, dashboard.js,
 // items.js and styles.css are precached.
-const CACHE_NAME = 'erp-shell-v105';
+// v106: Prices & amounts is a grant in the role editor, so a custom role can
+// see amounts (Viewer) or also enter bills and POs (Editor). api.js, users.js
+// and styles.css are precached.
+const CACHE_NAME = 'erp-shell-v106';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

@@ -27,7 +27,7 @@ from .registry import RPC_METHODS, RpcSpec
 from .services import activity_service
 from .services.financials import (
     FINANCIAL_SAVES,
-    sees_financials,
+    price_access,
     strip_financials,
 )
 from .services.roles_service import (
@@ -71,9 +71,10 @@ def _deny(spec: RpcSpec, reason: str, message: str):
     return jsonify(build_response(False, None, message)), 403
 
 
-def _for_viewer(method: str, result):
-    """The reply this user may see: no rates, costs or money unless Admin."""
-    if sees_financials(getattr(current_user, "role", None)):
+def _for_viewer(method: str, result, prices: str):
+    """The reply this user may see: no rates, costs or money unless their
+    role sees them (`prices` is financials.price_access for the caller)."""
+    if prices != "none":
         return result
     if not isinstance(result, dict):
         return result
@@ -147,14 +148,18 @@ def call(method: str):
                     f"Not authorized to call {method}.",
                 )
 
-    # A save that takes a price from the form is Admin-only, whatever the tab
-    # level: this user's form holds blanked prices (see financials.py), and
-    # saving it would write them over the real ones.
-    if method in FINANCIAL_SAVES and not sees_financials(current_user.role):
+    # Asked once, used by the save gate below and by every reply.
+    prices = price_access(current_user.role)
+
+    # A save that takes a price from the form needs the right to enter prices
+    # as well as Editor on its page: without it the form holds blanked prices
+    # (see financials.py), and saving it would write them over the real ones.
+    if method in FINANCIAL_SAVES and prices != "edit":
         return _deny(
             spec,
             f"Role '{current_user.role}' may not save prices",
-            "Only an Admin can save this, because it carries prices.",
+            "Only a role allowed to enter prices can save this, because it "
+            "carries prices.",
         )
 
     mutation_id = request.headers.get("X-Mutation-Id")
@@ -194,7 +199,7 @@ def call(method: str):
             ), 409
 
         if cached is not None:
-            return jsonify(_for_viewer(method, cached)), 200
+            return jsonify(_for_viewer(method, cached, prices)), 200
 
     payload = request.get_json(silent=True) or {}
     args = payload.get("args") or []
@@ -298,4 +303,4 @@ def call(method: str):
                 method,
             )
 
-    return jsonify(_for_viewer(method, result)), 200
+    return jsonify(_for_viewer(method, result, prices)), 200

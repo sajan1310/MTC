@@ -1,4 +1,7 @@
-"""Rates, costs and money are for Admin and Super Admin (the owner's rule).
+"""Rates, costs and money are for Admin and Super Admin (the owner's rule),
+and for a custom role an Admin has granted "Prices & amounts"
+(roles_service.PRICES_GRANT): Viewer or Commenter sees them, Editor can also
+save the entries that carry them.
 
 Every other role keeps working with items, quantities and lots; the amounts
 just never leave the server for them. app/erp/rpc.py applies this to every
@@ -12,7 +15,8 @@ a blanked amount never reads as "Rs 0".
 
 A save is the other half. A form opened by someone who can't see the prices
 holds zeros, and saving it would write those zeros over the real figures, so
-any save that takes a price from the form is Admin-only (FINANCIAL_SAVES). A
+any save that takes a price from the form needs price_access() == "edit"
+(FINANCIAL_SAVES), on top of Editor on its page. A
 production lot is not on that list: saveProduction reads its rates from the
 stored lot and the rate card, never from the form.
 """
@@ -23,7 +27,11 @@ import numbers
 import re
 from functools import lru_cache
 
+from .roles_service import PRICES_GRANT, get_role_permissions
+
 FINANCE_ROLES = frozenset({"admin", "super_admin"})
+# Roles that are never a custom role, so there is no grant to look up.
+_NOT_CUSTOM = frozenset({"user", "admin", "super_admin", "pending_approval"})
 
 # Read per word, so `ratePerBaseUnit` and `gstRatePct` match and `generatedAt`
 # does not. Quantities are named Qty throughout, which is what keeps them out.
@@ -91,8 +99,31 @@ FINANCIAL_SAVES = frozenset(
 )
 
 
+def price_access(role) -> str:
+    """ "edit", "view" or "none" for `role`.
+
+    The built-in roles are fixed: Admin and Super Admin see and enter prices,
+    User never does. A custom role gets what its Prices & amounts grant says,
+    and a role deleted under a live session gets nothing.
+    """
+    if role in FINANCE_ROLES:
+        return "edit"
+    if not role or role in _NOT_CUSTOM:
+        return "none"
+    level = (get_role_permissions(role) or {}).get(PRICES_GRANT)
+    if level == "editor":
+        return "edit"
+    if level in ("viewer", "commenter"):
+        return "view"
+    return "none"
+
+
 def sees_financials(role) -> bool:
-    return role in FINANCE_ROLES
+    return price_access(role) != "none"
+
+
+def may_save_prices(role) -> bool:
+    return price_access(role) == "edit"
 
 
 @lru_cache(maxsize=4096)

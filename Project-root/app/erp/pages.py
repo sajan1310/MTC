@@ -20,7 +20,7 @@ from flask import (
 from flask_login import current_user, login_required
 
 from . import config_maps, erp_bp
-from .services.financials import FINANCE_ROLES
+from .services.financials import FINANCE_ROLES, may_save_prices, sees_financials
 from .services.roles_service import get_role_permissions
 
 # Cache-busting version for the shell's own JS/CSS, read from the service
@@ -95,6 +95,14 @@ def _sees_figures(user) -> bool:
     return getattr(user, "role", None) in DASHBOARD_FIGURE_ROLES
 
 
+def _price_flags(user) -> dict:
+    """What the shells do with money for this user: show amounts or a dash
+    (sees_money), and offer the entries that carry prices (enters_prices).
+    The Dashboard's figures stay Admin-only whatever a custom role holds."""
+    role = getattr(user, "role", None)
+    return {"sees_money": sees_financials(role), "enters_prices": may_save_prices(role)}
+
+
 def _pending_approval_redirect():
     """None if the current user may proceed; a redirect response if they're
     a brand-new OAuth signup awaiting an admin's approval (see rpc.py's
@@ -120,6 +128,7 @@ def index():
         "erp/index.html",
         permitted_tabs=_tab_levels_for(current_user),
         sees_figures=_sees_figures(current_user),
+        **_price_flags(current_user),
     )
 
 
@@ -136,6 +145,7 @@ def mobile():
         tab_levels=_tab_levels_for(current_user),
         sees_figures=_sees_figures(current_user),
         app_version=config_maps.APP_VERSION,
+        **_price_flags(current_user),
     )
 
 
