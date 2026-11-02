@@ -63,7 +63,14 @@ ASSIGNABLE_TABS = [
     ("inspectionTab", "Inspection"),
     ("clientsTab", "Clients"),
     ("dispatchTab", "Dispatch"),
+    # Not a page either: whether this role sees rates, costs and amounts on
+    # the pages it holds (services/financials.py). Absent, as for every role
+    # until an Admin says otherwise, they are blanked. Viewer or Commenter
+    # shows them; Editor also lets the role save the entries that carry them
+    # (bills, POs, ...) on pages where it is Editor.
+    ("financials", "Prices & amounts"),
 ]
+PRICES_GRANT = "financials"
 _ASSIGNABLE_TAB_KEYS = frozenset(key for key, _label in ASSIGNABLE_TABS)
 _LEVELS = ("viewer", "commenter", "editor")
 
@@ -154,6 +161,7 @@ LOOKUPS_BY_TAB = {
         "getWarehousePoolData",
     },
     "inspectionTab": frozenset(),
+    "financials": frozenset(),
     "clientsTab": frozenset({"getDispatchData", "getBOMProductionData"}),
     "dispatchTab": _ITEM_LISTS
     | {

@@ -149,8 +149,9 @@
          slot after "Return Goods". Each set is a named group for screen
          readers, and the tooltips carry the full disambiguation. -->
     <div class="dash-action-row">
-      {# A job that carries a price is an Admin's (services/financials.py). #}
-      {% if sees_figures %}
+      {# A job that carries a price needs the right to enter prices
+         (services/financials.py). #}
+      {% if enters_prices %}
       <div class="dash-action-set" role="group" aria-label="Purchasing" style="--dash-tiles: 3;">
         <button class="btn btn-success dash-action-tile" onclick="App.PO.openCreateModal()" title="Raise a purchase order to a vendor">
           <i class="bi bi-plus-circle" aria-hidden="true"></i><span>Create PO</span>
@@ -164,11 +165,11 @@
       </div>
       {% endif %}
 
-      <div class="dash-action-set" role="group" aria-label="Production and dispatch" style="--dash-tiles: {{ 4 if sees_figures else 2 }};">
+      <div class="dash-action-set" role="group" aria-label="Production and dispatch" style="--dash-tiles: {{ 4 if enters_prices else 2 }};">
         <button class="btn btn-dark dash-action-tile" onclick="App.Production.openCreateModal()" title="Log a new production lot">
           <i class="bi bi-play-circle" aria-hidden="true"></i><span>Log Production</span>
         </button>
-        {% if sees_figures %}
+        {% if enters_prices %}
         <button class="btn btn-dark dash-action-tile" onclick="App.Issue.openIssueModal()" title="Issue stock to a contractor or process">
           <i class="bi bi-box-arrow-up" aria-hidden="true"></i><span>Issue Stock</span>
         </button>
@@ -188,7 +189,7 @@
       </button>
       <div class="d-flex flex-wrap align-items-center gap-2">
         <span class="dash-setup-label">Setup</span>
-        {% if sees_figures %}
+        {% if enters_prices %}
         <button class="btn btn-outline-secondary btn-sm" onclick="App.Item.openCreateModal()">
           <i class="bi bi-box-seam me-1" aria-hidden="true"></i>Item
         </button>
@@ -202,7 +203,7 @@
       </div>
     </div>
   </section>
-  {% elif not (permitted_tabs | reject('equalto', 'inspectionTab') | list) %}
+  {% elif not (permitted_tabs | reject('in', ['inspectionTab', 'financials']) | list) %}
   <!-- A custom role with no page on this shell. Inspection has no sidebar
        entry of its own: inspectors work in the phone and tablet app. -->
   <section class="dash-section" id="dashboardNoPages">

@@ -33,6 +33,9 @@
        App.Navigation.isLimited. "limited" is a custom role: only its granted
        pages exist here. UX only; app/erp/rpc.py is the real gate. -->
   <meta name="current-user-figures" content="{{ 'yes' if sees_figures else 'no' }}">
+  <!-- Rates, costs and amounts (services/financials.py): read by api.js's
+       formatCurrency, which shows a dash in their place when "no". -->
+  <meta name="current-user-money" content="{{ 'yes' if sees_money else 'no' }}">
   <meta name="current-user-access" content="{{ 'full' if permitted_tabs is none else 'limited' }}">
   <!-- "auto" or "off". When "off", App.Print skips the server render endpoint
        entirely rather than discovering it is unavailable once per session. -->
@@ -91,7 +94,7 @@
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
   </style>
 </head>
-<body{% if not sees_figures %} class="no-financials"{% endif %}>
+<body{% if not enters_prices %} class="no-price-entry"{% endif %}>
 
   <!-- Skip link (A11Y-002). The sidebar is 14 tab buttons; without this a
        keyboard or screen-reader user tabs through all of them on every page

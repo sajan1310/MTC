@@ -98,13 +98,13 @@ describe('the needs mirror the server', () => {
   test('every need names a tab an admin can actually grant', () => {
     // A misspelt need would hide a page from everyone holding it, and nothing
     // on the server would ever say so.
-    const words = ['full', 'admin', 'figures'];
+    const words = ['full', 'admin', 'figures', 'prices'];
     const needs = [
       ...MApp.Shortcuts.DESTINATIONS.map(d => d.needs),
       ...MApp.GlobalSearch.DESTINATIONS.map(d => d.needs),
       ...MApp.GlobalSearch.SOURCES.map(s => s.needs),
       ...Object.values(MApp.Shell.NEEDS)
-    ].filter(Boolean).flatMap(n => n.split('|'));
+    ].filter(Boolean).flatMap(n => n.split(/[|+]/));
 
     expect(needs.length).toBeGreaterThan(0);
     needs.forEach(need => expect(grantable.concat(words)).toContain(need));
@@ -116,7 +116,9 @@ describe('the needs mirror the server', () => {
       .filter(Boolean)
       .flatMap(n => n.split('|')));
 
-    grantable.forEach(tab => expect(offered.has(tab)).toBe(true));
+    // Prices & amounts is a grant on top of pages, not a page of its own.
+    grantable.filter(tab => tab !== 'financials')
+      .forEach(tab => expect(offered.has(tab)).toBe(true));
   });
 
   test('every More row is a destination the catalogue knows', () => {
@@ -430,5 +432,58 @@ describe('Home', () => {
     await mountHome();
 
     expect(document.getElementById('home-no-pages')).toBeNull();
+  });
+});
+
+describe('Prices & amounts, granted to a custom role', () => {
+  const withPrices = (levels, extra) => ({ ...limited(levels), ...extra });
+  const quick = () => [...document.querySelectorAll('#home-quick .mb-quick-action span')]
+    .map(el => el.textContent.trim());
+
+  test('Editor on Prices and on Bills gets Receive Bill back', async () => {
+    mount(withPrices(
+      { billLedger: 'editor', financials: 'editor' },
+      { seesMoney: true, entersPrices: true }
+    ));
+    MApp.Shell.showTab('home');
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(quick()).toEqual(['Receive Bill']);
+    expect(MApp.Util.formatCurrency(1500)).toBe('₹1500.00');
+  });
+
+  test('Viewer on Prices sees amounts and starts nothing that carries them', async () => {
+    mount(withPrices(
+      { billLedger: 'editor', financials: 'viewer' },
+      { seesMoney: true, entersPrices: false }
+    ));
+    MApp.Shell.showTab('home');
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(document.getElementById('home-quick')).toBeNull();
+    expect(MApp.Util.formatCurrency(1500)).toBe('₹1500.00');
+  });
+
+  test('Prices alone opens no page', () => {
+    mount(withPrices({ financials: 'editor' }, { seesMoney: true, entersPrices: true }));
+
+    expect(MApp.Access.hasNoPages()).toBe(true);
+  });
+
+  test('a priced job still needs its own page', () => {
+    mount(withPrices({ billLedger: 'editor', financials: 'editor' }, { entersPrices: true }));
+    const labels = MApp.GlobalSearch.destinations().map(d => d.label);
+
+    expect(labels).not.toContain('New Dispatch');
+    mount(withPrices({ dispatchTab: 'editor', financials: 'editor' }, { entersPrices: true }));
+    expect(MApp.GlobalSearch.destinations().map(d => d.label)).toContain('New Dispatch');
+  });
+
+  test('a page from before the flags existed falls back to the role', () => {
+    mount({ role: 'admin', tabLevels: null, seesFigures: true });
+    expect(MApp.Access.entersPrices()).toBe(true);
+    mount({ role: 'store_room', tabLevels: { billLedger: 'editor' }, seesFigures: false });
+    expect(MApp.Access.entersPrices()).toBe(false);
+    expect(MApp.Access.seesMoney()).toBe(false);
   });
 });

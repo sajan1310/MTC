@@ -477,7 +477,7 @@ MApp.Util = {
 
   // Mirrors formatCurrency() on desktop.
   formatCurrency(value) {
-    if (!MApp.Access.seesFigures()) return '—';
+    if (!MApp.Access.seesMoney()) return '—';
     return `₹${this.toNumber(value).toFixed(2)}`;
   },
 
@@ -1342,9 +1342,11 @@ MApp.SearchBox = {
 // this is UX). Everything that lists destinations asks here, so the tab bar,
 // the drawer, More, Home and search cannot disagree.
 //
-// A need is a tab id from roles_service.ASSIGNABLE_TABS ('stockTab'), several
-// joined by | where any one will do, or one of three words: 'full' (any
-// built-in role), 'admin', or 'figures' (the Dashboard's numbers).
+// A need is a tab id from roles_service.ASSIGNABLE_TABS ('stockTab'), or one
+// of four words: 'full' (any built-in role), 'admin', 'figures' (the
+// Dashboard's numbers) or 'prices' (may enter the entries that carry prices,
+// see services/financials.py). Join with | where any one will do, and with +
+// where all of them are needed: 'prices+dispatchTab'.
 //
 // With no window.MOBILE_CURRENT_USER everything is allowed: the page was not
 // rendered by pages.py, and the gate above still holds.
@@ -1360,14 +1362,29 @@ MApp.Access = {
 
   isLimited() { return this.levels() !== null; },
 
+  // Prices & amounts is a grant, not a page, so it doesn't count as one.
   hasNoPages() {
     const levels = this.levels();
-    return !!levels && Object.keys(levels).length === 0;
+    return !!levels && Object.keys(levels).filter(key => key !== 'financials').length === 0;
   },
 
   seesFigures() {
     const user = this._user();
     return !user || user.seesFigures !== false;
+  },
+
+  // Rates, costs and amounts. A page from before this flag existed falls
+  // back to the role, which was the whole rule then.
+  seesMoney() {
+    const user = this._user();
+    if (!user) return true;
+    return typeof user.seesMoney === 'boolean' ? user.seesMoney : this._isAdmin();
+  },
+
+  entersPrices() {
+    const user = this._user();
+    if (!user) return true;
+    return typeof user.entersPrices === 'boolean' ? user.entersPrices : this._isAdmin();
   },
 
   _isAdmin() {
@@ -1378,6 +1395,7 @@ MApp.Access = {
   _has(need) {
     if (need === 'figures') return this.seesFigures();
     if (need === 'admin') return this._isAdmin();
+    if (need === 'prices') return this.entersPrices();
     const levels = this.levels();
     if (levels === null) return true;
     if (need === 'full') return false;
@@ -1385,12 +1403,13 @@ MApp.Access = {
   },
 
   allows(needs) {
-    return !needs || String(needs).split('|').some(need => this._has(need));
+    return !needs || String(needs).split('|')
+      .some(option => option.split('+').every(need => this._has(need)));
   },
 
   // Starting a job takes Editor. Viewer and Commenter can open the page but
   // the server refuses the save, so offering the job is offering a failure.
-  // Jobs that carry a price go further: those need 'admin', whatever the tab.
+  // Jobs that carry a price go further: those also need 'prices'.
   canEdit(tab) {
     const levels = this.levels();
     return levels === null || levels[tab] === 'editor';
@@ -12810,8 +12829,13 @@ MApp.Roles = {
     ['productionTab', 'Production'],
     ['inspectionTab', 'Inspection'],
     ['clientsTab', 'Clients'],
-    ['dispatchTab', 'Dispatch']
+    ['dispatchTab', 'Dispatch'],
+    ['financials', 'Prices & amounts']
   ],
+  // Said under a row whose meaning isn't its name.
+  HINTS: {
+    financials: 'No access: amounts show as a dash. View or Comment: amounts show on its pages. Edit: it can also enter bills, POs and other priced entries where it has Edit.'
+  },
   LEVELS: [
     ['none', 'No access'],
     ['viewer', 'View'],
@@ -12925,6 +12949,7 @@ MApp.Roles = {
     body.innerHTML = this.TABS.map(([key, label]) => `
       <div class="mb-field">
         <label>${MApp.Util.escapeHtml(label)}</label>
+        ${this.HINTS[key] ? `<div class="mb-field-hint">${MApp.Util.escapeHtml(this.HINTS[key])}</div>` : ''}
         <div class="mb-segmented" role="tablist" aria-label="${MApp.Util.escapeHtml(label)} access">
           ${this.LEVELS.map(([level, text]) => `
             <button type="button" role="tab" data-role-tab="${key}" data-role-level="${level}"
@@ -14587,9 +14612,9 @@ MApp.GlobalSearch = {
     { label: 'Production', needs: 'productionTab', keywords: 'lots log lot process', run: () => MApp.Shell.showTab('production') },
     { label: 'Dispatch', needs: 'dispatchTab', keywords: 'challan client delivery', run: () => MApp.Shell.showTab('dispatch') },
     { label: 'Log Lot', needs: 'productionTab', keywords: 'new production lot create', run: () => MApp.Production.openLogLotSheet() },
-    // Both forms carry prices, and saving one is Admin-only (financials.py).
-    { label: 'New Dispatch', needs: 'admin', keywords: 'challan create send', run: () => MApp.Dispatch.openNewDispatchSheet() },
-    { label: 'Log Return', needs: 'admin', keywords: 'returns vendor create', run: () => MApp.Returns.openNewReturnSheet() },
+    // Both forms carry prices, so saving one needs 'prices' too (financials.py).
+    { label: 'New Dispatch', needs: 'prices+dispatchTab', keywords: 'challan create send', run: () => MApp.Dispatch.openNewDispatchSheet() },
+    { label: 'Log Return', needs: 'prices+returnLedger', keywords: 'returns vendor create', run: () => MApp.Returns.openNewReturnSheet() },
     { label: 'Issued Stock', needs: 'productionTab', keywords: 'issue contractor material log', run: () => MApp.Issue.open() },
     { label: 'Wastage', needs: 'returnLedger', keywords: 'waste loss scrap log', run: () => MApp.Wastage.open() },
     { label: 'PO Ledger', needs: 'poLedger', keywords: 'purchase orders pending', run: () => MApp.PO.openLedgerSheet() },

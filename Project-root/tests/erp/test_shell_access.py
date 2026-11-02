@@ -18,7 +18,7 @@ import pytest
 
 import database
 from app.erp.pages import DASHBOARD_FIGURE_ROLES
-from app.erp.services import roles_service
+from app.erp.services import financials, roles_service
 
 SIDEBAR_TABS = [
     "poLedger",
@@ -33,6 +33,15 @@ SIDEBAR_TABS = [
     "dispatchTab",
     "clientsTab",
 ]
+
+
+@pytest.fixture(autouse=True)
+def the_real_rule(monkeypatch):
+    """Undoes conftest's plain_user_sees_money: what a User's shell shows is
+    exactly what this file tests."""
+    monkeypatch.setattr(
+        financials, "FINANCE_ROLES", frozenset({"admin", "super_admin"})
+    )
 
 
 @pytest.fixture
@@ -146,7 +155,8 @@ def test_a_user_keeps_only_the_jobs_with_no_price_in_them(client_as):
     html = _desktop(client_as("user"))
 
     assert "App.Production.openCreateModal()" in html
-    assert 'class="no-financials"' in html
+    assert 'class="no-price-entry"' in html
+    assert 'name="current-user-money" content="no"' in html
     dashboard = html.split('id="dashActionsHeading"')[1].split("</section>")[0]
     for job in ("App.PO.openCreateModal", "App.Bill.openReceiveModal"):
         assert job not in dashboard
@@ -156,7 +166,8 @@ def test_a_user_keeps_only_the_jobs_with_no_price_in_them(client_as):
 def test_an_admin_keeps_every_job(client_as):
     html = _desktop(client_as("admin"))
 
-    assert 'class="no-financials"' not in html
+    assert 'class="no-price-entry"' not in html
+    assert 'name="current-user-money" content="yes"' in html
     dashboard = html.split('id="dashActionsHeading"')[1].split("</section>")[0]
     for job in ("App.PO.openCreateModal", "App.Bill.openReceiveModal"):
         assert job in dashboard
@@ -244,3 +255,32 @@ def test_a_role_deleted_under_a_session_shows_nothing(client_as):
 
     assert _sidebar(html) == set()
     assert 'id="dashActionsHeading"' not in html
+
+
+# -- Prices & amounts as a grant -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "level,money,entry",
+    [(None, "no", False), ("viewer", "yes", False), ("editor", "yes", True)],
+)
+def test_a_custom_role_shows_money_as_its_grant_says(client_as, level, money, entry):
+    grants = {"billLedger": "editor"}
+    if level:
+        grants["financials"] = level
+    client = client_as(None, grants)
+    html = _desktop(client)
+
+    assert f'name="current-user-money" content="{money}"' in html
+    assert ('class="no-price-entry"' not in html) is entry
+    user = _phone_user(client)
+    assert user["seesMoney"] is (money == "yes")
+    assert user["entersPrices"] is entry
+    # The grant is not a page: it never adds a sidebar entry or a Dashboard.
+    assert _sidebar(html) == {"billLedger"}
+    assert user["seesFigures"] is False
+
+
+def test_prices_alone_is_not_a_page(client_as):
+    html = _desktop(client_as(None, {"financials": "editor"}))
+    assert "No pages have been assigned to your account yet" in html

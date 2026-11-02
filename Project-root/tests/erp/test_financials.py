@@ -360,6 +360,89 @@ def test_a_refusal_is_still_a_refusal_when_it_cannot_be_logged(client_as, monkey
     assert "carries prices" in response.get_json()["message"]
 
 
+# -- Prices & amounts, granted to a custom role ---------------------------
+
+
+def test_a_grant_decides_what_a_custom_role_sees_and_enters(client_as):
+    """No grant: blind. Viewer or Commenter: sees. Editor: sees and enters."""
+    from app.erp.services.financials import price_access
+
+    cases = {None: "none", "viewer": "view", "commenter": "view", "editor": "edit"}
+    for level, expected in cases.items():
+        key = roles_service._slugify(f"Prices {level} {uuid.uuid4().hex[:6]}")
+        perms = {"billLedger": "editor"} | ({"financials": level} if level else {})
+        # Committed before the check: price_access reads on its own connection.
+        with database.get_conn() as (_conn, cur):
+            cur.execute(
+                "INSERT INTO custom_roles (role_key, role_name, permissions) "
+                "VALUES (%s, %s, %s)",
+                (key, key, psycopg2.extras.Json(perms)),
+            )
+        try:
+            assert price_access(key) == expected, level
+        finally:
+            with database.get_conn() as (_conn, cur):
+                cur.execute("DELETE FROM custom_roles WHERE role_key = %s", (key,))
+
+
+def test_the_built_in_user_role_cannot_be_given_prices():
+    """User has no grants to hold; the owner's rule keeps it blind."""
+    assert financials.price_access("user") == "none"
+
+
+def test_a_role_granted_prices_sees_the_amounts(client_as, erp_app):
+    with erp_app.app_context(), database.get_conn() as (_conn, cur):
+        cur.execute(
+            "INSERT INTO erp.contractor_service_charges "
+            "(contractor_name, service_type, charge_amount) VALUES (%s, %s, %s) "
+            "RETURNING id",
+            ("Prices Grant Contractor", "Polish", 42),
+        )
+        row_id = cur.fetchone()[0]
+    try:
+
+        def charge(client):
+            rows = _call(client, "getContractorServiceChargesData").get_json()["data"]
+            return [r for r in rows if r["rowIdx"] == row_id][0]["chargeAmount"]
+
+        assert charge(client_as(None, {"contractorsTab": "viewer"})) == 0
+        granted = {"contractorsTab": "viewer", "financials": "viewer"}
+        assert charge(client_as(None, granted)) == 42
+    finally:
+        with erp_app.app_context(), database.get_conn() as (_conn, cur):
+            cur.execute(
+                "DELETE FROM erp.contractor_service_charges WHERE id = %s", (row_id,)
+            )
+
+
+def test_seeing_prices_is_not_entering_them(client_as):
+    client = client_as(None, {"billLedger": "editor", "financials": "viewer"})
+    response = _mutate(client, "saveBill", {})
+    assert response.status_code == 403
+    assert "carries prices" in response.get_json()["message"]
+
+
+def test_entering_prices_lets_a_bill_through_the_gate(client_as):
+    """Rejected by the service on its own terms (an empty form), so a 200."""
+    client = client_as(None, {"billLedger": "editor", "financials": "editor"})
+    response = _mutate(client, "saveBill", {})
+    assert response.status_code == 200
+    assert response.get_json()["success"] is False
+
+
+def test_entering_prices_does_not_lift_the_page_level(client_as):
+    """Editor on prices, Viewer on Bills: the tab gate still says no."""
+    client = client_as(None, {"billLedger": "viewer", "financials": "editor"})
+    response = _mutate(client, "saveBill", {})
+    assert response.status_code == 403
+    assert "Not authorized" in response.get_json()["message"]
+
+
+def test_entering_prices_needs_the_page_at_all(client_as):
+    client = client_as(None, {"financials": "editor"})
+    assert _mutate(client, "saveBill", {}).status_code == 403
+
+
 # -- Lookups --------------------------------------------------------------
 
 
