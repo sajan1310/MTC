@@ -11959,7 +11959,7 @@ MApp.Items = {
           <div class="mb-item-ident">
             ${it.image ? `
             <button type="button" class="mb-item-thumb" data-item-action="photo" data-edit-item="${i}" aria-label="View photo of ${MApp.Util.escapeHtml(it.name)}">
-              <img alt="" decoding="async" data-photo-row="${i}">
+              <img alt="" loading="lazy" decoding="async" data-photo-row="${i}">
             </button>` : ''}
             <div>
               <div class="mb-card-title">${MApp.Util.escapeHtml(it.name)}</div>
@@ -11980,9 +11980,10 @@ MApp.Items = {
       </div>
     `).join('') + MApp.Paging.moreHtml(page);
 
-    // A photo is a data: URL of tens of thousands of characters. Assigned
-    // here rather than written into the markup above, which would escape and
-    // re-parse every photo on the page at each keystroke of a search.
+    // `image` is the photo's address (/erp/item-photo/<id>?v=...), fetched
+    // only for a card on screen and then kept by the browser. It was a data:
+    // URL of tens of thousands of characters until 2026-11-03, which is why
+    // it is assigned here rather than written into the markup above.
     listEl.querySelectorAll('img[data-photo-row]').forEach(img => {
       const item = page.rows[Number(img.dataset.photoRow)];
       if (item && item.image) img.src = item.image;
