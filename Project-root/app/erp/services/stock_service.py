@@ -29,6 +29,7 @@ rename path).
 
 from __future__ import annotations
 
+import time
 from typing import NamedTuple
 
 import psycopg2.extras
@@ -667,6 +668,73 @@ def _stock_key(name, size) -> str:
     return f"{str(name or '').strip().lower()}|{str(size or '').strip().lower()}"
 
 
+# ── What production has used, kept until something it depends on changes ──
+#
+# _production_consumed_map expands every completed lot's components (28,000
+# rows by 2026-11) on every call: ~420 ms, and 99% of opening an inspection
+# checklist, which asks it for a dozen items at a time. The answer only moves
+# when one of its inputs does, so current_stock_of keeps the last one, per
+# worker, with the inputs' signature it was computed under:
+#
+#   erp.production / items / units   count, highest row_version (a trigger
+#                                    stamps every insert and update from one
+#                                    sequence), highest id
+#   erp.stock_adjustments            count, highest id, and a hash of the
+#                                    names (an item rename carries its counts
+#                                    in place)
+#   production_receipts / lines      live count, highest id
+#
+# Reading that signature costs ~4 ms. It is read BEFORE the map is computed,
+# so a figure is never filed under inputs older than the data it came from.
+# CONSUMED_CACHE_MAX_AGE_S bounds anything a path not listed here could
+# change. Only current_stock_of uses this; the Stock page and the dashboards
+# still compute the map every time.
+_CONSUMED_INPUTS_SQL = """
+SELECT concat_ws(';',
+  (SELECT concat_ws(',', count(*), max(row_version), max(id)) FROM erp.production),
+  (SELECT concat_ws(',', count(*), max(row_version), max(id)) FROM erp.items),
+  (SELECT concat_ws(',', count(*), max(row_version), max(id)) FROM erp.units),
+  (SELECT concat_ws(',', count(*), max(id),
+          sum(hashtext(lower(COALESCE(item_name, '')) || '|'
+                       || lower(COALESCE(size, '')))::bigint))
+     FROM erp.stock_adjustments),
+  (SELECT concat_ws(',', count(*) FILTER (WHERE deleted_at IS NULL), max(id))
+     FROM erp.production_receipts),
+  (SELECT concat_ws(',', count(*), max(id)) FROM erp.production_receipt_lines)
+) AS signature
+"""
+CONSUMED_CACHE_MAX_AGE_S = 600
+# (signature, monotonic time computed, map). Replaced whole, never mutated,
+# so a worker's threads can read it without a lock.
+_consumed_cache: tuple | None = None
+
+
+def _consumed_inputs_signature(cur) -> str:
+    cur.execute(_CONSUMED_INPUTS_SQL)
+    row = cur.fetchone()
+    return str(row["signature"] if isinstance(row, dict) else row[0])
+
+
+def _production_consumed_map_kept(cur) -> dict:
+    """_production_consumed_map(cur) for every item, reused while its inputs
+    are unchanged (see above). Callers only read it."""
+    global _consumed_cache
+    if not config_maps.TABLE_NAMES.get("PRODUCTION"):
+        return _production_consumed_map(cur)
+    signature = _consumed_inputs_signature(cur)
+    kept = _consumed_cache
+    now = time.monotonic()
+    if (
+        kept is not None
+        and kept[0] == signature
+        and now - kept[1] < CONSUMED_CACHE_MAX_AGE_S
+    ):
+        return kept[2]
+    consumed = _production_consumed_map(cur)
+    _consumed_cache = (signature, now, consumed)
+    return consumed
+
+
 def current_stock_of(cur, pairs) -> dict:
     """{"name|size": Current Stock} for the items among `pairs` ((name, size),
     any case) that have a Stock row -- the figure the Stock page shows, for
@@ -690,7 +758,13 @@ def current_stock_of(cur, pairs) -> dict:
     rows = cur.fetchall()
     if not rows:
         return {}
-    terms = _get_stock_terms(cur, keys)
+    # _get_stock_terms(cur, keys), with the production term kept between
+    # changes: the one part that is not narrowed to `keys`.
+    terms = StockTerms(
+        anchors=_anchor_map(cur, keys),
+        moved=_movement_map(cur, keys),
+        consumed=_production_consumed_map_kept(cur),
+    )
     return {
         _stock_key(r["item_name"], r["size"]): terms.current(
             _stock_key(r["item_name"], r["size"]), r["initial_stock"]

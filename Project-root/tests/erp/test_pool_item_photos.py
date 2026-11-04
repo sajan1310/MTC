@@ -225,8 +225,11 @@ def test_a_pool_row_named_like_an_items_master_item_keeps_to_the_pool(
         )
     )
     assert _photo_rows(erp_app, frame)[0]["image"] == JPEG_URL
+    # The Items Master item keeps its own photo (listed by its address).
     items = _ok(_rpc(erp_client, "getItemsData"))["data"]
-    assert next(i for i in items if i["name"] == frame)["image"] == PNG_URL
+    listed = next(i for i in items if i["name"] == frame)["image"]
+    assert listed.startswith("/erp/item-photo/")
+    assert erp_client.get(listed).data == base64.b64decode(PNG_URL.partition(",")[2])
 
 
 def test_a_saved_sheet_row_the_pool_knows_is_a_pool_row(erp_app, erp_client):

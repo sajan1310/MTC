@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import uuid
 
+import psycopg2.extras
 import pytest
 
 import database
@@ -67,32 +69,173 @@ def test_save_item_creates_with_vendors_and_lists_it(erp_client):
     ]
 
 
-def test_save_item_stores_and_returns_image(erp_client):
-    """Item Master photo upload (migrations/erp/024_items_image.sql):
-    itemImage round-trips through save -> get exactly like any other field.
-    """
-    name = _unique_name("Sprocket")
-    fake_data_url = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD=="
-    resp = _rpc(
-        erp_client,
-        "saveItem",
-        [
-            {
-                "itemName": name,
-                "itemSize": "42T",
-                "itemBaseUnit": "Pcs",
-                "itemImage": fake_data_url,
-            }
-        ],
-        mutation=True,
-    )
-    body = resp.get_json()
-    assert body["success"] is True
-    assert body["data"]["item"]["image"] == fake_data_url
+# ── Photos: stored whole, listed by address ──────────────────────────────
+#
+# getItemsData sends each photo's address (/erp/item-photo/<id>?v=...), not
+# the photo: inline, a hundred inspection photos made the list 6 MB gzipped
+# on every load. saveItem reads its own address sent back as "unchanged",
+# which is what both apps -- including a phone still on the previous build --
+# send for a photo nobody touched.
 
-    listed = _rpc(erp_client, "getItemsData").get_json()["data"]
-    match = next(i for i in listed if i["name"] == name and i["size"] == "42T")
-    assert match["image"] == fake_data_url
+PHOTO = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD=="
+
+
+def _stored_item(name: str, size: str = "") -> dict:
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
+        cur.execute(
+            "SELECT id, image, row_version FROM erp.items WHERE deleted_at IS NULL "
+            "AND lower(item_name) = lower(%s) AND lower(size) = lower(%s)",
+            (name, size),
+        )
+        return dict(cur.fetchone())
+
+
+def _address(row: dict) -> str:
+    return f"/erp/item-photo/{row['id']}?v={row['row_version']}"
+
+
+def _listed(client, name: str, size: str = "") -> dict:
+    listed = _rpc(client, "getItemsData").get_json()["data"]
+    return next(i for i in listed if i["name"] == name and i["size"] == size)
+
+
+def _save(client, fields: dict) -> dict:
+    body = _rpc(client, "saveItem", [{"itemBaseUnit": "Pcs", **fields}], mutation=True)
+    body = body.get_json()
+    assert body["success"] is True, body
+    return body
+
+
+def test_save_item_stores_the_photo_and_hands_back_its_address(erp_client):
+    name = _unique_name("Sprocket")
+    body = _save(erp_client, {"itemName": name, "itemSize": "42T", "itemImage": PHOTO})
+
+    stored = _stored_item(name, "42T")
+    assert stored["image"] == PHOTO
+    assert body["data"]["item"]["image"] == _address(stored)
+    assert _listed(erp_client, name, "42T")["image"] == _address(stored)
+
+    served = erp_client.get(_address(stored))
+    assert served.status_code == 200
+    assert served.mimetype == "image/jpeg"
+    assert served.data == base64.b64decode(PHOTO.partition(",")[2])
+
+
+def test_the_item_list_carries_no_photo_data(erp_client):
+    name = _unique_name("Camera")
+    photo = "data:image/jpeg;base64," + "QUJD" * 20_000  # 80,000 characters
+    _save(erp_client, {"itemName": name, "itemImage": photo})
+
+    resp = _rpc(erp_client, "getItemsData")
+    assert "QUJDQUJDQUJD" not in resp.get_data(as_text=True)
+    assert _listed(erp_client, name)["image"].startswith("/erp/item-photo/")
+
+
+def test_a_photo_the_address_could_not_serve_gets_no_address(erp_client):
+    """/erp/item-photo serves raster types only, so an SVG gets no address
+    rather than one that answers 404."""
+    name = _unique_name("Vector")
+    _save(
+        erp_client,
+        {"itemName": name, "itemImage": "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="},
+    )
+    assert _listed(erp_client, name)["image"] == ""
+
+
+def test_saving_the_listed_item_back_keeps_its_photo(erp_client):
+    """A phone on the previous build edits an item the way it always has:
+    every field as listed, `image` included, sent back with the change."""
+    name = _unique_name("Hub")
+    _save(erp_client, {"itemName": name, "itemImage": PHOTO})
+    before = _stored_item(name)
+    listed = _listed(erp_client, name)
+
+    body = _save(
+        erp_client,
+        {
+            "itemName": name,
+            "itemNarration": "rear",
+            "itemImage": listed["image"],
+            "originalName": name,
+            "originalSize": "",
+        },
+    )
+
+    after = _stored_item(name)
+    assert after["image"] == PHOTO
+    # Every save moves the address on, so no browser keeps a stale copy.
+    assert after["row_version"] != before["row_version"]
+    assert body["data"]["item"]["image"] == _address(after)
+
+
+def test_a_rename_sent_with_the_address_keeps_the_photo(erp_client):
+    name = _unique_name("Spoke")
+    _save(erp_client, {"itemName": name, "itemImage": PHOTO})
+    address = _listed(erp_client, name)["image"]
+
+    renamed = name + "-X"
+    _save(
+        erp_client,
+        {
+            "itemName": renamed,
+            "itemImage": address,
+            "originalName": name,
+            "originalSize": "",
+        },
+    )
+    assert _stored_item(renamed)["image"] == PHOTO
+
+
+def test_an_absolute_address_is_read_the_same(erp_client):
+    """A client may hand over an <img>'s resolved src."""
+    name = _unique_name("Pedal")
+    _save(erp_client, {"itemName": name, "itemImage": PHOTO})
+    address = "https://maharaja-erp.example" + _listed(erp_client, name)["image"]
+
+    _save(
+        erp_client,
+        {
+            "itemName": name,
+            "itemImage": address,
+            "originalName": name,
+            "originalSize": "",
+        },
+    )
+    assert _stored_item(name)["image"] == PHOTO
+
+
+def test_another_items_address_copies_its_photo(erp_client):
+    source = _unique_name("Saddle")
+    _save(erp_client, {"itemName": source, "itemImage": PHOTO})
+    copy = _unique_name("SaddleCopy")
+
+    _save(
+        erp_client,
+        {"itemName": copy, "itemImage": _listed(erp_client, source)["image"]},
+    )
+    assert _stored_item(copy)["image"] == PHOTO
+    assert _stored_item(source)["image"] == PHOTO
+
+
+def test_the_address_of_an_item_that_is_gone_saves_no_photo(erp_client):
+    name = _unique_name("Ghost")
+    _save(erp_client, {"itemName": name, "itemImage": "/erp/item-photo/2147483000?v=1"})
+    assert _stored_item(name)["image"] == ""
+
+
+def test_clearing_the_photo_still_removes_it(erp_client):
+    name = _unique_name("Bell")
+    _save(erp_client, {"itemName": name, "itemImage": PHOTO})
+
+    _save(
+        erp_client,
+        {"itemName": name, "itemImage": "", "originalName": name, "originalSize": ""},
+    )
+    assert _stored_item(name)["image"] == ""
+    assert _listed(erp_client, name)["image"] == ""
 
 
 def test_save_item_without_image_defaults_to_empty_string(erp_client):

@@ -40,6 +40,7 @@ import base64
 import bisect
 import json
 import math
+import re
 
 import psycopg2.extras
 
@@ -838,7 +839,8 @@ def _row_to_item_record(row, vendor_rows, units_map) -> dict:
         "baseUnit": base_unit,
         "purchaseUnit": purchase_unit,
         "weightPerBaseUnit": weight_per_base_unit,
-        "image": row["image"] or "",
+        # The photo's address, not the photo: see _photo_link.
+        "image": _photo_link(row),
         "vendors": vendors,
         "unpricedVendors": unpriced_vendors,
     }
@@ -890,6 +892,67 @@ def photo_url(item_id, row_version) -> str:
     return f"/erp/item-photo/{int(item_id)}?v={photo_version(row_version)}"
 
 
+# ── The item list carries photo addresses, not photos ─────────────────────
+#
+# getItemsData used to send every photo inline. Once inspectors began
+# photographing items from the checklist (2026-11-02), the list went from
+# 28 KB to 6 MB gzipped in two days, about a hundred photos, and kept
+# growing. Every desktop page and phone screen that needs items (fourteen
+# phone screens, all of Stock, PO, Bill, Log Lot) downloaded it, and phones
+# parsed it and copied it into the offline cache on the main thread: 600-700
+# ms blocked per load at budget-phone speed, so taps waited (INP "poor").
+# Reading every photo also made the list's own query 1.5-4.7 s whenever the
+# server was busy.
+#
+# So `image` is the photo's address, /erp/item-photo/<id>?v=<row_version>,
+# which the browser fetches only for a photo on screen and then keeps (see
+# pages._photo_response). The key keeps its name, and both apps already use
+# it only as an <img src> and send it back unchanged on save, so a phone
+# still running the previous build shows photos and saves items correctly:
+# save_item reads a returned address as "keep this photo".
+#
+# Whether a row has a servable photo is judged from the stored value's first
+# characters (left(image, ...)), which PostgreSQL reads without loading the
+# rest of the photo.
+_PHOTO_HEAD_SQL = "left(image, 64) AS photo_head"
+
+# What saveItem is sent back for an unchanged photo. Absolute too: a client
+# may hand over an <img>'s resolved src.
+_PHOTO_LINK = re.compile(r"^(?:https?://[^/?#]+)?/erp/item-photo/(\d+)(?:\?v=[^&#]*)?$")
+
+
+def _photo_link(row) -> str:
+    """The item's photo address, or "" when it has no photo the address
+    would serve (none, or not a raster image -- see decode_photo)."""
+    head = row.get("photo_head") or ""
+    header, sep, _ = head.partition(",")
+    mimetype = header[len("data:") :].split(";", 1)[0].strip().lower()
+    if (
+        not sep
+        or not head.startswith("data:image/")
+        or ";base64" not in header
+        or mimetype not in _SERVABLE_PHOTO_TYPES
+    ):
+        return ""
+    return photo_url(row["id"], row["row_version"])
+
+
+def _photo_link_item_id(value: str):
+    """The item id a photo address names, or None when `value` is not one."""
+    match = _PHOTO_LINK.match(value)
+    return int(match.group(1)) if match else None
+
+
+def _stored_photo(cur, item_id) -> str:
+    """A live item's stored photo, "" when it has none or is gone."""
+    cur.execute(
+        "SELECT image FROM erp.items WHERE id = %s AND deleted_at IS NULL",
+        (item_id,),
+    )
+    row = cur.fetchone()
+    return (row["image"] or "") if row else ""
+
+
 def decode_photo(image):
     """(mimetype, bytes) for a stored photo, or None when it is not a raster
     image. Also serves the Warehouse Pool's photos (warehouse_service)."""
@@ -934,7 +997,10 @@ def get_items_data():
         cur.execute(
             """
             SELECT id, item_name, size, remarks, narration, specification,
-                   base_unit, purchase_unit, weight_per_base_unit, image
+                   base_unit, purchase_unit, weight_per_base_unit,
+                   row_version, """
+            + _PHOTO_HEAD_SQL
+            + """
             FROM erp.items
             WHERE deleted_at IS NULL
             ORDER BY lower(item_name)
@@ -969,7 +1035,10 @@ def _fetch_item_record(cur, item_id):
     cur.execute(
         """
         SELECT id, item_name, size, remarks, narration, specification,
-               base_unit, purchase_unit, weight_per_base_unit, image
+               base_unit, purchase_unit, weight_per_base_unit,
+               row_version, """
+        + _PHOTO_HEAD_SQL
+        + """
         FROM erp.items WHERE id = %s
         """,
         (item_id,),
@@ -1008,12 +1077,18 @@ def save_item(conn, cur, form_data):
     narration = str(form_data.get("itemNarration") or "").strip()
     spec = str(form_data.get("itemSpec") or "").strip()
     image = str(form_data.get("itemImage") or "").strip()
-    if len(image) > 3_000_000:
+    # The item's own photo address, as getItemsData sent it, is "unchanged":
+    # the client never held the photo itself (see _photo_link). Resolved
+    # once the item being saved is known, below.
+    photo_from = _photo_link_item_id(image)
+    if photo_from is not None:
+        image = None
+    elif len(image) > 3_000_000:
         # Client-side resize (items.js, same canvas-resize approach as the
         # company logo) targets well under this -- a value this large means
         # something bypassed that resize, not a legitimate photo.
         raise ValueError("Item photo is too large. Please choose a smaller image.")
-    if image and not image.startswith("data:image/"):
+    elif image and not image.startswith("data:image/"):
         # The only legitimate producer is canvas-resize, which always emits
         # a data:image/... URI -- anything else is not a photo (and, since
         # this value is rendered into an <img src="..."> on mobile, letting
@@ -1085,13 +1160,22 @@ def save_item(conn, cur, form_data):
 
     user_id = get_current_user_id()
 
+    # A returned address keeps the photo where it is: the edited item's own
+    # stays in the row untouched (never read out and written back). Any other
+    # item's -- not something either app sends -- is copied, so what was on
+    # screen is what is saved.
+    keep_photo = image is None and is_edit and photo_from == existing_id
+    if image is None and not keep_photo:
+        image = _stored_photo(cur, photo_from)
+
     if is_edit:
         item_id = existing_id
         cur.execute(
             """
             UPDATE erp.items
             SET item_name = %s, size = %s, remarks = %s, narration = %s, specification = %s,
-                base_unit = %s, purchase_unit = %s, weight_per_base_unit = %s, image = %s, updated_by = %s
+                base_unit = %s, purchase_unit = %s, weight_per_base_unit = %s,
+                image = CASE WHEN %s THEN image ELSE %s END, updated_by = %s
             WHERE id = %s
             """,
             (
@@ -1103,7 +1187,8 @@ def save_item(conn, cur, form_data):
                 base_unit,
                 purchase_unit,
                 weight_per_base_unit,
-                image,
+                keep_photo,
+                image or "",
                 user_id,
                 item_id,
             ),

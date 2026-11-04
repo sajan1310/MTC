@@ -254,3 +254,158 @@ def test_stock_is_a_quantity_not_money():
     }
     stripped = financials.strip_financials(reply["data"], "getInspection")
     assert stripped["items"][0]["stock"]["qty"] == 40.0
+
+
+# ── What production used, kept between checklist opens (2026-11-03) ──────
+#
+# stock_service keeps the production term of Current Stock -- 99% of opening
+# a checklist -- until one of its inputs changes. The figure on the checklist
+# must still follow every change.
+
+
+def _qty(client, lot_id, name):
+    row = next(i for i in _items(client, lot_id) if i["itemName"] == name)
+    return row["stock"]["qty"]
+
+
+def _counting_consumed(monkeypatch):
+    from app.erp.services import stock_service
+
+    calls = []
+    real = stock_service._production_consumed_map
+
+    def counted(cur, keys=None):
+        calls.append(1)
+        return real(cur, keys)
+
+    monkeypatch.setattr(stock_service, "_production_consumed_map", counted)
+    return calls
+
+
+def test_opening_checklists_again_reuses_what_production_used(
+    erp_app, erp_client, monkeypatch
+):
+    seat, _rim, _frame = _names()
+    _item(erp_app, erp_client, seat, on_hand=40)
+    lot_id = _lot(erp_app, [_component(seat, 10)])
+    calls = _counting_consumed(monkeypatch)
+
+    for _ in range(3):
+        assert _qty(erp_client, lot_id, seat) == 40
+    assert len(calls) == 1
+
+
+def test_a_lot_completed_since_is_counted(erp_app, erp_client):
+    seat, _rim, _frame = _names()
+    _item(erp_app, erp_client, seat, on_hand=40)
+    lot_id = _lot(erp_app, [_component(seat, 10)])
+    assert _qty(erp_client, lot_id, seat) == 40
+
+    _lot(erp_app, [_component(seat, 7)], status="Completed")
+    assert _qty(erp_client, lot_id, seat) == 33
+
+
+def test_a_lot_marked_completed_in_place_is_counted(erp_app, erp_client):
+    seat, _rim, _frame = _names()
+    _item(erp_app, erp_client, seat, on_hand=40)
+    lot_id = _lot(erp_app, [_component(seat, 10)])
+    other = _lot(erp_app, [_component(seat, 4)], status="In Progress")
+    assert _qty(erp_client, lot_id, seat) == 40
+
+    with erp_app.app_context():
+        with database.get_conn() as (_conn, cur):
+            cur.execute(
+                "UPDATE erp.production SET status = 'Completed' WHERE id = %s", (other,)
+            )
+    assert _qty(erp_client, lot_id, seat) == 36
+
+
+def test_a_count_taken_since_starts_the_figure_again(erp_app, erp_client):
+    """A count is the starting point: production before it no longer counts,
+    so the kept figure must not outlive a new count."""
+    seat, _rim, _frame = _names()
+    _item(erp_app, erp_client, seat, on_hand=40)
+    lot_id = _lot(erp_app, [_component(seat, 10)])
+    _lot(erp_app, [_component(seat, 7)], status="Completed")
+    assert _qty(erp_client, lot_id, seat) == 33
+
+    _ok(
+        _rpc(
+            erp_client,
+            "adjustStockManually",
+            [seat, "", 50, "Counted on the shelf"],
+            mutation=True,
+        )
+    )
+    assert _qty(erp_client, lot_id, seat) == 50
+
+
+def _signature(app):
+    from app.erp.services import stock_service
+
+    with app.app_context():
+        with database.get_conn() as (_conn, cur):
+            return stock_service._consumed_inputs_signature(cur)
+
+
+def test_every_input_of_the_kept_figure_changes_its_signature(erp_app, erp_client):
+    seat, _rim, _frame = _names()
+    _item(erp_app, erp_client, seat, on_hand=40)
+    lot_id = _lot(erp_app, [_component(seat, 10)])
+    _ok(
+        _rpc(
+            erp_client,
+            "adjustStockManually",
+            [seat, "", 12, "Counted on the shelf"],
+            mutation=True,
+        )
+    )
+
+    def changes(sql, params=()):
+        before = _signature(erp_app)
+        with erp_app.app_context():
+            with database.get_conn() as (_conn, cur):
+                cur.execute(sql, params)
+        assert _signature(erp_app) != before, sql
+
+    changes("UPDATE erp.production SET qty = qty + 1 WHERE id = %s", (lot_id,))
+    changes(
+        "UPDATE erp.items SET base_unit = base_unit WHERE lower(item_name) = lower(%s)",
+        (seat,),
+    )
+    # A rename carries an item's counts in place: no row is added.
+    changes(
+        "UPDATE erp.stock_adjustments SET item_name = item_name || '-X' "
+        "WHERE lower(item_name) = lower(%s)",
+        (seat,),
+    )
+    changes(
+        "INSERT INTO erp.production_receipts (production_id, receipt_date, qty) "
+        "VALUES (%s, CURRENT_DATE, 2)",
+        (lot_id,),
+    )
+    changes(
+        "INSERT INTO erp.production_receipt_lines (receipt_id, qty) "
+        "SELECT max(id), 2 FROM erp.production_receipts"
+    )
+    # A receipt is deleted by marking it, never edited.
+    changes(
+        "UPDATE erp.production_receipts SET deleted_at = NOW() "
+        "WHERE id = (SELECT max(id) FROM erp.production_receipts)"
+    )
+
+
+def test_the_kept_figure_is_recomputed_after_its_maximum_age(
+    erp_app, erp_client, monkeypatch
+):
+    from app.erp.services import stock_service
+
+    seat, _rim, _frame = _names()
+    _item(erp_app, erp_client, seat, on_hand=40)
+    lot_id = _lot(erp_app, [_component(seat, 10)])
+    calls = _counting_consumed(monkeypatch)
+    monkeypatch.setattr(stock_service, "CONSUMED_CACHE_MAX_AGE_S", 0)
+
+    _qty(erp_client, lot_id, seat)
+    _qty(erp_client, lot_id, seat)
+    assert len(calls) == 2

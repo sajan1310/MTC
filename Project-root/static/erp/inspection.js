@@ -8,14 +8,14 @@
 // waiting for review -- after seeing what is not ticked, and can send a lot
 // back. Every rule lives in app/erp/services/inspection_service.py.
 
-// Where a lot stands, as inspection_service.stage() names it. `rank` orders
-// the list: what waits on an admin first.
+// Where a lot stands, as inspection_service.stage() names it: a badge on each
+// lot and a filter each. The list keeps the server's order (see _visible).
 const INSPECTION_STAGES = {
-  needs_review: { label: 'Needs review', cls: 'bg-warning text-dark', rank: 0 },
-  complete: { label: 'All checked', cls: 'bg-info text-dark', rank: 1 },
-  partial: { label: 'Partially checked', cls: 'bg-primary-subtle text-primary-emphasis', rank: 2 },
-  not_started: { label: 'Not started', cls: 'bg-secondary-subtle text-secondary-emphasis', rank: 3 },
-  cleared: { label: 'Inspected', cls: 'bg-success', rank: 4 }
+  needs_review: { label: 'Needs review', cls: 'bg-warning text-dark' },
+  complete: { label: 'All checked', cls: 'bg-info text-dark' },
+  partial: { label: 'Partially checked', cls: 'bg-primary-subtle text-primary-emphasis' },
+  not_started: { label: 'Not started', cls: 'bg-secondary-subtle text-secondary-emphasis' },
+  cleared: { label: 'Inspected', cls: 'bg-success' }
 };
 
 const INSPECTION_LOT_STATUS = {
@@ -82,22 +82,22 @@ App.Inspection = {
     return INSPECTION_STAGES[stage] ? stage : 'not_started';
   },
 
+  // In the server's order, newest lot first, whatever stage each is at. It
+  // used to sort by stage, so a lot moved up the table the moment it was
+  // ticked and seemed to vanish from one load to the next (2026-11-03);
+  // the stage filters do the grouping.
   _visible() {
     const keep = this._filter === 'all' ? () => true : lot => this._stage(lot.inspection) === this._filter;
     // Every word must appear somewhere, in any field -- the phone's grammar.
     const words = this._search.split(/\s+/).filter(Boolean);
-    const rank = lot => INSPECTION_STAGES[this._stage(lot.inspection)].rank;
     return this._lots
-      .map((lot, i) => ({ lot, i }))
-      .filter(({ lot }) => keep(lot))
-      .filter(({ lot }) => {
+      .filter(lot => keep(lot))
+      .filter(lot => {
         const insp = lot.inspection || {};
         const hay = [lot.lotNumber, lot.processName, lot.outputItemName, lot.date, lot.status,
           insp.remarks, insp.clearedByName, insp.flaggedByName].join(' ').toLowerCase();
         return words.every(w => hay.includes(w));
-      })
-      .sort((a, b) => (rank(a.lot) - rank(b.lot)) || (a.i - b.i))
-      .map(({ lot }) => lot);
+      });
   },
 
   _when(iso) {

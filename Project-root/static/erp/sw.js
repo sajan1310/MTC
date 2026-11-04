@@ -536,7 +536,13 @@
 // v109: every Warehouse Pool row of an inspection checklist can take a photo,
 // and the Warehouse Pool shows and sets the same photo. inspection.js,
 // stock.js and styles.css are precached.
-const CACHE_NAME = 'erp-shell-v109';
+// v110: the item list carries each photo's address, not the photo, and the
+// Items list loads its thumbnails as they come into view. items.js is
+// precached.
+// v111: the Inspections list keeps the server's order (newest lot first)
+// instead of re-sorting by stage, so a lot no longer jumps up the table the
+// moment it is ticked. inspection.js is precached.
+const CACHE_NAME = 'erp-shell-v111';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

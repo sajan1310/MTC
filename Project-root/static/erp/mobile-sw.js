@@ -229,7 +229,12 @@
 // v100: every Warehouse Pool row of an inspection checklist can take a
 // photo, and the Warehouse Pool shows and sets the same photo. mobile.js and
 // mobile_styles.css carry it.
-const CACHE_NAME = 'erp-mobile-shell-v100';
+// v101: the item list carries each photo's address, not the photo, and the
+// Items list loads its photos as they come into view. mobile.js carries it.
+// v102: the inspection list keeps the server's order instead of re-sorting by
+// stage, and a started inspection stays on "To inspect" until it is cleared
+// even if Production completes the lot. mobile.js carries it.
+const CACHE_NAME = 'erp-mobile-shell-v102';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

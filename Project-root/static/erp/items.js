@@ -617,7 +617,7 @@ App.Item = {
           </td>
           <td class="d-flex align-items-center gap-2 item-cell-name" style="cursor:pointer;" title="Click to edit item">
             ${item.image
-              ? `<img src="${escapeHtml(item.image)}" alt="" class="item-thumb" width="32" height="32">`
+              ? `<img src="${escapeHtml(item.image)}" alt="" class="item-thumb" width="32" height="32" loading="lazy" decoding="async">`
               : `<span class="item-thumb item-thumb-placeholder" aria-hidden="true"><i class="bi bi-image"></i></span>`}
             <strong class="text-primary">${escapeHtml(item.name || '')}</strong>
           </td>
