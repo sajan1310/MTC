@@ -237,7 +237,11 @@
 // v103: the Stock list shows fifty at a time and searches without rebuilding
 // its index; the fuzzy fallback works each word out once. mobile.js carries
 // it.
-const CACHE_NAME = 'erp-mobile-shell-v103';
+// v104: the Item Ledger's Master Rate is per base unit, like the PO rate
+// beside it, and a stock count saved offline carries when it was made, so
+// it takes effect then and not when it syncs. print-templates.js and
+// mobile.js carry it.
+const CACHE_NAME = 'erp-mobile-shell-v104';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

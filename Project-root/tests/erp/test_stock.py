@@ -114,7 +114,10 @@ def test_adjust_stock_manually_requires_reason(erp_client):
     assert resp.get_json()["success"] is False
 
 
-def test_adjust_stock_manually_same_value_is_a_noop(erp_client):
+def test_adjust_stock_manually_same_value_is_recorded_as_a_count(erp_client):
+    """A shelf that matches the book is still a count -- the figure the
+    item's stock starts from. It used to be turned away as "nothing to
+    adjust", and the count was lost."""
     name = _unique_name("SameValue")
     _create_item_with_stock(erp_client, name, initial_stock=20)
 
@@ -122,8 +125,17 @@ def test_adjust_stock_manually_same_value_is_a_noop(erp_client):
         erp_client, "adjustStockManually", [name, "", 20, "No change"], mutation=True
     )
     body = resp.get_json()
-    assert body["success"] is False
+    assert body["success"] is True
     assert body["data"] == {"oldCurrentStock": 20, "newCurrentStock": 20}
+    assert "the same as the book" in body["message"]
+
+    history = _rpc(erp_client, "getStockAdjustmentHistory").get_json()["data"]
+    record = next(h for h in history if h["itemName"] == name)
+    assert (record["action"], record["oldValue"], record["newValue"]) == (
+        "ADJUST",
+        20,
+        20,
+    )
 
 
 def test_import_stock_data_adds_new_and_updates_existing(erp_client):

@@ -2447,10 +2447,10 @@ App.Stock = {
         const res = await Api.mutate('adjustStockManually', name, size, newQty, 'Inline edit via Stock table');
         if (!res?.success) {
           App.Utils.showToast(res?.message || 'Failed to update stock.', true);
-          // The server's "nothing to adjust" rejection means its fresh
-          // read of Current Stock already equals newQty -- i.e. our
-          // on-screen oldQty was stale. Reconcile the display to that
-          // authoritative value instead of reverting to the stale one.
+          // A typed figure the server already holds (our on-screen oldQty
+          // was stale) is no longer turned away: it is recorded as a count
+          // like any other. Kept for a failure that still carries the
+          // server's figure.
           const serverQty = res?.data?.oldCurrentStock;
           if (typeof serverQty === 'number' && !isNaN(serverQty) && serverQty !== oldQty) {
             applyLocally(serverQty);

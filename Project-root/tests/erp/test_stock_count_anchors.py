@@ -21,9 +21,10 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import date, timedelta
+from datetime import date, timedelta, timezone
 
 import psycopg2.extras
+import pytest
 
 import database
 
@@ -520,3 +521,110 @@ def test_an_adjustment_reports_the_anchored_figure_as_its_old_value(erp_client):
         newest = cur.fetchone()
     assert float(newest["old_value"]) == 70
     assert float(newest["new_value"]) == 64
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# The last count is the starting point -- whatever it says, whenever it lands
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_a_count_that_matches_the_book_becomes_the_starting_point(erp_client):
+    """A shelf that agrees with the book is a count like any other. Turned
+    away as "nothing to adjust", it left an older figure as the starting
+    point, and a lot dated before it that reached the books later came off
+    stock that had already been counted without it."""
+    name = _unique_name("AnchorConfirm")
+    _make_item(erp_client, name, initial=50)
+    process_id = _process(erp_client)
+
+    _count(erp_client, name, 50)
+    _lot(erp_client, process_id, name, 10, "Completed", "2026-01-05")
+
+    assert _current(erp_client, name) == 50
+    data = _ledger(erp_client, name)
+    count_row = next(e for e in data["entries"] if e["kind"] == "ADJUSTMENT")
+    assert count_row["countsTowardStock"] is True
+    assert count_row["variance"] == 10
+    assert data["reconciliation"][0]["countedStock"] == 50
+    assert data["reconciliation"][0]["balanced"] is True
+
+
+def _db_now_minus(delta: timedelta) -> str:
+    """A moment as the phone sends it: ISO, in UTC, with a Z."""
+    with database.get_conn() as (_conn, cur):
+        cur.execute("SELECT NOW()")
+        now = cur.fetchone()[0]
+    return (now - delta).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _queued_count(client, name, qty, counted_at):
+    """A count replayed from the phone's offline outbox: the four arguments
+    a live count sends, plus when it was made."""
+    return _ok(
+        _rpc(
+            client,
+            "adjustStockManually",
+            [name, "", qty, "Phone recount", counted_at],
+            mutation=True,
+        )
+    )
+
+
+def test_a_count_made_offline_starts_from_when_it_was_made(erp_client):
+    """Counted on the phone an hour ago with no signal; an issue was entered
+    on the desk since. The issue left the shelf after the count, so it comes
+    off -- stamped on arrival, the count used to swallow it."""
+    name = _unique_name("AnchorQueued")
+    _make_item(erp_client, name, initial=50)
+    counted_at = _db_now_minus(timedelta(hours=1))
+    _issue(erp_client, name, 5, _ddmmyyyy(_db_today()))
+
+    data = _queued_count(erp_client, name, 40, counted_at)
+
+    assert _current(erp_client, name) == 35
+    assert data["newCurrentStock"] == 35
+    ledger = _ledger(erp_client, name)
+    issue_row = next(e for e in ledger["entries"] if e["kind"] == "ISSUE")
+    assert issue_row["countsTowardStock"] is True
+    assert ledger["reconciliation"][0]["countedStock"] == 40
+    assert ledger["reconciliation"][0]["balanced"] is True
+
+
+def test_a_queued_count_never_replaces_a_newer_count(erp_client):
+    name = _unique_name("AnchorQueuedOlder")
+    _make_item(erp_client, name, initial=50)
+    _count(erp_client, name, 30)
+
+    resp = _rpc(
+        erp_client,
+        "adjustStockManually",
+        [name, "", 99, "Phone recount", _db_now_minus(timedelta(hours=1))],
+        mutation=True,
+    ).get_json()
+
+    assert resp["success"] is True
+    assert "a newer count already holds this item" in resp["message"]
+    assert _current(erp_client, name) == 30
+    assert _ledger(erp_client, name)["reconciliation"][0]["countedStock"] == 30
+
+
+@pytest.mark.parametrize(
+    "counted_at",
+    ["future", "ten days ago", "not a time"],
+)
+def test_a_queued_count_with_a_time_to_distrust_takes_effect_on_arrival(
+    erp_client, counted_at
+):
+    name = _unique_name("AnchorQueuedClock")
+    _make_item(erp_client, name, initial=50)
+    _issue(erp_client, name, 5, _ddmmyyyy(_db_today()))
+    sent = {
+        "future": _db_now_minus(-timedelta(days=2)),
+        "ten days ago": _db_now_minus(timedelta(days=10)),
+        "not a time": "yesterday-ish",
+    }[counted_at]
+
+    _queued_count(erp_client, name, 40, sent)
+
+    # On arrival, after the issue was entered: the count holds it.
+    assert _current(erp_client, name) == 40
