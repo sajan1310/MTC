@@ -17,8 +17,10 @@ from flask import (
     send_from_directory,
     url_for,
 )
+from flask_limiter.util import get_remote_address
 from flask_login import current_user, login_required
 
+from .. import limiter
 from . import config_maps, erp_bp
 from .services.financials import FINANCE_ROLES, may_save_prices, sees_financials
 from .services.roles_service import get_role_permissions
@@ -282,7 +284,34 @@ def _awaiting_approval():
     ), 403
 
 
+# ── Photos: limited per person, not per address ──────────────────────────
+#
+# These two routes had no limit of their own, so the limiter's default
+# applied: 50 an hour and 200 a day per route, counted per client ADDRESS.
+# Behind Tailscale every user arrives as 127.0.0.1, so the whole factory
+# shared 50 photo fetches an hour -- on 2026-11-03 (10:33-10:42) inspection
+# checklists got 429s instead of their photos. Lists now fetch every photo
+# by its address (items_service._photo_link), which would reach that ceiling
+# sooner still.
+#
+# A photo is one row read, which the browser then keeps for good, so it gets
+# the RPC calls' per-user ceiling instead: it bounds a runaway loop, not
+# normal work. An explicit limit replaces the defaults for the route.
+def _photo_rate_limit() -> str:
+    return current_app.config.get("RATELIMIT_PHOTO", "600 per minute")
+
+
+def _per_user_key() -> str:
+    try:
+        if current_user and current_user.is_authenticated:
+            return f"user:{current_user.get_id()}"
+    except Exception:  # noqa: BLE001 -- outside a login context
+        pass
+    return f"ip:{get_remote_address()}"
+
+
 @erp_bp.route("/erp/item-photo/<int:item_id>")
+@limiter.limit(_photo_rate_limit, key_func=_per_user_key)
 @login_required
 def item_photo(item_id):
     """One Items Master photo, as an image (see items_service.get_item_photo).
@@ -304,6 +333,7 @@ def item_photo(item_id):
 
 
 @erp_bp.route("/erp/pool-photo/<int:photo_id>")
+@limiter.limit(_photo_rate_limit, key_func=_per_user_key)
 @login_required
 def pool_photo(photo_id):
     """One Warehouse Pool item's photo (warehouse_service.get_pool_photo),

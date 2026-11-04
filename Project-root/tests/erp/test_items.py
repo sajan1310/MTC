@@ -226,6 +226,19 @@ def test_the_address_of_an_item_that_is_gone_saves_no_photo(erp_client):
     assert _stored_item(name)["image"] == ""
 
 
+def test_photos_are_not_held_to_the_default_per_address_limit(erp_client):
+    """The limiter's default -- 50 an hour per route, per client address --
+    applied to photos, and behind Tailscale every user shares one address:
+    inspection checklists got 429s instead of photos on 2026-11-03. A photo
+    is limited per person now, generously."""
+    name = _unique_name("Busy")
+    _save(erp_client, {"itemName": name, "itemImage": PHOTO})
+    address = _listed(erp_client, name)["image"]
+
+    statuses = [erp_client.get(address).status_code for _ in range(60)]
+    assert set(statuses) == {200}, statuses
+
+
 def test_clearing_the_photo_still_removes_it(erp_client):
     name = _unique_name("Bell")
     _save(erp_client, {"itemName": name, "itemImage": PHOTO})
