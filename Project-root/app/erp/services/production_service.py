@@ -64,6 +64,7 @@ from . import lot_receipts
 from . import lot_reference_service
 from . import process_service
 from . import tags_service
+from . import units_service
 from . import warehouse_service
 from .current_user import get_current_user_id, get_current_user_name
 from .. import config_maps
@@ -423,7 +424,7 @@ def _with_master_narration(cur, components: list) -> list:
     return components
 
 
-def _consolidate_duplicate_components(components: list) -> list:
+def _consolidate_duplicate_components(components: list, in_base_unit=None) -> list:
     """Collapses more than one submitted line for the same physical
     consumption (same itemName+size+colorGroup) into one, instead of
     writing them as separate array entries that would each independently
@@ -445,7 +446,14 @@ def _consolidate_duplicate_components(components: list) -> list:
     Two lines that agree on sourceType are safe to sum -- same system,
     same physical meaning, and summing is exactly what a lot that
     legitimately lists the same item twice (e.g. two recipe rows for one
-    item) already implies.
+    item) already implies. Summed in ONE unit: a quantity means nothing
+    without its unit, and 1 Gross + 40 Pcs added as numbers under the
+    first line's unit came to 41 Gross -- 5,904 spokes for 184. When the
+    lines disagree on unit, `in_base_unit(component)` gives each one's
+    (quantity in its item's Base Unit, that Base Unit), and the merged line
+    is in the Base Unit. A unit that can't be converted is refused, as two
+    different units for one consumption are something only the operator
+    can settle.
     """
     order: list = []
     groups: dict = {}
@@ -482,7 +490,31 @@ def _consolidate_duplicate_components(components: list) -> list:
             )
 
         merged = dict(entries[0])
-        merged["qty"] = sum(e["qty"] for e in entries)
+        units = {str(e.get("unit") or "").strip().lower() for e in entries}
+        if len(units) == 1:
+            merged["qty"] = sum(e["qty"] for e in entries)
+        else:
+            if in_base_unit is None:
+                raise TypeError(
+                    "in_base_unit is needed to add up lines in different units"
+                )
+            try:
+                converted = [in_base_unit(e) for e in entries]
+            except ValueError:
+                listed = " and ".join(
+                    sorted(
+                        {
+                            str(e.get("unit") or "").strip() or "base unit"
+                            for e in entries
+                        }
+                    )
+                )
+                raise ValueError(
+                    f'"{entries[0]["itemName"]}" is listed more than once in this lot, in '
+                    f"{listed}, and those can't be added together. Use one unit for it."
+                )
+            merged["qty"] = sum(qty for qty, _unit in converted)
+            merged["unit"] = converted[0][1]
         result.append(merged)
 
     return result
@@ -1261,7 +1293,30 @@ def save_production(conn, cur, form_data):
         clean_components = kept_components
         dropped_colour_warning = _dropped_component_warning(dropped_for_colour)
 
-    clean_components = _consolidate_duplicate_components(clean_components)
+    # Read only when two lines for one consumption disagree on unit.
+    unit_maps: dict = {}
+
+    def _in_base_unit(component) -> tuple:
+        if not unit_maps:
+            unit_maps["items"] = items_service.get_item_unit_info_map(cur)
+            unit_maps["units"] = units_service.get_units_map(cur)
+        # A pool bucket has no size -- the lookup warehouse_service.
+        # pool_component_qty converts a POOL row's quantity by.
+        size = "" if component["sourceType"] == "POOL" else component["size"]
+        info = items_service.lookup_item_unit_info(
+            unit_maps["items"], component["itemName"], size
+        )
+        unit = str(component.get("unit") or "").strip() or info["baseUnit"]
+        return (
+            units_service.convert_qty_to_base_unit(
+                component["qty"], unit, info, unit_maps["units"]
+            ),
+            info["baseUnit"],
+        )
+
+    clean_components = _consolidate_duplicate_components(
+        clean_components, _in_base_unit
+    )
 
     if not clean_components:
         raise ValueError("At least one component consumed is required for this lot.")
@@ -2147,19 +2202,19 @@ def refresh_production_components_from_items_master(conn, cur):
     already handled by the rename cascade
     (backfill_production_consumed_item_refs).
 
-    unit is synced unconditionally to the item's current Base Unit,
-    including onto components whose stored unit is blank -- a blank
-    nominally already means "this item's Base Unit", but leaving it blank
-    keeps every reader dependent on resolving it live against Items Master.
-    Stamping the real unit in makes the stored snapshot self-describing.
-    This assumes a component's qty was entered in the item's Base Unit at
-    the time -- the common case; if an item's Base Unit was itself later
-    changed to a genuinely different unit, a lot that deliberately recorded
-    consumption in the OLD Base Unit would have its quantity reinterpreted
-    under the new one (confirmed acceptable, matching narration's own
-    philosophy of unconditional sync). Only applied to components_consumed
-    -- custom_components has no `unit` field at all (see
-    save_production_sheet's narrower schema) and must not gain one here.
+    unit is filled in with the item's current Base Unit where it is blank
+    -- a blank already means "this item's Base Unit", but leaving it blank
+    keeps every reader dependent on resolving it live against Items Master
+    -- and re-spelled where it names the Base Unit in other casing. A unit
+    that names a DIFFERENT unit is left exactly as recorded. A lot's
+    quantity is measured in its component's unit, and Stock converts it
+    from that unit on every read, so relabelling 2 Gross as 2 Pcs would
+    take 286 spokes off the lot's consumption without touching a single
+    quantity. Recipe rows carry their own unit, so a component in a unit
+    other than its item's Base Unit is a normal record, not stale data.
+    Only applied to components_consumed -- custom_components has no
+    `unit` field at all (see save_production_sheet's narrower schema) and
+    must not gain one here.
 
     sourceType is deliberately NOT filtered -- the lookup is by name+size,
     and a POOL row whose name happens to be a real Items Master item is the
@@ -2179,10 +2234,15 @@ def refresh_production_components_from_items_master(conn, cur):
             "Items Master is empty -- nothing to sync.",
         )
 
+    # Components recorded in a unit other than their item's Base Unit, left
+    # as recorded -- see the docstring.
+    kept_units = 0
+
     def _resync(components: list, has_unit: bool) -> tuple:
         """Returns (rewritten components, or None when nothing changed;
         number of individual fields corrected) -- the count used to be
         accumulated through a one-element list passed in as a mutable box."""
+        nonlocal kept_units
         if not components:
             return None, 0
         fields_changed = 0
@@ -2211,14 +2271,18 @@ def refresh_production_components_from_items_master(conn, cur):
             if str(comp.get("narration") or "").strip() != master["narration"]:
                 comp["narration"] = master["narration"]
                 fields_changed += 1
+            stored_unit = str(comp.get("unit") or "").strip()
             if (
                 has_unit
                 and "unit" in comp
                 and master["baseUnit"]
-                and str(comp.get("unit") or "").strip() != master["baseUnit"]
+                and stored_unit != master["baseUnit"]
             ):
-                comp["unit"] = master["baseUnit"]
-                fields_changed += 1
+                if stored_unit and stored_unit.lower() != master["baseUnit"].lower():
+                    kept_units += 1
+                else:
+                    comp["unit"] = master["baseUnit"]
+                    fields_changed += 1
         return (components if fields_changed else None), fields_changed
 
     cur.execute(
@@ -2251,6 +2315,11 @@ def refresh_production_components_from_items_master(conn, cur):
         message = f"All {len(rows)} production lot(s) already match Items Master -- nothing to change."
     else:
         message = f"Refreshed {fields_updated} field(s) (narration/unit/name) across {lots_updated} of {len(rows)} production lot(s)."
+    if kept_units:
+        message += (
+            f" {kept_units} component(s) recorded in a unit other than their item's "
+            "Base Unit kept that unit, so their quantities still mean what was recorded."
+        )
 
     return build_response(
         True,
@@ -2258,6 +2327,7 @@ def refresh_production_components_from_items_master(conn, cur):
             "lotsScanned": len(rows),
             "lotsUpdated": lots_updated,
             "fieldsUpdated": fields_updated,
+            "unitsKept": kept_units,
             "details": details,
         },
         message,

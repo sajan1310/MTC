@@ -4568,6 +4568,12 @@ MApp.Stock = {
 
     const mutationId = Api.newMutationId();
     const args = [item.name, item.size, newValue, reason];
+    // When the shelf was counted. Sent only with a count that has to wait in
+    // the outbox: it may reach the server hours later, and anything entered
+    // in between happened after the count, so the count takes effect when it
+    // was made, not on arrival (stock_service._queued_count_moment). A live
+    // save leaves it to the server's clock.
+    const countedAt = new Date().toISOString();
 
     MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', true, 'Saving…');
     try {
@@ -4588,7 +4594,7 @@ MApp.Stock = {
       if (err && err.isNetworkError) {
         // The fetch itself never reached the server -- queue it under the
         // same mutationId instead of failing outright.
-        await OfflineCache.outbox.enqueue(mutationId, 'adjustStockManually', args);
+        await OfflineCache.outbox.enqueue(mutationId, 'adjustStockManually', [...args, countedAt]);
         MApp.Outbox.updateBadge();
         MApp.Outbox.requestSync();
         MApp.Toast.success('Saved — will sync when back online.');

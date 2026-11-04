@@ -30,6 +30,7 @@ rename path).
 from __future__ import annotations
 
 import time
+from datetime import datetime, timedelta
 from typing import NamedTuple
 
 import psycopg2.extras
@@ -963,9 +964,54 @@ def update_dead_stock(conn, cur, item_name, size, is_dead_stock):
     return build_response(True, {"deadStock": dead_stock_val}, dead_stock_message)
 
 
+# A count the phone saved with no connection waits in its outbox and reaches
+# the server when the phone is back online -- minutes, hours or days later.
+# Stamped on arrival, it swallowed everything entered in between: an issue
+# made after the shelf was counted, but saved before the phone reconnected,
+# never came off. The phone now sends when the count was made, and that is
+# when it takes effect, within these bounds -- a moment ahead of the
+# server's clock, or older than a week, is a clock to distrust, and the
+# count takes effect on arrival as before.
+_QUEUED_COUNT_MAX_AGE = timedelta(days=7)
+
+
+def _queued_count_moment(cur, counted_at):
+    """When a count queued offline was made (`counted_at`, an ISO time), or
+    None for "now" -- a count saved online, or a time out of bounds."""
+    text = str(counted_at or "").strip()
+    if not text:
+        return None
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        return None
+    cur.execute("SELECT NOW() AS now")
+    now = cur.fetchone()["now"]
+    if moment >= now or moment < now - _QUEUED_COUNT_MAX_AGE:
+        return None
+    return moment
+
+
 @rpc_method("adjustStockManually", mutation=True)
 @database.transactional
-def adjust_stock_manually(conn, cur, item_name, size, new_current_stock, reason):
+def adjust_stock_manually(
+    conn, cur, item_name, size, new_current_stock, reason, counted_at=None
+):
+    """Records a count: `new_current_stock` is what is on the shelf, and from
+    here on the figure the item's Current Stock starts from.
+
+    A count is recorded even when it equals the book. Turned away as
+    "nothing to adjust" (as it used to be), the shelf's confirmation was
+    lost: the item's starting point stayed an older count, and anything
+    dated between the two that reached the books later still moved it. A
+    queued phone count (see _queued_count_moment) also arrived as a failed
+    sync.
+
+    `counted_at` is sent only by the phone's offline outbox: when the count
+    was made. A newer count already recorded stays the starting point.
+    """
     try:
         new_stock_val = float(new_current_stock)
     except (TypeError, ValueError):
@@ -995,21 +1041,12 @@ def adjust_stock_manually(conn, cur, item_name, size, new_current_stock, reason)
         raise ValueError("Item not found in Stock database.")
 
     key = _stock_key(row["item_name"], row["size"])
-    terms = _get_stock_terms(cur, [tuple(key.split("|", 1))])
+    keys = [tuple(key.split("|", 1))]
+    terms = _get_stock_terms(cur, keys)
+    # The book when the count reaches the server: what the ledger shows as
+    # the count's "book" (bookAtCount).
     old_current_stock = terms.current(key, row["initial_stock"])
-
-    if new_stock_val == old_current_stock:
-        # buildResponse() forces data to null on failure -- bypassed here
-        # (matches the source) so the UI can reconcile a stale on-screen
-        # value instead of being stuck re-submitting a rejected no-op edit.
-        return {
-            "success": False,
-            "data": {
-                "oldCurrentStock": old_current_stock,
-                "newCurrentStock": old_current_stock,
-            },
-            "message": "New stock value is the same as the current value -- nothing to adjust.",
-        }
+    moment = _queued_count_moment(cur, counted_at)
 
     # The row inserted below IS the count from here on: _get_stock_terms
     # starts this item from new_value and adds only what takes effect after
@@ -1031,17 +1068,62 @@ def adjust_stock_manually(conn, cur, item_name, size, new_current_stock, reason)
     )
     cur.execute(
         """
-        INSERT INTO erp.stock_adjustments (item_name, size, action, old_value, new_value, reason, created_by)
-        VALUES (%s, %s, 'ADJUST', %s, %s, %s, %s)
+        INSERT INTO erp.stock_adjustments
+            (item_name, size, action, old_value, new_value, reason, created_by, created_at)
+        VALUES (%s, %s, 'ADJUST', %s, %s, %s, %s, COALESCE(%s, NOW()))
+        RETURNING id, created_at
         """,
-        (item_name, size or "", old_current_stock, new_stock_val, reason_text, user_id),
+        (
+            item_name,
+            size or "",
+            old_current_stock,
+            new_stock_val,
+            reason_text,
+            user_id,
+            moment,
+        ),
     )
+    inserted = cur.fetchone()
 
     item_label = f'"{row["item_name"]}"' + (f" ({row['size']})" if row["size"] else "")
+    counted = units_service.format_qty(new_stock_val)
+    if abs(new_stock_val - old_current_stock) < 1e-9:
+        message = (
+            f"{item_label} counted at {counted}, the same as the book. "
+            "Its stock starts from this count."
+        )
+    else:
+        message = f"{item_label} stock adjusted to {counted}."
+
+    # Saved online, this count is the newest and Current Stock is what was
+    # counted. Made offline, it may be neither: Current Stock is the count
+    # plus whatever was entered while the phone waited to send it, or a newer
+    # count recorded meanwhile holds the item. (Only then is the item read
+    # again -- the production term costs ~0.4 s.)
+    current = new_stock_val
+    if moment is not None:
+        after = _get_stock_terms(cur, keys)
+        current = after.current(key, new_initial_stock)
+        anchor = after.anchors.get(key)
+        # The count's day as the server keeps it (its session time zone),
+        # not as the phone's UTC timestamp spells it.
+        day = date_utils.to_display_string(inserted["created_at"])
+        if anchor is not None and anchor[2] != inserted["id"]:
+            message = (
+                f"{item_label} counted at {counted} on {day}, but a newer count "
+                f"already holds this item ({units_service.format_qty(anchor[1])}), "
+                "so its stock starts from that one. "
+                f"Current Stock is {units_service.format_qty(current)}."
+            )
+        elif abs(current - new_stock_val) > 1e-9:
+            message += (
+                f" Counted on {day}; what was entered since brings it to "
+                f"{units_service.format_qty(current)}."
+            )
     return build_response(
         True,
-        {"oldCurrentStock": old_current_stock, "newCurrentStock": new_stock_val},
-        f"{item_label} stock adjusted to {new_stock_val:g}.",
+        {"oldCurrentStock": old_current_stock, "newCurrentStock": current},
+        message,
     )
 
 

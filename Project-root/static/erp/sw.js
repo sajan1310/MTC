@@ -546,7 +546,12 @@
 // hidden All Activity table is drawn only when opened, the dashboard paints
 // before start-up work and keeps room for its stage chart. core.js, items.js,
 // production.js and styles.css are precached.
-const CACHE_NAME = 'erp-shell-v112';
+// v113: the Item Ledger's Master Rate is per base unit, like the PO rate
+// beside it (a spoke bought by the Gross read 144x cheaper), and Refresh from
+// Items Master says it keeps a unit a component was recorded in.
+// print-templates.js and production.js are precached; so is stock.js, whose
+// inline count note now says a figure matching the book is recorded.
+const CACHE_NAME = 'erp-shell-v113';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

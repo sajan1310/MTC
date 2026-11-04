@@ -107,7 +107,9 @@ def _normalize_items(cur, raw_items) -> list:
 
         # An unconvertible unit must never block saving the PO -- fall back
         # to treating the as-entered qty/price as already in the Base Unit.
-        unit_info = items_service.lookup_item_unit_info(item_unit_map, name, size)
+        unit_info = items_service.unit_info_for_purchase_line(
+            item_unit_map, name, size, unit
+        )
         try:
             base_qty = units_service.convert_qty_to_base_unit(
                 qty, unit, unit_info, units_map
@@ -291,7 +293,13 @@ def _find_item_id(cur, name: str, size: str):
 
 
 def _auto_extract_from_po(
-    cur, vendor_name: str, contact: str, items: list, po_number: str, doc_date
+    cur,
+    vendor_name: str,
+    contact: str,
+    items: list,
+    po_number: str,
+    doc_date,
+    header_id=None,
 ) -> None:
     vendor_name = (vendor_name or "").strip()
     if not vendor_name:
@@ -310,16 +318,23 @@ def _auto_extract_from_po(
         # _auto_extract_item files this line's unit as the Purchase Unit
         # beside it, and every reader converts from that unit. Handed the
         # base rate instead, it filed spokes bought at Rs 100 a Gross as
-        # Rs 0.69 a Gross. Rate History stays per Base Unit.
-        items_service._auto_extract_item(
-            cur,
-            name,
-            item["size"],
-            item["narration"],
-            item["unit"],
-            vendor_name,
-            item["price"],
-        )
+        # Rs 0.69 a Gross. Rate History stays per Base Unit. Not from a PO
+        # something newer has superseded: see
+        # items_service.newer_purchase_exists.
+        if items_service._find_item(
+            cur, name, item["size"]
+        ) is None or not items_service.newer_purchase_exists(
+            cur, vendor_name, name, item["size"], po_header_id=header_id
+        ):
+            items_service._auto_extract_item(
+                cur,
+                name,
+                item["size"],
+                item["narration"],
+                item["unit"],
+                vendor_name,
+                item["price"],
+            )
 
         cur.execute(
             """
@@ -636,7 +651,7 @@ def save_po(conn, cur, form_data):
             ),
         )
 
-    _auto_extract_from_po(cur, vendor, contact, items, po_number, po_date)
+    _auto_extract_from_po(cur, vendor, contact, items, po_number, po_date, header_id)
 
     message = (
         f"PO #{po_number} ({vendor}) updated successfully."
@@ -1061,7 +1076,10 @@ def suggest_po_allocations(vendor, items, bill_date=None, editing=None):
                 )
                 continue
 
-            unit_info = items_service.lookup_item_unit_info(item_unit_map, name, size)
+            # As save_bill will convert it -- see unit_info_for_purchase_line.
+            unit_info = items_service.unit_info_for_purchase_line(
+                item_unit_map, name, size, unit
+            )
             try:
                 base_qty = units_service.convert_qty_to_base_unit(
                     qty, unit, unit_info, units_map
