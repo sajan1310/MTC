@@ -2596,6 +2596,15 @@
      from a row into a column fixes both at once -- the figures sit under
      the name they describe, the name gets two lines to wrap into, and the
      grid fits three to five stages in the vertical space one row used. */
+  /* The stage chart's loading line, as tall as the chart that replaces it:
+     a one-line placeholder grew to the chart's 427 px when the data landed
+     and pushed both lists below it down -- the dashboard's only layout
+     shift (CLS 0.077, 2026-11-04). Measured at 1280-1920 px wide: one row
+     of stage cards and the legend, the same height throughout. */
+  .dash-stage-placeholder {
+    min-height: 427px;
+  }
+
   .dash-wip-block + .dash-wip-block {
     margin-top: 18px;
   }

@@ -100,12 +100,16 @@ App.Item = {
 
   // Items present in Item Master with no matching Stock row (by Name +
   // Size). Surfaced via the orphan banner/badge.
+  //
+  // Matched as App.Utils.sameText matches (trim, lower case), through one
+  // set of keys. It compared every item with every stock row -- 1,629 x
+  // 1,629 -- which was 374 ms of an up-to-790 ms Items tab on an office PC
+  // (2026-11-04), and runs on every Items load.
   getOrphanItems() {
-    return App.State.globalItems.filter(item =>
-      !App.State.globalStock.some(
-        s => App.Utils.sameText(s.name, item.name) && App.Utils.sameText(s.size || '', item.size || '')
-      )
-    );
+    const norm = v => String(v == null ? '' : v).trim().toLowerCase();
+    const key = (name, size) => `${norm(name)}\u0001${norm(size)}`;
+    const stocked = new Set(App.State.globalStock.map(s => key(s.name, s.size)));
+    return App.State.globalItems.filter(item => !stocked.has(key(item.name, item.size)));
   },
 
   renderSyncBanner() {
