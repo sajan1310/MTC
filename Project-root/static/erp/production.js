@@ -481,6 +481,9 @@ App.Production = {
     if (id === 'productionAllSubTab') {
       const needsIssues = typeof App.Issue !== 'undefined' && !App.State.globalIssues.length;
       Promise.resolve(needsIssues ? App.Issue.loadData() : null).then(() => this.renderAllActivity());
+    } else {
+      // Leaving it: its pane is hidden now, so this empties the table.
+      this.renderAllActivity();
     }
     // Loaded fresh on every visit: what the floor did changes while the
     // desk is looking at something else.
@@ -528,6 +531,18 @@ App.Production = {
   renderAllActivity() {
     const tbody = document.getElementById('productionAllTableBody');
     if (!tbody) return;
+
+    // Drawn only while its sub-tab is on screen, and emptied when it is not.
+    // Every Production load, and every issue saved, drew this table -- each
+    // lot and issue, unpaged -- into a sub-tab nobody had open: 6,900
+    // elements on the page became 22,900, and every later tab switch spent
+    // 90-200 ms laying them out again (2026-11-04). switchSubTab draws it on
+    // the way in.
+    const pane = document.getElementById('productionAllSubTab');
+    if (pane && pane.style.display === 'none') {
+      tbody.innerHTML = '';
+      return;
+    }
 
     const term = (App.State.productionAllSearchTerm || '').toLowerCase().trim();
     let rows = this.buildAllActivityRows();

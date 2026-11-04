@@ -130,7 +130,7 @@ describe('MApp.Paging', () => {
 describe('every list is paged, and reports its own numbers', () => {
   const KEYS = ['production', 'dispatch', 'po', 'bill', 'issue', 'wastage',
     'items', 'directory', 'admin', 'process', 'bom', 'pool', 'master',
-    'stockGroups', 'clientOrder', 'poolOpening', 'inspection'];
+    'stockGroups', 'clientOrder', 'poolOpening', 'inspection', 'stock'];
 
   test('no hard cap survives anywhere', () => {
     // `.slice(0, 50)` / `.slice(0, 100)` / `.slice(0, 200)` on a render is
@@ -195,6 +195,7 @@ describe('every list is paged, and reports its own numbers', () => {
       'items-lookup-search': 'items', 'directory-search': 'directory',
       'admin-users-search': 'admin', 'process-list-search': 'process',
       'bom-list-search': 'bom', 'inspections-search': 'inspection',
+      'stock-search': 'stock',
     };
 
     const mismatches = [];

@@ -974,7 +974,7 @@ MApp.Search = {
     if (token.length > 3) return hay.indexOf(token) !== -1;
     return hay === token || hay.startsWith(token + '') && hay.charAt(token.length) === ' '
       ? true
-      : new RegExp('(^| )' + token).test(hay);
+      : this._pattern('(^| )' + token).test(hay);
   },
 
   // ── Fuzzy fallback ─────────────────────────────────────────────────
@@ -1009,15 +1009,43 @@ MApp.Search = {
     return prev[b.length];
   },
 
-  _fuzzyHit(entry, token) {
+  // `memo` (one per search) remembers each token/word verdict: records share
+  // most of their words ("20", "inch", a model name), and the fuzzy pass
+  // over 1,400 lots worked the same pairs out again and again -- ~130 ms of
+  // a ~320 ms keystroke on a phone (2026-11-04). Same answers, once each.
+  _fuzzyHit(entry, token, memo) {
     const max = this._maxEdits(token);
     if (!max) return false;
-    return entry._words.some(word => this._editDistance(token, word, max) <= max);
+    return entry._words.some(word => {
+      if (!memo) return this._editDistance(token, word, max) <= max;
+      const key = token + '\u0001' + word;
+      let near = memo.get(key);
+      if (near === undefined) {
+        near = this._editDistance(token, word, max) <= max;
+        memo.set(key, near);
+      }
+      return near;
+    });
   },
 
-  _tokenInEntry(entry, token, fuzzy) {
+  _tokenInEntry(entry, token, fuzzy, memo) {
     if (this._hit(entry._hay, token)) return true;
-    return fuzzy ? this._fuzzyHit(entry, token) : false;
+    return fuzzy ? this._fuzzyHit(entry, token, memo) : false;
+  },
+
+  // A compiled pattern per source, kept: _hit and _score built a new RegExp
+  // for every record and token. Neither pattern is global, so a kept one
+  // carries no state from one test to the next.
+  _patterns: new Map(),
+
+  _pattern(source) {
+    let re = this._patterns.get(source);
+    if (!re) {
+      if (this._patterns.size > 500) this._patterns.clear();
+      re = new RegExp(source);
+      this._patterns.set(source, re);
+    }
+    return re;
   },
 
   _scopedHay(entry, key) {
@@ -1062,6 +1090,7 @@ MApp.Search = {
 
   _collect(list, parsed, fuzzy) {
     const hits = [];
+    const memo = fuzzy ? new Map() : null;
     for (const entry of list) {
       if (parsed.exclude.some(t => this._hit(entry._hay, t))) continue;
       if (parsed.excludePhrases.some(p => entry._hay.indexOf(p) !== -1)) continue;
@@ -1078,7 +1107,7 @@ MApp.Search = {
       if (!ok) continue;
 
       for (const token of parsed.include) {
-        if (!this._tokenInEntry(entry, token, fuzzy)) { ok = false; break; }
+        if (!this._tokenInEntry(entry, token, fuzzy, memo)) { ok = false; break; }
       }
       if (!ok) continue;
 
@@ -1099,7 +1128,7 @@ MApp.Search = {
         // A whole-word hit beats a mid-word one, and a field that STARTS
         // with the token beats both -- so an exact lot number outranks a
         // record that merely contains those digits somewhere.
-        const wholeWord = new RegExp('(^| )' + token + '( |$)').test(hay);
+        const wholeWord = this._pattern('(^| )' + token + '( |$)').test(hay);
         const startsWith = hay.startsWith(token);
         score += (field.weight || 1) * (startsWith ? 3 : wholeWord ? 2 : 1);
         if (field.label && matchedOn.indexOf(field.label) === -1) matchedOn.push(field.label);
@@ -4008,6 +4037,7 @@ MApp.Stock = {
       // when a failed load is retried.
       const box = document.getElementById('stock-search');
       this.searchTerm = box ? box.value : '';
+      MApp.Paging.reset('stock');
     }
 
     // getItemsData is supplementary here (unit lookup only, already has a
@@ -4069,6 +4099,8 @@ MApp.Stock = {
 
   onSearch(term) {
     this.searchTerm = term || '';
+    // A new query starts at page one.
+    MApp.Paging.reset('stock');
     this._applyFilters();
     this.render();
   },
@@ -4077,13 +4109,24 @@ MApp.Stock = {
   // search term compose instead of each clobbering the other -- clearing
   // the search inside a low-stock view used to drop you back to the full
   // list.
+  //
+  // The search index is built once per list and filter, not per keystroke:
+  // rebuilt on every search it cost ~170 ms of a ~1 s keypress on a phone
+  // (2026-11-04). `of` is the list it was built from, so a load or refresh
+  // (a new this.all) builds it again.
   _applyFilters() {
-    const base = this._lowStockOnly ? this.all.filter(s => s.isLowStock) : this.all;
-    this.filtered = MApp.Search.run(MApp.Search.index(base, this.SEARCH), this.searchTerm);
+    const low = !!this._lowStockOnly;
+    const kept = this._indexed;
+    if (!kept || kept.of !== this.all || kept.low !== low) {
+      const base = low ? this.all.filter(s => s.isLowStock) : this.all;
+      this._indexed = { of: this.all, low, entries: MApp.Search.index(base, this.SEARCH) };
+    }
+    this.filtered = MApp.Search.run(this._indexed.entries, this.searchTerm);
   },
 
   clearLowStockFilter() {
     this._lowStockOnly = false;
+    MApp.Paging.reset('stock');
     this._applyFilters();
     this.render();
   },
@@ -4104,7 +4147,10 @@ MApp.Stock = {
       : '';
     const banner = offlineBanner + pendingBanner + lowStockBanner;
 
-    MApp.SearchBox.setCount('stock-search', this.filtered.length, this.filtered.length, this.filtered._meta);
+    // Fifty cards at a time, as every other list here. It drew all ~1,600 on
+    // each keystroke: ~1 s from tap to screen on a phone (2026-11-04).
+    const page = MApp.Paging.take('stock', this.filtered, () => this.render());
+    MApp.SearchBox.setCount('stock-search', page.shown, page.total, page.meta);
 
     if (this.filtered.length === 0) {
       listEl.innerHTML = banner;
@@ -4124,7 +4170,9 @@ MApp.Stock = {
     // interpolating the item's name/size into an inline onclick string —
     // item names come from sheet data and may contain quote characters
     // that would otherwise break out of an inline handler's string literal.
-    listEl.innerHTML = banner + this.filtered.map((item, idx) => {
+    // page.rows is the first stretch of this.filtered, so data-idx still
+    // indexes this.filtered.
+    listEl.innerHTML = banner + page.rows.map((item, idx) => {
       const key = this._key(item.name, item.size);
       const isOpen = this.expandedKey === key;
       return `
@@ -4146,7 +4194,7 @@ MApp.Stock = {
         </button>
         <div id="stock-expand-${idx}" class="${isOpen ? '' : 'mb-hidden'}" style="margin:-8px 0 12px;padding:0 var(--mb-sp-2);"></div>
       `;
-    }).join('');
+    }).join('') + MApp.Paging.moreHtml(page);
 
     listEl.querySelectorAll('[data-stock-toggle]').forEach(btn => {
       btn.addEventListener('click', () => this.toggleExpand(parseInt(btn.dataset.idx, 10)));
@@ -4154,7 +4202,7 @@ MApp.Stock = {
 
     if (this.expandedKey) {
       const idx = this.filtered.findIndex(i => this._key(i.name, i.size) === this.expandedKey);
-      if (idx !== -1) this._renderMovements(idx, this.filtered[idx]);
+      if (idx !== -1 && idx < page.rows.length) this._renderMovements(idx, this.filtered[idx]);
     }
   },
 

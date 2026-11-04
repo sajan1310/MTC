@@ -275,7 +275,9 @@
          over the treemaps it replaced: which part of the shop is loaded, on
          one shared axis so running and queued compare directly. -->
     <div id="dashboardStageChart">
-      <div class="text-muted small">Loading stage load&hellip;</div>
+      <!-- As tall as the chart it stands in for, so the lists below do not
+           jump down when it arrives (CLS; renderStageChart replaces it). -->
+      <div class="text-muted small dash-stage-placeholder">Loading stage load&hellip;</div>
     </div>
 
     <div class="dash-wip-block">

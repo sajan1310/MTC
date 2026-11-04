@@ -542,7 +542,11 @@
 // v111: the Inspections list keeps the server's order (newest lot first)
 // instead of re-sorting by stage, so a lot no longer jumps up the table the
 // moment it is ticked. inspection.js is precached.
-const CACHE_NAME = 'erp-shell-v111';
+// v112: taps answer sooner -- the Items tab's orphan check is one pass, the
+// hidden All Activity table is drawn only when opened, the dashboard paints
+// before start-up work and keeps room for its stage chart. core.js, items.js,
+// production.js and styles.css are precached.
+const CACHE_NAME = 'erp-shell-v112';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

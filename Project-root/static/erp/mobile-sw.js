@@ -234,7 +234,10 @@
 // v102: the inspection list keeps the server's order instead of re-sorting by
 // stage, and a started inspection stays on "To inspect" until it is cleared
 // even if Production completes the lot. mobile.js carries it.
-const CACHE_NAME = 'erp-mobile-shell-v102';
+// v103: the Stock list shows fifty at a time and searches without rebuilding
+// its index; the fuzzy fallback works each word out once. mobile.js carries
+// it.
+const CACHE_NAME = 'erp-mobile-shell-v103';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so
