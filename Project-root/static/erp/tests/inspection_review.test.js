@@ -1,8 +1,8 @@
 /**
  * Production > Inspections on desktop (App.Inspection, inspection.js).
  *
- * The list -- every lot by default, those needing review first, one filter
- * per stage -- and one lot's checklist, where items are ticked, a review is
+ * The list -- every lot by default, in the server's order (newest first,
+ * whatever stage each is at), one filter per stage -- and one lot's checklist, where items are ticked, a review is
  * asked for and the lot cleared exactly as in the phone app (same RPCs).
  * An inspector clears an All checked lot; an admin clears any open lot after
  * seeing what is not ticked, and is the only one offered "Send back for
@@ -147,20 +147,34 @@ beforeEach(() => {
 });
 
 describe('the review list', () => {
-  test('every lot shows by default, needs review first; each filter is one stage', async () => {
+  test("every lot shows by default, in the server's order; each filter is one stage", async () => {
     stubApi({ lots: [lot(1, 'LOT-A', 'partial'), lot(2, 'LOT-B', 'needs_review'), lot(3, 'LOT-C', 'cleared'),
       lot(4, 'LOT-D', 'not_started'), lot(5, 'LOT-E', 'complete')] });
     await App.Inspection.load();
 
     const lots = () => [...document.querySelectorAll('#inspectionsTableBody strong')].map(s => s.textContent);
     expect(calls[0]).toEqual(['getInspectionLots']);
-    expect(lots()).toEqual(['LOT-B', 'LOT-E', 'LOT-A', 'LOT-D', 'LOT-C']);
+    expect(lots()).toEqual(['LOT-A', 'LOT-B', 'LOT-C', 'LOT-D', 'LOT-E']);
     expect(document.getElementById('inspectionsTableBody').textContent).toContain('Partially checked');
 
     App.Inspection.setFilter('partial');
     expect(lots()).toEqual(['LOT-A']);
     App.Inspection.setFilter('needs_review');
     expect(lots()).toEqual(['LOT-B']);
+  });
+
+  // Reported 2026-11-03: lots seemed to disappear and reappear between
+  // loads. Sorted by stage, a lot moved up the table the moment it was
+  // ticked; it keeps its place now.
+  test('a lot keeps its place in the list when its stage changes', async () => {
+    stubApi({ lots: [lot(1, 'LOT-A', 'not_started'), lot(2, 'LOT-B', 'not_started'), lot(3, 'LOT-C', 'not_started')] });
+    await App.Inspection.load();
+    const lots = () => [...document.querySelectorAll('#inspectionsTableBody strong')].map(s => s.textContent);
+    expect(lots()).toEqual(['LOT-A', 'LOT-B', 'LOT-C']);
+
+    stubApi({ lots: [lot(1, 'LOT-A', 'not_started'), lot(2, 'LOT-B', 'not_started'), lot(3, 'LOT-C', 'complete')] });
+    await App.Inspection.load();
+    expect(lots()).toEqual(['LOT-A', 'LOT-B', 'LOT-C']);
   });
 
   test('an empty list says why, for the filter chosen', async () => {

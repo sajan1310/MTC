@@ -539,7 +539,10 @@
 // v110: the item list carries each photo's address, not the photo, and the
 // Items list loads its thumbnails as they come into view. items.js is
 // precached.
-const CACHE_NAME = 'erp-shell-v110';
+// v111: the Inspections list keeps the server's order (newest lot first)
+// instead of re-sorting by stage, so a lot no longer jumps up the table the
+// moment it is ticked. inspection.js is precached.
+const CACHE_NAME = 'erp-shell-v111';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

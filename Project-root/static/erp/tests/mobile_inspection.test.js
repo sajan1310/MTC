@@ -48,6 +48,9 @@ function mount() {
     ${sheet('sheet-inspection-reconcile')}
     <div class="mb-toast-stack" id="mapp-toast-stack"></div>`;
   loadAsGlobal('api.js', 'Api');
+  // api.js's PO_STATUS is a page-wide constant in the browser; statusChipClass
+  // reads it for a status it does not know.
+  global.PO_STATUS = Object.freeze({ ISSUED: 'PO Issued', PARTIAL: 'Partially Received', COMPLETED: 'Completed', CANCELLED: 'Cancelled' });
   loadAsGlobal('mobile.js', 'MApp');
   MApp.Sheet._stack = [];
 }
@@ -359,7 +362,7 @@ describe('the lot list', () => {
     inspection: { stage, summary }
   });
 
-  test('lots needing review lead the work list; each stage has its own chip', async () => {
+  test("the work list keeps the server's order; each stage has its own chip", async () => {
     MApp.Api.call = jest.fn(async () => ({
       success: true,
       data: [
@@ -373,7 +376,7 @@ describe('the lot list', () => {
     await MApp.Inspection.open();
 
     const titles = () => [...document.querySelectorAll('#inspections-list .mb-card-title')].map(t => t.textContent);
-    expect(titles()).toEqual(['LOT-B', 'LOT-E', 'LOT-D', 'LOT-A']);
+    expect(titles()).toEqual(['LOT-A', 'LOT-B', 'LOT-D', 'LOT-E']);
     const list = document.getElementById('inspections-list').textContent;
     expect(list).toContain('Needs review 1/3');
     expect(list).toContain('Partially checked 2/3');
@@ -386,11 +389,52 @@ describe('the lot list', () => {
     expect(document.querySelectorAll('#inspections-filter-bar [data-insp-filter]')).toHaveLength(6);
   });
 
+  // Reported 2026-11-03: lots seemed to disappear and reappear between
+  // loads. Sorted by stage, the lot just ticked jumped to the top while the
+  // list came back at the same scroll position.
+  test('a lot keeps its place when it is ticked and the list reloads', async () => {
+    const lots = [lot(1, 'LOT-A', 'Pending', 'not_started'), lot(2, 'LOT-B', 'Pending', 'not_started'),
+      lot(3, 'LOT-C', 'Pending', 'not_started')];
+    MApp.Api.call = jest.fn(async () => ({ success: true, data: lots }));
+    await MApp.Inspection.open();
+    const titles = () => [...document.querySelectorAll('#inspections-list .mb-card-title')].map(t => t.textContent);
+    expect(titles()).toEqual(['LOT-A', 'LOT-B', 'LOT-C']);
+
+    lots[2] = lot(3, 'LOT-C', 'In Progress', 'partial', { total: 3, checked: 1 });
+    await MApp.Inspection.load({ keep: true });
+    expect(titles()).toEqual(['LOT-A', 'LOT-B', 'LOT-C']);
+  });
+
+  // It used to drop out of "To inspect" half-checked the moment Production
+  // marked the lot Completed, and showed again only under its stage chip.
+  test("a started inspection stays on the work list until it is cleared, whatever the lot's status", async () => {
+    const started = (rowIdx, lotNumber, status, stage, inspStatus) => ({
+      ...lot(rowIdx, lotNumber, status, stage), inspection: { stage, status: inspStatus, summary: { total: 3, checked: 1 } }
+    });
+    MApp.Api.call = jest.fn(async () => ({
+      success: true,
+      data: [
+        started(1, 'LOT-A', 'Completed', 'partial', 'in_progress'),
+        started(2, 'LOT-B', 'Completed', 'needs_review', 'flagged'),
+        lot(3, 'LOT-C', 'Completed', 'not_started'),
+        started(4, 'LOT-D', 'Cancelled', 'partial', 'in_progress'),
+        started(5, 'LOT-E', 'Completed', 'cleared', 'cleared'),
+        lot(6, 'LOT-F', 'pending', 'not_started')
+      ]
+    }));
+    await MApp.Inspection.open();
+    const titles = () => [...document.querySelectorAll('#inspections-list .mb-card-title')].map(t => t.textContent);
+    // Started and open: A, B. Never started and Completed: not work (C).
+    // Cancelled: the server refuses it (D). Cleared: done (E). Status
+    // matched whatever its case (F).
+    expect(titles()).toEqual(['LOT-A', 'LOT-B', 'LOT-F']);
+  });
+
   test('on a wide screen the list is a table, one row per lot, and a row opens its checklist', async () => {
     window.matchMedia = jest.fn(() => ({ matches: true, addEventListener: jest.fn() }));
     try {
       MApp.Api.call = jest.fn(async name => (name === 'getInspectionLots'
-        ? { success: true, data: [lot(1, 'LOT-A', 'Pending', 'not_started'), lot(2, 'LOT-B', 'In Progress', 'partial', { total: 3, checked: 2 })] }
+        ? { success: true, data: [lot(2, 'LOT-B', 'In Progress', 'partial', { total: 3, checked: 2 }), lot(1, 'LOT-A', 'Pending', 'not_started')] }
         : checklist()));
       await MApp.Inspection.open();
 
@@ -402,6 +446,7 @@ describe('the lot list', () => {
       expect([...list.querySelectorAll('.mb-insp-lhead span')].map(s => s.textContent))
         .toEqual(['Lot', 'Process · Item', 'Lot status', 'Inspection', 'Updated']);
       const rows = [...list.querySelectorAll('.mb-insp-lrow')];
+      // The server's order, as it sent them.
       expect(rows.map(r => r.querySelector('.mb-card-title').textContent)).toEqual(['LOT-B', 'LOT-A']);
       expect(rows[0].textContent.match(/2\/3/g)).toHaveLength(1);
       expect(list.querySelector('.mb-insp-card')).toBeNull();

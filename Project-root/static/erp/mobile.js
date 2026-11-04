@@ -16823,14 +16823,15 @@ MApp.SheetGrouping = {
 // server says when it did.
 // ================================================================
 MApp.Inspection = {
-  // Where a lot stands, as inspection_service.stage() names it. `rank`
-  // orders the work list: what waits on an admin first.
+  // Where a lot stands, as inspection_service.stage() names it. A badge on
+  // each lot and a chip each; the list itself keeps the server's order
+  // (see _applyFilters).
   STAGES: {
-    needs_review: { label: 'Needs review', cls: 'mb-insp-stage-review', rank: 0 },
-    complete: { label: 'All checked', cls: 'mb-insp-stage-complete', rank: 1 },
-    partial: { label: 'Partially checked', cls: 'mb-insp-stage-partial', rank: 2 },
-    not_started: { label: 'Not started', cls: 'mb-insp-stage-not-started', rank: 3 },
-    cleared: { label: 'Inspected', cls: 'mb-insp-stage-cleared', rank: 4 }
+    needs_review: { label: 'Needs review', cls: 'mb-insp-stage-review' },
+    complete: { label: 'All checked', cls: 'mb-insp-stage-complete' },
+    partial: { label: 'Partially checked', cls: 'mb-insp-stage-partial' },
+    not_started: { label: 'Not started', cls: 'mb-insp-stage-not-started' },
+    cleared: { label: 'Inspected', cls: 'mb-insp-stage-cleared' }
   },
 
   SEARCH: {
@@ -16926,25 +16927,33 @@ MApp.Inspection = {
     return this.STAGES[stage] ? stage : 'not_started';
   },
 
-  // "To inspect" is the work list: lots still Pending or In Progress whose
-  // inspection is not cleared. Every other chip is one stage; "Inspected"
-  // includes lots completed since.
+  // "To inspect" is the work list: every lot not yet cleared that is still
+  // Pending or In Progress, or whose inspection has been started. A started
+  // one stays until it is cleared even if Production completes the lot
+  // meanwhile -- it used to drop out half-checked, and showed again only
+  // under its stage chip. A cancelled lot cannot be inspected (the server
+  // refuses), so it never shows here. Every other chip is one stage;
+  // "Inspected" includes lots completed since.
   _matches(lot) {
     const stage = this._stage(lot.inspection);
     if (this.filter === 'all') {
-      return (lot.status === 'Pending' || lot.status === 'In Progress') && stage !== 'cleared';
+      const status = String(lot.status || '').toLowerCase();
+      const started = ['in_progress', 'flagged'].includes((lot.inspection || {}).status);
+      return stage !== 'cleared' && status !== 'cancelled'
+        && (status === 'pending' || status === 'in progress' || started);
     }
     return stage === this.filter;
   },
 
+  // In the server's order -- newest lot first -- whatever stage each is at.
+  // The list used to sort by stage (needs review, then all checked, then
+  // partly checked, then untouched), so ticking one item moved a lot from
+  // the bottom block to the top, and coming back to the list at the same
+  // scroll position it was no longer there: lots seemed to disappear from
+  // one load and reappear in another (reported 2026-11-03). The stage is
+  // on every row, and each stage has its own chip.
   _applyFilters() {
-    // Needs review first, then lots ready to clear, then partly checked,
-    // then untouched ones; the server's newest-first order holds within each.
-    const base = this.lots
-      .filter(lot => this._matches(lot))
-      .map((lot, i) => ({ lot, i, r: this.STAGES[this._stage(lot.inspection)].rank }))
-      .sort((a, b) => (a.r - b.r) || (a.i - b.i))
-      .map(x => x.lot);
+    const base = this.lots.filter(lot => this._matches(lot));
     this.filtered = MApp.Search.run(MApp.Search.index(base, this.SEARCH), this.searchTerm);
     this.render();
   },
@@ -16960,7 +16969,7 @@ MApp.Inspection = {
     if (this.filtered.length === 0) {
       MApp.Util.renderEmpty(listEl, {
         title: this.lots.length ? 'No lots here' : 'Nothing to inspect',
-        body: this.lots.length ? 'Try a different search or filter.' : 'Pending and In Progress lots appear here.'
+        body: this.lots.length ? 'Try a different search or filter.' : 'Pending and In Progress lots, and any inspection under way, appear here.'
       });
       return;
     }
