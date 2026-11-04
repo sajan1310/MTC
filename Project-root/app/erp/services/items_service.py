@@ -194,6 +194,29 @@ def lookup_item_unit_info(unit_map: dict, name: str, size: str) -> dict:
     }
 
 
+def unit_info_for_purchase_line(
+    unit_map: dict, name: str, size: str, unit: str
+) -> dict:
+    """lookup_item_unit_info for a PO or bill line, which may introduce the
+    item: one Items Master doesn't have yet is taken to be counted in the
+    line's own unit, the Base Unit the save then creates it with
+    (_auto_extract_item). Converted against the "Pcs" fallback instead, 10
+    Gross of a new spoke was stored as 1,440 and read as 1,440 Gross.
+
+    Registered in `unit_map`, so the document's later lines for the same new
+    item convert against the same Base Unit, as the item will have."""
+    key = f"{str(name or '').strip().lower()}|{str(size or '').strip().lower()}"
+    info = unit_map.get(key)
+    if info is None:
+        unit = str(unit or "").strip() or "Pcs"
+        info = unit_map[key] = {
+            "baseUnit": unit,
+            "purchaseUnit": unit,
+            "weightPerBaseUnit": 0,
+        }
+    return info
+
+
 def get_item_narration_map(cur) -> dict:
     """{name_lower|size_lower: narration} for every item with a non-blank
     narration -- ports _getItemNarrationMap. Only non-blank narrations are
@@ -1512,6 +1535,65 @@ def _auto_extract_item(
 # ─────────────────────────────────────────────────────────────────────────
 # Data hygiene: orphan Stock rows + duplicate/merge tooling
 # ─────────────────────────────────────────────────────────────────────────
+
+
+def newer_purchase_exists(
+    cur, vendor: str, name: str, size: str, *, bill_header_id=None, po_header_id=None
+) -> bool:
+    """Whether this vendor has a live bill or PO for name+size that is newer
+    than the document being saved (`bill_header_id` or `po_header_id`) --
+    later dated, or dated the same day and entered later.
+
+    Items Master keeps a vendor's CURRENT rate, and every PO and bill save
+    files its own price there (_auto_extract_item). Saving an older document
+    -- correcting a remark on a July bill, or entering a backlog invoice --
+    used to put its old price back as the current rate, and its unit back as
+    the Purchase Unit. Only a document nothing newer has superseded gets to
+    do that now. A newer line priced below the vendor-rate floor never filed
+    a rate, so it does not count.
+    """
+    cur.execute(
+        """
+        WITH me AS (
+            SELECT bill_date AS day, created_at AS at
+              FROM erp.bill_headers WHERE id = %(bill_id)s
+            UNION ALL
+            SELECT po_date, created_at FROM erp.po_headers WHERE id = %(po_id)s
+        )
+        SELECT EXISTS (
+            SELECT 1
+              FROM erp.bill_lines l
+              JOIN erp.bill_headers h ON h.id = l.header_id
+              CROSS JOIN me
+             WHERE h.deleted_at IS NULL AND h.id IS DISTINCT FROM %(bill_id)s
+               AND lower(h.vendor) = lower(%(vendor)s)
+               AND lower(l.item_name) = lower(%(name)s)
+               AND lower(COALESCE(l.size, '')) = lower(%(size)s)
+               AND l.base_rate >= %(floor)s
+               AND (h.bill_date, h.created_at) > (me.day, me.at)
+            UNION ALL
+            SELECT 1
+              FROM erp.po_lines l
+              JOIN erp.po_headers h ON h.id = l.header_id
+              CROSS JOIN me
+             WHERE h.deleted_at IS NULL AND h.id IS DISTINCT FROM %(po_id)s
+               AND lower(h.vendor) = lower(%(vendor)s)
+               AND lower(l.item_name) = lower(%(name)s)
+               AND lower(COALESCE(l.size, '')) = lower(%(size)s)
+               AND l.base_rate >= %(floor)s
+               AND (h.po_date, h.created_at) > (me.day, me.at)
+        ) AS newer
+        """,
+        {
+            "bill_id": bill_header_id,
+            "po_id": po_header_id,
+            "vendor": str(vendor or "").strip(),
+            "name": str(name or "").strip(),
+            "size": str(size or "").strip(),
+            "floor": MIN_VENDOR_RATE,
+        },
+    )
+    return bool(cur.fetchone()["newer"])
 
 
 def _convert_vendor_rate_across_items(

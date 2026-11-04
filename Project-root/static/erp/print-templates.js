@@ -1131,25 +1131,30 @@ const PrintTemplates = {
             masterRate: null,
             // baseRate, not price. `price` is per ENTERED unit: a spoke
             // ordered by the Gross carries 94.00 there and 0.6528 in
-            // baseRate, and the Item Master rate beside it is per piece.
-            // Comparing them printed a 144x price rise that did not
-            // happen, on the one table whose whole job is spotting a
-            // price change. The server has computed baseRate since
-            // po_service went in and nothing on the client had used it.
+            // baseRate. Comparing them printed a 144x price rise that did
+            // not happen, on the one table whose whole job is spotting a
+            // price change. The Master Rate beside it is per base unit too
+            // -- see masterRateOf below.
             latestPoRate: line.baseRate != null ? line.baseRate : line.price
           };
         }
       });
     });
 
+    // Items Master keeps a vendor's rate per its Purchase Unit -- since
+    // 2026-10-09 that is Rs 94 a Gross for a rim spoke, not Rs 0.65 a piece
+    // -- so its rate per Base Unit (getItemsData's ratePerBaseUnit) is the
+    // one to set beside the PO's per-base-unit rate. Read as it was, the
+    // table showed a 144x drop that did not happen.
+    const masterRateOf = v => (v.ratePerBaseUnit != null ? v.ratePerBaseUnit : v.rate);
     const itemMasterVariants = (src.items || []).filter(i => (i.name || '').toLowerCase() === nameLower);
     itemMasterVariants.forEach(item => {
       (item.vendors || []).forEach(v => {
         const key = getCKey(item.size, v.vendor);
         if (compMap[key]) {
-          compMap[key].masterRate = v.rate;
+          compMap[key].masterRate = masterRateOf(v);
         } else {
-          compMap[key] = { size: item.size || '-', narration: item.narration || '-', vendor: v.vendor, masterRate: v.rate, latestPoRate: null };
+          compMap[key] = { size: item.size || '-', narration: item.narration || '-', vendor: v.vendor, masterRate: masterRateOf(v), latestPoRate: null };
         }
       });
     });

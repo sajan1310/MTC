@@ -1877,9 +1877,9 @@ App.Production = {
     App.Utils.confirmAction(
       'Refresh every already-logged production lot\'s stored narration, unit, and item name to match Items Master?\n\n' +
       'Quantities, colours, item identities and status are never changed. Item name is only corrected to fix ' +
-      'casing/spelling drift for the same item — never repointed to a different one. Unit is synced to each ' +
-      'item\'s current Base Unit; if an item\'s Base Unit was itself changed since a lot used it, that lot\'s ' +
-      'quantity will now read under the new unit.\n\n' +
+      'casing/spelling drift for the same item — never repointed to a different one. A blank unit is filled in with ' +
+      'the item\'s Base Unit; a component recorded in another unit (Gross, say) keeps it, so its quantity ' +
+      'still means what was recorded.\n\n' +
       'An open Production Sheet is re-rendered with the new values, discarding any edits in it you have not saved.',
       async () => {
         const btn = document.getElementById('btnRefreshProductionFromItems');

@@ -827,8 +827,18 @@ def save_bill(conn, cur, form_data):
         ) or default_po_number
         unit = str(item.get("unit") or "Pcs").strip() or "Pcs"
 
-        # An unconvertible unit must never block saving the bill.
-        unit_info = items_service.lookup_item_unit_info(item_unit_map, name, size)
+        # An unconvertible unit must never block saving the bill. A Labor
+        # line never counts toward Items Stock; what it adds goes into the
+        # Warehouse Pool, which counts pieces (warehouse_service.
+        # pool_component_qty), so it converts as it always has. A Goods line
+        # may introduce its item -- see unit_info_for_purchase_line.
+        unit_info = (
+            items_service.lookup_item_unit_info(item_unit_map, name, size)
+            if bill_type == "LABOR"
+            else items_service.unit_info_for_purchase_line(
+                item_unit_map, name, size, unit
+            )
+        )
         try:
             base_qty = units_service.convert_qty_to_base_unit(
                 qty, unit, unit_info, units_map
@@ -911,16 +921,23 @@ def save_bill(conn, cur, form_data):
         if rate < _MIN_VENDOR_RATE:
             continue
         # The vendor's rate in the unit it was charged in, beside that unit
-        # as the Purchase Unit -- see po_service._auto_extract_from_po.
-        items_service._auto_extract_item(
-            cur,
-            item["name"],
-            item["size"],
-            item["narration"],
-            item["unit"],
-            vendor,
-            item["price"],
-        )
+        # as the Purchase Unit -- see po_service._auto_extract_from_po. Not
+        # from a bill something newer has superseded: see
+        # items_service.newer_purchase_exists.
+        if items_service._find_item(
+            cur, item["name"], item["size"]
+        ) is None or not items_service.newer_purchase_exists(
+            cur, vendor, item["name"], item["size"], bill_header_id=header_id
+        ):
+            items_service._auto_extract_item(
+                cur,
+                item["name"],
+                item["size"],
+                item["narration"],
+                item["unit"],
+                vendor,
+                item["price"],
+            )
         cur.execute(
             """
             INSERT INTO erp.rate_history (rate_date, item_name, size, narration, vendor_name, rate, po_number, bill_number)
