@@ -22,6 +22,7 @@ each dispatch once, where it used to count its lines.
 
 from __future__ import annotations
 
+import re
 import runpy
 import uuid
 from datetime import date, timedelta
@@ -424,6 +425,76 @@ def test_keep_warm_counts_real_use_only(erp_app, monkeypatch, path, counts):
 def test_keep_warm_runs_the_morning_reads(erp_app):
     took = keep_warm.warm(erp_app)
     assert took >= 0.0
+
+
+# What would turn a read into a change: a statement that writes, takes a row
+# or advisory lock, or moves a sequence. Word-bounded, so updated_at,
+# deleted_at and created_at do not count; and looked for outside quoted
+# strings and comments, so `action = 'MERGE'` (a stock adjustment's type,
+# in a SELECT) does not either.
+_WRITE_RE = re.compile(
+    r"\b(INSERT|UPDATE|DELETE|MERGE|TRUNCATE|CREATE|ALTER|DROP|GRANT|COPY|"
+    r"nextval|setval|\w*advisory\w*)\b",
+    re.IGNORECASE,
+)
+_SQL_NOISE_RE = re.compile(r"'(?:[^']|'')*'|--[^\n]*|/\*.*?\*/", re.DOTALL)
+
+
+def _writes(sql: str) -> bool:
+    return bool(_WRITE_RE.search(_SQL_NOISE_RE.sub(" ", sql)))
+
+
+def test_the_write_check_tells_writes_from_reads():
+    assert _writes("UPDATE erp.items SET name = %s")
+    assert _writes("WITH x AS (DELETE FROM erp.items RETURNING id) SELECT 1")
+    assert _writes("SELECT * FROM erp.production FOR UPDATE")
+    assert _writes("SELECT nextval('erp.dispatch_number_seq')")
+    assert _writes("SELECT pg_try_advisory_xact_lock(%s)")
+    assert not _writes("SELECT updated_at, deleted_at FROM erp.items")
+    assert not _writes("SELECT 1 FROM erp.stock_adjustments WHERE action = 'MERGE'")
+    assert not _writes("SELECT 1 -- then UPDATE nothing\n")
+
+
+def test_keep_warm_only_reads(erp_app, monkeypatch):
+    """A warm pass runs every hour through the night, unattended. It must
+    never change a row, lock one, or move a sequence -- every statement it
+    sends is recorded here and checked."""
+    import contextlib
+
+    import database
+
+    statements = []
+    real_get_conn = database.get_conn
+
+    class RecordingCursor:
+        def __init__(self, cur):
+            self._cur = cur
+
+        def execute(self, query, *args, **kwargs):
+            text = query if isinstance(query, str) else query.as_string(self._cur)
+            statements.append(text)
+            return self._cur.execute(query, *args, **kwargs)
+
+        def executemany(self, query, *args, **kwargs):
+            statements.append(str(query))
+            return self._cur.executemany(query, *args, **kwargs)
+
+        def __iter__(self):
+            return iter(self._cur)
+
+        def __getattr__(self, name):
+            return getattr(self._cur, name)
+
+    @contextlib.contextmanager
+    def recording_get_conn(*args, **kwargs):
+        with real_get_conn(*args, **kwargs) as (conn, cur):
+            yield conn, RecordingCursor(cur)
+
+    monkeypatch.setattr(database, "get_conn", recording_get_conn)
+    keep_warm.warm(erp_app)
+
+    assert len(statements) > 5, statements
+    assert [s for s in statements if _writes(s)] == []
 
 
 def test_keep_warm_stays_off_under_testing(erp_app, monkeypatch):
