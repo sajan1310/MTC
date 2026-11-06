@@ -15,6 +15,9 @@ The server log of that morning (09:23-09:29 IST), and the fix each test pins:
 * An idle worker keeps its memory in use (app/erp/keep_warm.py), and
   gunicorn closes each upstream connection after its response
   (gunicorn.conf.py) -- the 502 at 09:28:38.
+
+And one decision of the owner's, the same day: "Today's dispatches" counts
+each dispatch once, where it used to count its lines.
 """
 
 from __future__ import annotations
@@ -107,7 +110,9 @@ def _save_dispatch(client, lines, dispatch_date):
 def _mobile_dashboard_as_it_was(client) -> dict:
     """getMobileDashboard's figures, worked out the way it did before
     2026-11-06: from the complete getProductionData and getDispatchData
-    lists. The rewrite has to give exactly this."""
+    lists. The rewrite has to give exactly this -- except todaysDispatchCount,
+    which the owner then asked to count dispatches rather than their lines
+    (_todays_dispatches)."""
     lots = _ok(_rpc(client, "getProductionData"))
     lines = _ok(_rpc(client, "getDispatchData"))
     today_key = date.today().isoformat()
@@ -140,11 +145,25 @@ def _mobile_dashboard_as_it_was(client) -> dict:
         "pendingProductionCount": sum(
             1 for lot in lots if lot["status"] in ("Pending", "In Progress")
         ),
-        "todaysDispatchCount": sum(
+        "todaysDispatchLines": sum(
             1 for d in lines if d.get("dateRaw") and d["dateRaw"][:10] == today_key
         ),
         "recentActivity": activity[:5],
     }
+
+
+def _todays_dispatches(client) -> int:
+    """Today's dispatches from getDispatchData, each counted once: its lines
+    share a dispatch number."""
+    today_key = date.today().isoformat()
+    lines = _ok(_rpc(client, "getDispatchData"))
+    return len(
+        {
+            d["dispatchNumber"]
+            for d in lines
+            if (d.get("dateRaw") or "")[:10] == today_key
+        }
+    )
 
 
 # ── getMobileDashboard ─────────────────────────────────────────────────────
@@ -205,7 +224,11 @@ def activity_seed(erp_app, erp_client):
             date.today(),
         ),
     ]
-    yield {"rows": rows, "dispatches": dispatches}
+    yield {
+        "rows": rows,
+        "dispatches": dispatches,
+        "products": [(product_a, name_a), (product_b, name_b)],
+    }
 
     for number in dispatches:
         _rpc(client, "deleteDispatch", [number], mutation=True)
@@ -220,7 +243,6 @@ def test_mobile_dashboard_gives_exactly_what_the_full_lists_gave(
     got = _ok(_rpc(erp_client, "getMobileDashboard"))
 
     assert got["pendingProductionCount"] == expected["pendingProductionCount"]
-    assert got["todaysDispatchCount"] == expected["todaysDispatchCount"]
     assert got["recentActivity"] == expected["recentActivity"]
 
 
@@ -249,14 +271,34 @@ def test_mobile_dashboard_activity_is_the_seeded_rows_in_merge_order(
     assert got[4]["title"] == activity_seed["rows"][4]["lotNumber"]
 
 
-def test_mobile_dashboard_counts_todays_dispatch_lines(erp_client, activity_seed):
-    """The phone's "Today's dispatches" tile has always counted lines, not
-    dispatches; the rewrite keeps that. The seed's dispatch dated today has
-    two lines."""
-    expected = _mobile_dashboard_as_it_was(erp_client)["todaysDispatchCount"]
-    assert expected >= 2
+def test_todays_dispatches_counts_each_dispatch_once(erp_client, activity_seed):
+    """The owner's call, 2026-11-06: a dispatch with three lines is one
+    dispatch. The tile used to count its lines."""
+
+    def tile():
+        return _ok(_rpc(erp_client, "getMobileDashboard"))["todaysDispatchCount"]
+
+    assert tile() == _todays_dispatches(erp_client)
+
+    before = tile()
+    lines_before = _mobile_dashboard_as_it_was(erp_client)["todaysDispatchLines"]
+    (product_a, name_a), (product_b, name_b) = activity_seed["products"]
+    activity_seed["dispatches"].append(
+        _save_dispatch(
+            erp_client,
+            [
+                {"productId": product_a, "productName": name_a, "qty": 1},
+                {"productId": product_b, "productName": name_b, "qty": 1},
+            ],
+            date.today(),
+        )
+    )
+
+    assert tile() == before + 1
+    # Two lines went in all the same: what the tile counted before.
     assert (
-        _ok(_rpc(erp_client, "getMobileDashboard"))["todaysDispatchCount"] == expected
+        _mobile_dashboard_as_it_was(erp_client)["todaysDispatchLines"]
+        == lines_before + 2
     )
 
 

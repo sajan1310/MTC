@@ -193,10 +193,13 @@ _RECENT_DISPATCH_LINES_SQL = f"""
     LIMIT %s
 """
 
-# Today's dispatch LINES. The phone's tile has always counted lines, not
-# dispatches -- getDispatchData is one record per line -- so this does too.
-_TODAYS_DISPATCH_LINES_SQL = f"""
-    SELECT count(*) AS n
+# Today's dispatches, each counted once however many lines it has -- the
+# owner's call on 2026-11-06. The phone's tile used to count lines (it summed
+# getDispatchData, which is one record per line), so a three-line dispatch
+# read as three. The join keeps to dispatches that carry a line, the same
+# ones the line count saw.
+_TODAYS_DISPATCHES_SQL = f"""
+    SELECT count(DISTINCT h.id) AS n
     FROM {_T["DISPATCH_HEADERS"]} h
     JOIN {_T["DISPATCH_LINES"]} l ON l.header_id = h.id
     WHERE h.deleted_at IS NULL AND h.dispatch_date = %s
@@ -817,7 +820,7 @@ def get_mobile_dashboard():
         # The open-lot total the desktop's Production tile shows: lots whose
         # status is exactly Pending or In Progress.
         pending_production_count = _get_active_production_kpis(cur)["count"]
-        cur.execute(_TODAYS_DISPATCH_LINES_SQL, (date.today(),))
+        cur.execute(_TODAYS_DISPATCHES_SQL, (date.today(),))
         todays_dispatch_count = int(cur.fetchone()["n"] or 0)
         recent_activity = _get_recent_activity(cur, _MOBILE_ACTIVITY_ROWS)
 
