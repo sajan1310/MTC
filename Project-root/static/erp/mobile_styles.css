@@ -869,6 +869,20 @@ textarea:focus-visible,
 .mapp-home-header { margin-bottom: var(--mb-sp-5); }
 .mapp-home-header .mapp-screen-title { margin-bottom: 2px; }
 
+/* The last stored figures, on screen while the live ones load
+   (MApp.Home._paintLastFigures): dimmed, with their age after the date. The
+   date line never wraps, so that note coming and going moves nothing below
+   it -- no layout shift. */
+#home-date {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#home-stats,
+#home-activity { transition: opacity .2s ease; }
+.mapp-home-stale { opacity: .6; }
+
 .mb-quick-actions {
   display: grid;
   /* Width-driven, not a fixed count. `repeat(3, 1fr)` meant the row could

@@ -121,7 +121,10 @@ describe('a signed-out session', () => {
     await expect(Api.call('getLogo')).rejects.toBeDefined();
     status = 200;
     await expect(Api.call('getLogo')).resolves.toMatchObject({ success: true });
-    expect(global.fetch).toHaveBeenCalledTimes(2);
+    // RPC calls only: the 401 also asked once for a new session token
+    // (api_session_refresh.test.js), which this server refused too.
+    const rpcCalls = global.fetch.mock.calls.filter(([url]) => String(url).startsWith('/api/erp/rpc/'));
+    expect(rpcCalls).toHaveLength(2);
   });
 
   test('an ordinary JSON response still passes through untouched', async () => {

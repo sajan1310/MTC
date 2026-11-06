@@ -1319,6 +1319,13 @@ def create_app(config_name: str | None = None) -> Flask:
     ledger_audit_service.start_ledger_audit_scheduler(app)
     backup_service.start_backup_scheduler(app)
 
+    # Keeps an idle worker's memory in use, so the morning's first loads do
+    # not wait 20-117 s for the VM host to page it back (see its docstring).
+    # No-ops under TESTING and in the outer reloader, like the two above.
+    from .erp import keep_warm
+
+    keep_warm.start(app)
+
     # If specific view function names need exemption but are only available
     # after registration, we try to exempt them but log missing keys.
     # Only exempt explicit endpoints that require CSRF exemption:

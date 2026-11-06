@@ -52,10 +52,15 @@ consecutive refreshes land on different workers and show the user numbers
 that jump backwards -- a worse failure than the latency it would save now
 that the history scans are gone.
 
-getMobileDashboard is NOT part of the group (1) rewrite: it still loads
-full production/dispatch/stock history for three counters and five
-activity rows, and is the obvious next target. Left alone here so this
-change's blast radius stays on the desktop dashboard it was made for.
+getMobileDashboard went the same way on 2026-11-06. It loaded the full
+production and dispatch histories -- getProductionData's every lot with its
+components, 8 MB by then -- for two counters and five activity rows. Phones
+call it on every Home visit. On the cold morning of 2026-11-06 it took 66
+and 117 s and then failed, because building that list outlasted Postgres's
+idle-in-transaction limit. The two counters are now COUNT queries, and the
+activity rows two LIMIT 5 reads (see _get_recent_activity for why five of
+each give exactly the old top five). Low stock still comes from
+getStockData, as on the desktop dashboard.
 
 getMobileDashboard's userEmail reuses a small
 current_user.get_current_user_email() helper (mirrors the existing
@@ -76,7 +81,6 @@ from . import dispatch_service
 from . import lot_receipts
 from . import po_service
 from . import process_service
-from . import production_service
 from . import stock_service
 from .current_user import get_current_user_email
 from .. import config_maps
@@ -162,6 +166,41 @@ _DISPATCH_TREND_SQL = f"""
 """
 
 _DISPATCH_TREND_DAYS = 30
+
+# Rows in the phone Home's "recent activity" list.
+_MOBILE_ACTIVITY_ROWS = 5
+
+# The newest lots, in getProductionData's own order: date, then id, newest
+# first (production_service.get_production_data sorts on (dateRaw, rowIdx)).
+_RECENT_LOTS_SQL = f"""
+    SELECT id, production_date, qty, status, lot_number, process_id
+    FROM {_T["PRODUCTION"]}
+    WHERE deleted_at IS NULL AND production_date IS NOT NULL
+    ORDER BY production_date DESC, id DESC
+    LIMIT %s
+"""
+
+# The newest dispatch LINES, in getDispatchData's own order: date, then
+# dispatch number, then line id, newest first. COLLATE "C" because that sort
+# compared the numbers as Python strings (code point by code point), which a
+# locale collation does not do for punctuation or case.
+_RECENT_DISPATCH_LINES_SQL = f"""
+    SELECT h.dispatch_number, h.dispatch_date, h.client_name, l.id AS line_id, l.qty
+    FROM {_T["DISPATCH_HEADERS"]} h
+    JOIN {_T["DISPATCH_LINES"]} l ON l.header_id = h.id
+    WHERE h.deleted_at IS NULL AND h.dispatch_date IS NOT NULL
+    ORDER BY h.dispatch_date DESC, h.dispatch_number COLLATE "C" DESC, l.id DESC
+    LIMIT %s
+"""
+
+# Today's dispatch LINES. The phone's tile has always counted lines, not
+# dispatches -- getDispatchData is one record per line -- so this does too.
+_TODAYS_DISPATCH_LINES_SQL = f"""
+    SELECT count(*) AS n
+    FROM {_T["DISPATCH_HEADERS"]} h
+    JOIN {_T["DISPATCH_LINES"]} l ON l.header_id = h.id
+    WHERE h.deleted_at IS NULL AND h.dispatch_date = %s
+"""
 
 
 def _round2(n: float) -> float:
@@ -724,48 +763,63 @@ def get_dashboard_data():
     )
 
 
-@rpc_method("getMobileDashboard")
-def get_mobile_dashboard():
-    production_lots = production_service.get_production_data()["data"]
-    dispatch_records = dispatch_service.get_dispatch_data()["data"]
-    stock_records = stock_service.get_stock_data()["data"]
+def _get_recent_activity(cur, limit: int) -> list:
+    """The `limit` newest lots and dispatch lines, newest first.
 
-    today_key = date.today().isoformat()
+    What this replaces built one entry per lot and per dispatch line, from
+    the full lists in their getters' own order -- lots first, then lines --
+    and stable-sorted the combined list by date, newest first. Both lists
+    were already newest-first, so ties kept that order: on one day, its lots
+    by id, then its lines by dispatch number and id.
 
-    pending_production_count = sum(
-        1 for lot in production_lots if lot["status"] in _ACTIVE_PRODUCTION_STATUSES
-    )
-    todays_dispatch_count = sum(
-        1
-        for d in dispatch_records
-        if d.get("dateRaw") and d["dateRaw"][:10] == today_key
-    )
-    low_stock_count = sum(1 for s in stock_records if s["isLowStock"])
-
+    So the top `limit` of that sort take at most `limit` from each list, and
+    only ever its first ones: anything ahead of a row in its own list is at
+    least as new, and so is ahead of it in the merge too. Reading the first
+    `limit` of each, in the same order, and merging them the same way gives
+    the same rows -- without the two histories.
+    """
     activity = []
-    for lot in production_lots:
-        if not lot.get("dateRaw"):
-            continue
+    cur.execute(_RECENT_LOTS_SQL, (limit,))
+    for row in cur.fetchall():
         activity.append(
             {
                 "type": "production",
-                "title": lot.get("lotNumber") or lot.get("processId"),
-                "subtitle": f"{lot['qty']} unit(s) · {lot['status']}",
-                "dateRaw": lot["dateRaw"],
+                "title": row["lot_number"] or row["process_id"] or "",
+                "subtitle": f"{float(row['qty'])} unit(s) · {row['status'] or ''}",
+                "dateRaw": date_utils.to_iso_string(row["production_date"]) or "",
             }
         )
-    for d in dispatch_records:
-        if not d.get("dateRaw"):
-            continue
+    cur.execute(_RECENT_DISPATCH_LINES_SQL, (limit,))
+    for row in cur.fetchall():
         activity.append(
             {
                 "type": "dispatch",
-                "title": d["dispatchNumber"],
-                "subtitle": f"{d.get('clientName') or 'Direct supply'} · {d['qty']} unit(s)",
-                "dateRaw": d["dateRaw"],
+                "title": row["dispatch_number"] or "",
+                "subtitle": f"{row['client_name'] or 'Direct supply'} · {float(row['qty'])} unit(s)",
+                "dateRaw": date_utils.to_iso_string(row["dispatch_date"]) or "",
             }
         )
     activity.sort(key=lambda a: a["dateRaw"], reverse=True)
+    return activity[:limit]
+
+
+@rpc_method("getMobileDashboard")
+def get_mobile_dashboard():
+    # Same reader as the desktop's "Low-stock alerts" tile. Called before the
+    # connection below is opened, not inside it: it opens its own.
+    stock_records = stock_service.get_stock_data()["data"]
+    low_stock_count = sum(1 for s in stock_records if s["isLowStock"])
+
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
+        # The open-lot total the desktop's Production tile shows: lots whose
+        # status is exactly Pending or In Progress.
+        pending_production_count = _get_active_production_kpis(cur)["count"]
+        cur.execute(_TODAYS_DISPATCH_LINES_SQL, (date.today(),))
+        todays_dispatch_count = int(cur.fetchone()["n"] or 0)
+        recent_activity = _get_recent_activity(cur, _MOBILE_ACTIVITY_ROWS)
 
     return build_response(
         True,
@@ -773,7 +827,7 @@ def get_mobile_dashboard():
             "pendingProductionCount": pending_production_count,
             "todaysDispatchCount": todays_dispatch_count,
             "lowStockCount": low_stock_count,
-            "recentActivity": activity[:5],
+            "recentActivity": recent_activity,
             "appVersion": config_maps.APP_VERSION,
             "userEmail": get_current_user_email(),
         },

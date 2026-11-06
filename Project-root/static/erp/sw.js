@@ -551,7 +551,11 @@
 // Items Master says it keeps a unit a component was recorded in.
 // print-templates.js and production.js are precached; so is stock.js, whose
 // inline count note now says a figure matching the book is recorded.
-const CACHE_NAME = 'erp-shell-v113';
+// v114: a session that lapsed under an open tab is renewed in place, instead
+// of every call failing with "Your session has expired" until a reload; the
+// smart alerts wait until the first screen has settled. api.js and core.js
+// are precached.
+const CACHE_NAME = 'erp-shell-v114';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
