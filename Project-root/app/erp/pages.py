@@ -19,6 +19,7 @@ from flask import (
 )
 from flask_limiter.util import get_remote_address
 from flask_login import current_user, login_required
+from flask_wtf.csrf import generate_csrf
 
 from .. import limiter
 from . import config_maps, erp_bp
@@ -359,6 +360,35 @@ def _photo_response(photo):
     )
     response.set_etag(version)
     return response.make_conditional(request)
+
+
+# ── A new token for a page whose session lapsed under it ─────────────────
+#
+# A phone keeps the app open for days, and a session lasts 24 hours
+# (PERMANENT_SESSION_LIFETIME), so most mornings the token in the page
+# belongs to a session that is gone. Every RPC was then turned away with 401
+# "Your session has expired" -- ten in a row at 09:23 on 2026-11-06 -- although
+# the remember-me cookie would have signed the user straight back in. Nothing
+# gave it the chance: RPCs are POSTs, and CSRFProtect refuses them before
+# Flask-Login reads the cookie. The only way out was reloading the app.
+#
+# This GET is that chance. A remembered user gets a new session and its
+# token, which api.js puts into the page before repeating the call once. A
+# user who really is signed out gets the same 401 as before. The route is
+# under /api/ so that refusal is JSON (_client_wants_json), and it has a
+# limit of its own: the default one counts per address, and every Tailscale
+# user arrives as 127.0.0.1.
+def _session_token_rate_limit() -> str:
+    return current_app.config.get("RATELIMIT_SESSION_TOKEN", "30 per minute")
+
+
+@erp_bp.route("/api/erp/csrf-token")
+@limiter.limit(_session_token_rate_limit, key_func=_per_user_key)
+@login_required
+def fresh_csrf_token():
+    response = jsonify({"success": True, "data": {"csrfToken": generate_csrf()}})
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @erp_bp.route("/erp/render-pdf", methods=["POST"])

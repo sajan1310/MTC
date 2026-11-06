@@ -798,7 +798,17 @@ def _row_to_production_record(row, receipts=None, lot_refs=None) -> dict:
 
 @rpc_method("getProductionData")
 def get_production_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+    # Autocommit: no transaction stays open while fetchall() turns every lot
+    # and its components (8 MB of JSON by 2026-11) into Python. Postgres
+    # ends a session left idle inside a transaction for 60 s, and on a cold
+    # morning (2026-11-06) that conversion took longer: the receipts query
+    # after it then failed with "SSL connection has been closed
+    # unexpectedly", three times in two minutes. Nothing here needs one
+    # transaction -- under READ COMMITTED each statement takes its own
+    # snapshot either way.
+    with database.get_conn(
+        cursor_factory=psycopg2.extras.RealDictCursor, autocommit=True
+    ) as (
         _conn,
         cur,
     ):

@@ -50,7 +50,7 @@ MApp.Api = { call: Api.call, mutate: Api.mutate };
 MApp.Api.callCached = async function (method) {
   try {
     const res = await Api.call(method);
-    OfflineCache.put(method, res); // fire-and-forget
+    MApp.OfflineWrites.store(method, res); // fire-and-forget
     return res;
   } catch (err) {
     const cached = await OfflineCache.get(method);
@@ -58,6 +58,50 @@ MApp.Api.callCached = async function (method) {
       return { ...cached.response, _offlineCachedAt: cached.cachedAt };
     }
     throw err;
+  }
+};
+
+// ── Writing the offline copy, out of the way of taps ────────────────
+// Storing a response blocks the main thread while IndexedDB copies it. For
+// getProductionData (7.5 MB by November 2026) that was 250-410 ms on a
+// budget phone (lab, 4x CPU), and it ran the moment the list arrived --
+// right after the tap that opened Production -- so a search typed then
+// waited for it: the phone's worst INP, 400-660 ms. Three things now:
+//   - the same response is stored once. Api.call answers a repeat within
+//     15 s from memory with the very object stored last time, and every
+//     remount of a tab wrote all of it again;
+//   - storing waits for an idle moment, newest response per method, one
+//     method per moment, so two big lists never add up to one long task;
+//   - offline-cache.js stores JSON text, about a third of the cost.
+MApp.OfflineWrites = {
+  _last: new Map(),    // method -> the response last handed over
+  _pending: new Map(), // method -> the response waiting to be stored
+  _scheduled: false,
+
+  store(method, res) {
+    if (this._last.get(method) === res) return;
+    this._last.set(method, res);
+    this._pending.set(method, res);
+    this._schedule();
+  },
+
+  _schedule() {
+    if (this._scheduled || this._pending.size === 0) return;
+    this._scheduled = true;
+    const run = () => { this._scheduled = false; this._writeOne(); };
+    // The timeout bounds the wait on a page that never goes idle.
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 5000 });
+    else setTimeout(run, 500);
+  },
+
+  _writeOne() {
+    const next = this._pending.keys().next();
+    if (next.done) return;
+    const method = next.value;
+    const res = this._pending.get(method);
+    this._pending.delete(method);
+    try { OfflineCache.put(method, res); } catch { /* best effort, as ever */ }
+    this._schedule();
   }
 };
 
@@ -174,6 +218,10 @@ MApp.Outbox = {
       const registration = await navigator.serviceWorker.ready;
       this._registration = registration;
       this._sendCsrfToken(registration);
+      // api.js swaps in a new token when the session lapses under an open
+      // page; the worker's copy has to follow, or Background Sync replays
+      // with the dead one.
+      document.addEventListener('api:csrf-refreshed', () => this._sendCsrfToken(registration));
       this.requestSync();
     } catch (e) {
       // Non-fatal -- the foreground online/boot flush still works.
@@ -3500,15 +3548,28 @@ MApp.Home = {
     const statsEl = document.getElementById('home-stats');
     const activityEl = document.getElementById('home-activity');
 
+    // The last figures this phone was given, on screen while the server
+    // answers. Home used to stay skeletons until it did -- and on a cold
+    // morning (2026-11-06) the server took 66 and 117 s and then failed, so
+    // the first screen of the day was blank and then an error. Not awaited:
+    // the request below goes out at the same moment, and the live figures
+    // never wait for the stored ones.
+    const gen = (this._mountGen = (this._mountGen || 0) + 1);
+    const lastShown = this._paintLastFigures(gen);
+
     try {
       const res = await MApp.Api.callCached('getMobileDashboard');
       if (!res || !res.success) {
-        MApp.Util.renderError(statsEl, res && res.message, () => this.mount());
-        if (activityEl) activityEl.innerHTML = '';
+        await this._liveFiguresFailed(gen, lastShown, res && res.message, statsEl, activityEl);
         return;
       }
+      this._doneGen = gen;
       MApp.State.lastDashboard = res.data || {};
-      this.render(res.data || {}, res._offlineCachedAt);
+      // With the full figures this page already holds, as _loadFullData
+      // merges them: a chosen full-dashboard tile showed 0 until they came.
+      this.render({ ...MApp.State.lastDashboard, ...(this._full || {}) }, res._offlineCachedAt,
+        { settle: this._paintedGen === gen });
+      this._setFreshness('');
 
       // Always now: the whole dashboard lives on this screen, so the full
       // payload is always wanted. The order is what keeps that affordable
@@ -3521,9 +3582,66 @@ MApp.Home = {
       // pulsing at somebody forever.
       await this._loadFullData();
     } catch (err) {
-      MApp.Util.renderError(statsEl, err && err.message, () => this.mount());
-      if (activityEl) activityEl.innerHTML = '';
+      await this._liveFiguresFailed(gen, lastShown, err && err.message, statsEl, activityEl);
     }
+  },
+
+  // Paints the copy callCached last stored, dimmed, with its age beside
+  // today's date. Resolves true if it painted something.
+  //
+  // Nothing on the screen moves when the live figures replace it: the same
+  // tiles and rows in the same places, the age in the date line, which
+  // never wraps -- so this costs no layout shift (CLS).
+  async _paintLastFigures(gen) {
+    let hit;
+    try { hit = await OfflineCache.get('getMobileDashboard'); } catch { hit = null; }
+    const cached = hit && hit.response;
+    // Never over what the server has already answered (figures or an
+    // error), nor over a newer visit to Home.
+    if (!cached || !cached.success || this._doneGen >= gen || gen !== this._mountGen) return false;
+
+    // A copy from an earlier day knows nothing about today's dispatches:
+    // that tile waits for the live figure rather than showing yesterday's
+    // under "Today's".
+    const sameDay = new Date(hit.cachedAt).toDateString() === new Date().toDateString();
+    this.render({ ...(cached.data || {}), ...(this._full || {}) }, null,
+      { stale: true, pendingKeys: sameDay ? [] : ['todaysDispatches'] });
+    this._setFreshness(`figures from ${MApp.Util.relativeTime(hit.cachedAt)}, updating…`);
+    this._paintedGen = gen;
+    return true;
+  },
+
+  async _liveFiguresFailed(gen, lastShown, message, statsEl, activityEl) {
+    // A stored copy still being read gets a moment, not forever.
+    const shown = await Promise.race([lastShown, new Promise(r => setTimeout(() => r(false), 1000))]);
+    this._doneGen = gen;
+    if (gen !== this._mountGen) return; // a newer visit to Home owns the screen
+    if (!shown) {
+      MApp.Util.renderError(statsEl, message, () => this.mount());
+      if (activityEl) activityEl.innerHTML = '';
+      return;
+    }
+    // The last figures stay up, labelled as old; the error is a toast, so
+    // it covers nothing and moves nothing.
+    this._setFreshness('figures could not be updated');
+    MApp.Toast.action(message || 'Could not update the figures.', 'Retry', () => this.mount());
+  },
+
+  // The note after today's date: how old the figures on screen are.
+  _setFreshness(text) {
+    const dateEl = document.getElementById('home-date');
+    if (!dateEl) return;
+    let note = dateEl.querySelector('.mapp-home-freshness');
+    if (!text) {
+      if (note) note.remove();
+      return;
+    }
+    if (!note) {
+      note = document.createElement('span');
+      note.className = 'mapp-home-freshness';
+      dateEl.appendChild(note);
+    }
+    note.textContent = ` · ${text}`;
   },
 
   // A heading over nothing reads as something failed to load.
@@ -3568,16 +3686,23 @@ MApp.Home = {
     }
   },
 
-  render(data, offlineCachedAt) {
+  // opts.stale: the last stored copy, painted dimmed while the live one
+  // loads (see _paintLastFigures); opts.pendingKeys: blocks that copy cannot
+  // answer; opts.settle: the live figures replacing that copy, which are in
+  // the same places already and so skip the entrance animation.
+  render(data, offlineCachedAt, opts = {}) {
     const statsEl = document.getElementById('home-stats');
     if (statsEl) {
       const banner = offlineCachedAt ? MApp.Util.offlineBannerHtml(offlineCachedAt) : '';
       statsEl.innerHTML = banner + '<div class="mb-stat-grid" id="home-blocks"></div>';
-      this.renderBlocks(data);
+      statsEl.classList.toggle('mapp-home-stale', !!opts.stale);
+      this.renderBlocks(data, opts.pendingKeys);
     }
 
     const activityEl = document.getElementById('home-activity');
     if (activityEl) {
+      activityEl.classList.toggle('mapp-home-stale', !!opts.stale);
+      const entrance = opts.settle ? '' : ' mb-stagger-in';
       const activity = data.recentActivity || [];
       if (activity.length === 0) {
         MApp.Util.renderEmpty(activityEl, {
@@ -3591,7 +3716,7 @@ MApp.Home = {
             ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="14" height="10" rx="1"/><path d="M15 10h4l3 3v4h-7z"/><circle cx="6" cy="19" r="1.6"/><circle cx="17.5" cy="19" r="1.6"/></svg>'
             : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5-6-3.5z"/></svg>';
           return `
-          <div class="mb-card mb-stagger-in" style="--i:${i};">
+          <div class="mb-card${entrance}" style="--i:${i};">
             <div class="mb-activity-row">
               <div class="mb-activity-icon ${isDispatch ? 'mb-accent-safety' : 'mb-accent-blue'}">${icon}</div>
               <div class="mb-activity-body">
@@ -3614,7 +3739,7 @@ MApp.Home = {
   // yet draws its frame and a dash rather than a zero -- "we do not know
   // yet" and "there are none" are different answers, and on a dashboard
   // the difference is the whole point.
-  renderBlocks(data) {
+  renderBlocks(data, pendingKeys = []) {
     const host = document.getElementById('home-blocks');
     if (!host) return;
 
@@ -3632,7 +3757,7 @@ MApp.Home = {
     const ready = key => key !== 'full' || !!this._full;
 
     host.innerHTML = blocks.map(b => {
-      const pending = !ready(b.source);
+      const pending = !ready(b.source) || pendingKeys.includes(b.key);
       const attrs = pending ? ' data-block-pending="1"' : '';
       return b.kind === 'chart'
         ? this._chartHtml(b, data, pending, attrs)

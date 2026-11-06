@@ -2838,8 +2838,21 @@ const App = {
     // Trigger smart notifications (low stock, pending POs) and surface any
     // backend-logged ledger-audit findings since the last visit --
     // best-effort, never blocks init.
+    //
+    // The smart alerts wait a few seconds and then for an idle moment. They
+    // read the stock list and the whole PO ledger -- with it the bills,
+    // returns and vendors, ~1.2 MB -- and ran the instant the first screen
+    // was up: on a cold morning (2026-11-06) those reads queued on the
+    // server with the user's first real click, and parsing them here held
+    // the tab while that click was answered. An alert a few seconds later
+    // loses nothing.
     if (this.Notify) {
-      this.Notify.checkSmartAlerts().catch(e => console.error('[Init] checkSmartAlerts failed:', e));
+      const smartAlerts = () => this.Notify.checkSmartAlerts()
+        .catch(e => console.error('[Init] checkSmartAlerts failed:', e));
+      setTimeout(() => {
+        if (typeof requestIdleCallback === 'function') requestIdleCallback(smartAlerts, { timeout: 10000 });
+        else smartAlerts();
+      }, 8000);
       this.Notify.checkBackendAlerts().catch(e => console.error('[Init] checkBackendAlerts failed:', e));
     }
   }

@@ -77,7 +77,13 @@ const OfflineCache = (() => {
         const req = tx.objectStore(STORE_NAME).get(method);
         req.onsuccess = () => {
           const row = req.result;
-          resolve(row ? { response: row.response, cachedAt: row.cachedAt } : null);
+          if (!row) { resolve(null); return; }
+          // `json` since 2026-11 (see put()); `response` in rows written before.
+          let response = row.response;
+          if (typeof row.json === 'string') {
+            try { response = JSON.parse(row.json); } catch { resolve(null); return; }
+          }
+          resolve({ response, cachedAt: row.cachedAt });
         };
         req.onerror = () => resolve(null);
       } catch (err) {
@@ -86,13 +92,20 @@ const OfflineCache = (() => {
     });
   }
 
+  // Stored as JSON text. IndexedDB's put() clones what it is given on the
+  // main thread, and for an object graph the size of getProductionData
+  // (7.5 MB by November 2026, every lot with its components) that clone took
+  // 250-410 ms at a budget phone's speed; JSON.stringify plus storing one
+  // string took ~150 ms (lab, 4x CPU throttling). Every response here
+  // arrived as JSON, so the text is the same data.
   async function put(method, response) {
     const db = await open();
     if (!db) return;
 
     try {
+      const json = JSON.stringify(response);
       const tx = db.transaction(STORE_NAME, 'readwrite');
-      tx.objectStore(STORE_NAME).put({ method, response, cachedAt: Date.now() });
+      tx.objectStore(STORE_NAME).put({ method, json, cachedAt: Date.now() });
     } catch (err) {
       // Best-effort -- a write failure here must never surface to the caller.
     }

@@ -118,8 +118,70 @@ const Api = (() => {
     return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
   }
 
-  async function _request(method, args, mutationId) {
-    const headers = { 'Content-Type': 'application/json', 'X-CSRFToken': _csrfToken() };
+  // ── A lapsed session, recovered in place ───────────────────────────────
+  // A phone keeps this app open for days and a session lasts 24 hours, so
+  // most mornings every call came back 401 "Your session has expired" -- ten
+  // in a row at 09:23 on 2026-11-06 -- although the remember-me cookie would
+  // have signed the user straight back in. The page's token belonged to the
+  // session that had gone, and the only way out was reloading the app.
+  //
+  // One GET to the server starts the new session the cookie allows and
+  // returns its token (app/erp/pages.py's fresh_csrf_token). The token goes
+  // into the page, and the call is repeated once. Somebody who really is
+  // signed out gets the same 401 as before. A call refused at 401 never ran
+  // -- the session check comes first -- so repeating a save is safe, and it
+  // keeps its mutation id besides.
+  //
+  // Calls that fail together share one refresh, and a call that was sent
+  // before another's refresh landed just goes again with the new token. A
+  // refresh the server refuses is not tried again for a while, so a page
+  // that really is signed out does not ask on every call.
+  const SESSION_TOKEN_URL = '/api/erp/csrf-token';
+  const REFRESH_FAILURE_HOLD_MS = 10_000;
+  let _refreshing = null;
+  let _refreshFailedAt = 0;
+
+  async function _fetchFreshToken() {
+    try {
+      const res = await fetch(SESSION_TOKEN_URL, {
+        method: 'GET',
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' },
+        cache: 'no-store'
+      });
+      const type = res.headers?.get?.('content-type') || '';
+      if (!res.ok || !type.includes('json')) return false;
+      const body = await res.json();
+      const token = body && body.success && body.data && body.data.csrfToken;
+      const meta = token && document.querySelector('meta[name="csrf-token"]');
+      if (!meta) return false;
+      meta.setAttribute('content', token);
+      // The mobile service worker keeps its own copy for Background Sync.
+      try { document.dispatchEvent(new CustomEvent('api:csrf-refreshed', { detail: { token } })); }
+      catch { /* no CustomEvent: nothing is listening either */ }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function _refreshSession() {
+    // A service worker has no page to put a token into (see _csrfToken).
+    if (typeof document === 'undefined') return Promise.resolve(false);
+    if (_refreshing) return _refreshing;
+    if (Date.now() - _refreshFailedAt < REFRESH_FAILURE_HOLD_MS) return Promise.resolve(false);
+    const attempt = _fetchFreshToken().then(ok => {
+      if (!ok) _refreshFailedAt = Date.now();
+      if (_refreshing === attempt) _refreshing = null;
+      return ok;
+    });
+    _refreshing = attempt;
+    return attempt;
+  }
+
+  async function _request(method, args, mutationId, isRetry) {
+    const sentToken = _csrfToken();
+    const headers = { 'Content-Type': 'application/json', 'X-CSRFToken': sentToken };
     if (mutationId) headers['X-Mutation-Id'] = mutationId;
 
     let res;
@@ -172,6 +234,9 @@ const Api = (() => {
     // mobile outbox keeps treating it exactly like a stale CSRF token:
     // marked failed and retryable from Sync Issues after signing back in.
     if (res.status === 401) {
+      if (!isRetry && (_csrfToken() !== sentToken || await _refreshSession())) {
+        return _request(method, args, mutationId, true);
+      }
       const err = new Error('Your session has expired. Please sign in again.');
       err.isHttpError = true;
       err.isAuthError = true;

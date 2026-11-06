@@ -241,7 +241,12 @@
 // beside it, and a stock count saved offline carries when it was made, so
 // it takes effect then and not when it syncs. print-templates.js and
 // mobile.js carry it.
-const CACHE_NAME = 'erp-mobile-shell-v104';
+// v105: Home shows its last figures at once while the live ones load; a
+// session that lapsed overnight is renewed in place instead of every call
+// failing until a reload; the offline copy of a list is stored once, when
+// the phone is idle, as JSON text, so opening Production no longer holds up
+// a tap. mobile.js, mobile_styles.css, api.js and offline-cache.js carry it.
+const CACHE_NAME = 'erp-mobile-shell-v105';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so
