@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# MTC ERP — one-time host provisioning for Ubuntu 24.04 LTS.
+# MTC ERP — one-time host provisioning for Ubuntu 24.04 or 26.04 LTS.
 #
 #   sudo ./deploy/provision.sh
 #
@@ -8,9 +8,10 @@
 # It does NOT deploy code: run deploy/deploy.sh afterwards. Idempotent --
 # safe to re-run after editing.
 #
-# Ubuntu 24.04 specifically: its system Python is 3.12, which is what the
-# Dockerfile pins and what CI tests (3.10/3.11/3.12). Ubuntu 25.x and
-# Debian 13 ship Python 3.13, which CI has never run.
+# Ubuntu 24.04 or 26.04: their system Pythons are 3.12 and 3.14, both in the
+# range CI tests (3.10-3.14). The production server went 24.04 -> 26.04 by
+# release upgrade; see README.md "After an Ubuntu release upgrade" for what
+# that does to the venv and the third-party apt repositories.
 set -euo pipefail
 
 APP_USER=mtc
@@ -33,8 +34,8 @@ warn() { printf 'WARN: %s\n' "$*" >&2; }
 
 [[ $EUID -eq 0 ]] || { echo "Run with sudo." >&2; exit 1; }
 
-if ! grep -q 'VERSION_ID="24.04"' /etc/os-release 2>/dev/null; then
-    warn "Not Ubuntu 24.04. Check that python3 --version is 3.10-3.12;"
+if ! grep -qE 'VERSION_ID="(24|26)\.04"' /etc/os-release 2>/dev/null; then
+    warn "Not Ubuntu 24.04 or 26.04. Check that python3 --version is 3.10-3.14;"
     warn "outside that range the app runs on a version CI never tests."
 fi
 
@@ -71,7 +72,16 @@ apt-get install -y --no-install-recommends \
 # PGDG, because Ubuntu 24.04 ships PostgreSQL 16 and $PG_VERSION above is 17
 # -- see the note there for why the version has to match the database being
 # restored from, not whatever the distro happens to package.
-if [[ ! -f /etc/apt/sources.list.d/pgdg.list ]]; then
+#
+# Skipped if ANY active source already points at apt.postgresql.org, not just
+# a pgdg.list. PostgreSQL's own apt.postgresql.org.sh writes pgdg.sources
+# with a different keyring, and two entries for the same repo with different
+# Signed-By values make every `apt-get update` fail outright. A release
+# upgrade renames the old file to pgdg.list.disabled, which apt ignores and
+# this grep, matching only *.list and *.sources, does too -- so the repo is
+# re-added for the NEW codename, as it should be.
+if ! grep -qs 'apt.postgresql.org' \
+        /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; then
     log "Adding the PostgreSQL PGDG repository"
     install -d /usr/share/postgresql-common/pgdg
     curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \

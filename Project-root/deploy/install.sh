@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# MTC ERP — one-command first install on Ubuntu 24.04 LTS.
+# MTC ERP — one-command first install on Ubuntu 24.04 or 26.04 LTS.
 #
 #   sudo ./install.sh --repo https://github.com/sajan1310/MTC.git \
 #                     --base-url http://192.168.1.50
@@ -15,7 +15,7 @@
 #
 # Needs the internet. That is deliberate: apt and pip both reach out, and
 # an offline install would need a bundle of .debs and wheels built on a
-# matching Ubuntu 24.04 host, which is a different tool.
+# matching Ubuntu host, which is a different tool.
 #
 # Idempotent. Re-running updates the checkout and re-applies both scripts.
 set -euo pipefail
@@ -75,8 +75,8 @@ done
 [[ -n "$REPO" || -d "$SRC_DIR/Project-root" ]] \
     || { usage; fail "No code at $SRC_DIR. Pass --repo, or put the source there first."; }
 
-if ! grep -q 'VERSION_ID="24.04"' /etc/os-release 2>/dev/null; then
-    printf 'WARN: not Ubuntu 24.04. python3 --version should be 3.10-3.12;\n' >&2
+if ! grep -qE 'VERSION_ID="(24|26)\.04"' /etc/os-release 2>/dev/null; then
+    printf 'WARN: not Ubuntu 24.04 or 26.04. python3 --version should be 3.10-3.14;\n' >&2
     printf 'WARN: outside that range the app runs on a version CI never tests.\n' >&2
 fi
 

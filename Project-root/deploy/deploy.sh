@@ -5,6 +5,11 @@
 #   sudo /opt/mtc/src/Project-root/deploy/deploy.sh          # deploy HEAD
 #   sudo .../deploy.sh --ref v1.2.0                          # deploy a tag
 #   sudo .../deploy.sh --no-pull                             # deploy what is on disk
+#   sudo .../deploy.sh --python python3.12                   # pin the interpreter
+#
+# The virtualenv is built with --python, else MTC_PYTHON from mtc.env, else
+# python3. If the existing venv was built on a different Python -- which is
+# what an Ubuntu release upgrade does to it, silently -- it is rebuilt.
 #
 # Idempotent, and safe to re-run. Run deploy/provision.sh once first.
 #
@@ -23,16 +28,49 @@ HEALTH_URL=http://127.0.0.1:8000/health
 
 REF=""
 PULL=1
+PYTHON_ARG=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --ref)     REF="$2"; shift 2 ;;
         --no-pull) PULL=0; shift ;;
+        --python)  PYTHON_ARG="$2"; shift 2 ;;
         *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
 done
 
+# Set when this run moved a working venv aside to rebuild it. Until the
+# service has been restarted onto the new one, a failure puts the old one
+# back, so a deploy that cannot build its environment leaves the server
+# exactly as it found it.
+#
+# Only a venv that still WORKED is put back. After a release upgrade the old
+# one is broken by definition, and restoring it would trade a half-built new
+# venv -- worth inspecting -- for one known not to start.
+VENV_REPLACED=""
+RESTARTED=""
+fail() {
+    printf '\nFAILED: %s\n' "$*" >&2
+    if [[ -n "$VENV_REPLACED" && -d "$VENV_REPLACED" ]]; then
+        # "Worked" = its interpreter runs and finds its OWN site-packages: the
+        # same test venv_matches() applies, minus the version it was asked for.
+        local v
+        if v="$("$VENV_REPLACED/bin/python" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)" \
+                && [[ -d "$VENV_REPLACED/lib/python$v/site-packages" ]]; then
+            printf 'Restoring the previous virtualenv from %s\n' "$VENV_REPLACED" >&2
+            rm -rf "$VENV_DIR"
+            mv "$VENV_REPLACED" "$VENV_DIR"
+            if [[ -n "$RESTARTED" ]]; then
+                printf 'Restarting mtc on the restored virtualenv\n' >&2
+                systemctl restart mtc || true
+            fi
+        else
+            printf 'The previous virtualenv (%s) does not run either; leaving the new one in place.\n' \
+                "$VENV_REPLACED" >&2
+        fi
+    fi
+    exit 1
+}
 log()  { printf '\n==> %s\n' "$*"; }
-fail() { printf '\nFAILED: %s\n' "$*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || fail "Run with sudo."
 [[ -f "$ENV_FILE" ]] || fail "$ENV_FILE missing. Run deploy/provision.sh first."
@@ -85,15 +123,49 @@ log "Deploying $DEPLOYED_REF"
 # returned 503 and reported the renderer as unavailable. A missing package
 # here degrades silently instead of crashing, which is exactly why it went
 # unnoticed -- hence the explicit verification below, not just an install.
+#
+# The interpreter is chosen explicitly and the venv is checked against it on
+# every deploy. A venv is bound to the Python it was built with: its packages
+# live in lib/pythonX.Y/. A release upgrade replaces the system python3, and
+# bin/python then starts the NEW interpreter, which looks in a lib/pythonX.Y/
+# that does not exist -- so the unit dies on `No module named 'psycopg2'`
+# while the venv directory, the thing the old `[[ -d ]]` test looked at, is
+# still there. That took production down after 24.04 -> 26.04.
+PYTHON="$PYTHON_ARG"
+[[ -n "$PYTHON" ]] || PYTHON="$(sed -n 's/^MTC_PYTHON=//p' "$ENV_FILE" | tail -1)"
+[[ -n "$PYTHON" ]] || PYTHON=python3
+PYTHON_BIN="$(command -v "$PYTHON")" \
+    || fail "Python interpreter '$PYTHON' not found (from --python, MTC_PYTHON in $ENV_FILE, or the python3 default)."
+PY_VER="$("$PYTHON_BIN" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+log "Python: $PYTHON_BIN ($PY_VER)"
+
+# Healthy means: bin/python runs, it IS the chosen X.Y, and that X.Y's
+# site-packages exists. The last test is the one that catches the upgrade
+# case, where bin/python happily runs the new interpreter.
+venv_matches() {
+    local v
+    v="$("$VENV_DIR/bin/python" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)" || return 1
+    [[ "$v" == "$PY_VER" && -d "$VENV_DIR/lib/python$v/site-packages" ]]
+}
+
+if [[ -d "$VENV_DIR" ]] && ! venv_matches; then
+    VENV_REPLACED="$VENV_DIR.replaced-$(date +%Y%m%d-%H%M%S)"
+    log "Virtualenv was not built on Python $PY_VER -- rebuilding (previous kept at $VENV_REPLACED)"
+    mv "$VENV_DIR" "$VENV_REPLACED"
+fi
+
 [[ -d "$VENV_DIR" ]] || {
-    log "Creating $VENV_DIR"
-    python3 -m venv "$VENV_DIR"
+    log "Creating $VENV_DIR on Python $PY_VER"
+    "$PYTHON_BIN" -m venv "$VENV_DIR" \
+        || fail "Could not create the venv. Install the venv module: apt install python$PY_VER-venv"
     chown -R "$APP_USER:$APP_USER" "$VENV_DIR"
 }
 
 log "Syncing dependencies"
-"$VENV_DIR/bin/pip" install --quiet --upgrade pip
-"$VENV_DIR/bin/pip" install --quiet -r "$PROJECT_DIR/requirements.txt"
+"$VENV_DIR/bin/pip" install --quiet --upgrade pip \
+    || fail "pip upgrade failed -- not restarting the service."
+"$VENV_DIR/bin/pip" install --quiet -r "$PROJECT_DIR/requirements.txt" \
+    || fail "Dependency install failed -- not restarting the service."
 chown -R "$APP_USER:$APP_USER" "$VENV_DIR"
 
 log "Verifying the runtime"
@@ -187,6 +259,7 @@ chown -R "$APP_USER:$APP_USER" "$SRC_DIR"
 
 # ── Restart and verify ───────────────────────────────────────────────────
 log "Restarting mtc"
+RESTARTED=1
 systemctl restart mtc
 
 # /health reports the DATABASE, not just that Flask answered, so this is a
@@ -197,6 +270,9 @@ for attempt in $(seq 1 30); do
     if curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
         echo
         curl -fsS "$HEALTH_URL"; echo
+        if [[ -n "$VENV_REPLACED" ]]; then
+            log "Rebuilt the virtualenv on Python $PY_VER. Once satisfied: rm -rf $VENV_REPLACED"
+        fi
         log "Deployed $DEPLOYED_REF successfully"
         exit 0
     fi
