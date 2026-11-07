@@ -1,4 +1,4 @@
-# deploy/ — Ubuntu 24.04 LTS, without Docker
+# deploy/ — Ubuntu 24.04 / 26.04 LTS, without Docker
 
 Full narrative, sizing and rationale: **[DEPLOYMENT.md § VPS Deployment](../DEPLOYMENT.md#vps-deployment-ubuntu-2404-lts)**.
 This file is the short version.
@@ -159,6 +159,66 @@ always outlast them, read
 committed data survives a hard cut, the service now comes back on its own
 without anyone SSHing in, and the remaining work is a UPS with a data link
 so the machine can shut down cleanly instead of being killed.
+
+### After an Ubuntu release upgrade
+
+Production went 24.04 → 26.04 with `do-release-upgrade` and was down most of
+a day. Nothing here is hypothetical; each step below is one that bit.
+
+**Before:** take a VMware snapshot, and run the upgrade inside `tmux`. An SSH
+session that drops mid-upgrade leaves a half-upgraded system -- that is how
+the new kernel ended up with no initramfs and panicked on boot
+(`VFS: Unable to mount root fs on unknown-block(0,0)`). Make the GRUB menu
+visible first, so an older kernel is one keypress away:
+
+```bash
+sudo sed -i 's/^GRUB_TIMEOUT_STYLE=.*/GRUB_TIMEOUT_STYLE=menu/' /etc/default/grub
+sudo sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=10/' /etc/default/grub
+sudo update-grub
+```
+
+**If it was interrupted:** boot the previous kernel from GRUB's *Advanced
+options*, then finish the job:
+
+```bash
+sudo dpkg --configure -a && sudo apt -f install
+sudo update-initramfs -c -k all && sudo update-grub
+```
+
+**After, in this order:**
+
+1. **Network.** Check `ip a show ens33` has `192.168.31.86`. cloud-init can
+   bring back a `50-cloud-init.yaml` (DHCP) next to `99-static.yaml`; keep
+   only the static one and stop cloud-init rewriting it:
+   `echo 'network: {config: disabled}' | sudo tee /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg`
+2. **Third-party apt repos.** The upgrader disables them (renamed to
+   `*.disabled`, `*.distUpgrade`, `*.migrate`). Re-add them for the new
+   codename:
+   ```bash
+   curl -fsSL https://tailscale.com/install.sh | sh
+   sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh
+   sudo apt update && sudo apt upgrade      # NOT full-upgrade, NOT autoremove
+   ```
+3. **The venv.** `sudo ./deploy.sh --no-pull`. It notices the venv was built
+   on the old Python and rebuilds it on the new one, verifying before it
+   restarts anything. (Before this was automatic, the symptom was
+   `ModuleNotFoundError: No module named 'psycopg2'` in `journalctl -u mtc`
+   and a 502 from nginx.)
+4. **Collation.** A new glibc changes text sort order, and Postgres warns
+   `collation version mismatch` on every connection. Indexes on text are
+   then in the wrong order until rebuilt (~seconds at this size):
+   ```bash
+   sudo mtc-backup
+   for db in mtc postgres template1; do
+     sudo -u postgres psql -d $db -c "REINDEX DATABASE $db;"
+     sudo -u postgres psql -d $db -c "ALTER DATABASE $db REFRESH COLLATION VERSION;"
+   done
+   ```
+5. `sudo mtc-health` → *All checks passed*, then a fresh snapshot.
+
+Do **not** `apt autoremove` until the venv is on the new Python: it lists the
+old `python3.X` as no longer required, and removing it breaks a venv that
+still uses it. `apt-mark manual python3.X` protects it in the meantime.
 
 ### Three things that bite
 
