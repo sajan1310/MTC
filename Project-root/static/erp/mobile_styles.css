@@ -1576,7 +1576,7 @@ body.mb-selecting select.mb-chip-select { pointer-events: none; }
 .mapp-mat {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas: "main qty" "main actions";
+  grid-template-areas: "main qty" "tools tools";
   align-items: start;
   gap: var(--mb-sp-1) var(--mb-sp-3);
   padding: var(--mb-sp-2) 0;
@@ -1641,11 +1641,27 @@ body.mb-selecting select.mb-chip-select { pointer-events: none; }
   color: var(--mb-steel);
 }
 
-.mapp-mat-actions {
-  grid-area: actions;
+/* Under the line, the full width of it: the arrows that set its place on
+   the left, what can be done to it on the right. Change, Use recipe and
+   Remove under the quantity alone would squeeze the item's name. Where all
+   three do not fit beside the arrows (a 360px phone), they move under them
+   together rather than breaking apart around them. */
+.mapp-mat-tools {
+  grid-area: tools;
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--mb-sp-3);
+}
+
+.mapp-mat-tools .mapp-reorder { margin-top: 0; }
+
+.mapp-mat-actions {
+  display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--mb-sp-4);
+  margin-left: auto;
 }
 
 .mapp-mat-remove { color: var(--mb-enamel-red-ink); }

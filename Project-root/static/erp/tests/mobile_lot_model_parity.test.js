@@ -812,6 +812,33 @@ describe('the operator\'s own numbers', () => {
     expect(p.model.payloadLines().map(l => [l.itemName, l.qty])).toEqual([['MS Tube', 18], ['Thinner', 1.5]]);
   });
 
+  // Desktop's per-row item picker: a recipe row given another item keeps
+  // its place and goes on following the lot, as the row did.
+  test('a line given another item keeps its place and follows the lot as before', () => {
+    const p = phoneOpen('PRC-CUT');
+    p.qty(10);
+    const rod = p.model.lines().find(l => l.itemName === 'Weld Rod');
+    p.model.swapLine(rod.id, { itemName: 'Thinner', size: 'GENERAL', narration: '', color: '', sourceType: 'ITEM', poolColor: '', unit: '' });
+    expect(p.model.payloadLines().map(l => [l.itemName, l.qty])).toEqual([['MS Tube', 15], ['Thinner', 2]]);
+    p.qty(20);
+    expect(p.model.payloadLines().map(l => [l.itemName, l.qty])).toEqual([['MS Tube', 30], ['Thinner', 4]]);
+    p.model.useRecipe(rod.id);
+    expect(p.model.payloadLines().map(l => l.itemName)).toEqual(['MS Tube', 'Weld Rod']);
+  });
+
+  // Desktop's drag handles: the order set is the order the lot is sent in.
+  test('the arranged order is the order sent, and outlasts a new quantity', () => {
+    const p = phoneOpen('PRC-CUT');
+    p.qty(10);
+    p.model.addLine({ itemName: 'Thinner', size: 'GENERAL', narration: '', color: '', sourceType: 'ITEM', qty: 1.5, colorGroup: 'COMMON', poolColor: '', unit: '' });
+    const thinner = p.model.lines().find(l => l.itemName === 'Thinner');
+    expect(p.model.moveLine(thinner.id, -1)).toBe(true);
+    expect(p.model.moveLine(thinner.id, -1)).toBe(true);
+    expect(p.model.moveLine(thinner.id, -1)).toBe(false); // already first
+    p.qty(12);
+    expect(p.model.payloadLines().map(l => [l.itemName, l.qty])).toEqual([['Thinner', 1.5], ['MS Tube', 18], ['Weld Rod', 2.4]]);
+  });
+
   test('a secondary colour typed by hand stops following the lot', () => {
     const p = phoneOpen('PRC-ASM');
     p.check('Red-White'); p.type('Red-White', 12);
