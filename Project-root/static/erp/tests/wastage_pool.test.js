@@ -267,9 +267,13 @@ describe('Log Wastage, from the Warehouse Pool', () => {
   });
 
   test('offers the pool\'s processed items, by process, and none that is only a sub-group', () => {
-    expect(options('wastagePoolItemList')).toEqual(['Fitted Rim 20', 'Painted Frame 20']);
-    const frame = document.querySelector('#wastagePoolItemList option[value="Painted Frame 20"]');
-    expect(frame.getAttribute('label')).toBe('Painting 20 inch');
+    App.Wastage.addPoolRow();
+    poolRow().querySelector('.wp-item-name').click();
+    const offered = [...document.querySelectorAll('#kwSuggestMenu .kw-suggest-option')];
+    expect(offered.map(o => o.querySelector('.kw-suggest-label').textContent))
+      .toEqual(['Fitted Rim 20', 'Painted Frame 20']);
+    // What is on hand across its colours, sub-groups left out: 7 + 42.
+    expect(offered[1].querySelector('.kw-suggest-sub').textContent).toBe('Painting 20 inch · 49 available');
   });
 
   test('starts with nothing from the pool, and says so', () => {

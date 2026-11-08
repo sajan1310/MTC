@@ -2,9 +2,9 @@
  * Return, Wastage and Issue Stock -- the item list is there when the form
  * opens.
  *
- * Every row's Item box suggests from the page-wide #itemList datalist, which
- * only App.Item.populateDatalists fills, and that runs only when Items Master
- * loads. Since tabs load lazily, nothing on the Return tab loaded it (its
+ * Every row's Item box suggests from Items Master (App.State.globalItems:
+ * Issue's through the page-wide #itemList datalist, Return's and Wastage's
+ * through App.KeywordSuggest), which is filled only when Items Master loads. Since tabs load lazily, nothing on the Return tab loaded it (its
  * loadData ensured Vendor Master and Bill history, not Items), and the
  * Dashboard's Quick Actions open these forms without loading anything. So on
  * a session that had not first visited Items Master, PO, Bill or Production,
@@ -129,6 +129,15 @@ let errors;
 const options = id => [...document.querySelectorAll(`#${id} option`)].map(o => o.value).filter(Boolean);
 const ITEM_NAMES = ['Spoke Nipple', 'Hub Axle'];
 
+// What a row's Item box offers when clicked (App.KeywordSuggest): every item,
+// one per size.
+const suggested = selector => {
+  document.querySelector(selector).click();
+  return [...document.querySelectorAll('#kwSuggestMenu .kw-suggest-option')]
+    .map(o => o.textContent.replace(/\s+/g, ' ').trim());
+};
+const ITEM_SUGGESTIONS = ['Hub Axle', 'Spoke Nipple Size 12G', 'Spoke Nipple Size 14G'];
+
 beforeEach(() => {
   jest.resetModules();
   document.body.innerHTML = [
@@ -158,7 +167,7 @@ describe('from the Dashboard, on a session that never opened Items Master', () =
     await App.Return.openReturnModal();
 
     expect(options('itemList')).toEqual(ITEM_NAMES);
-    expect(document.querySelector('#returnItemsBody .r-item-name').getAttribute('list')).toBe('itemList');
+    expect(suggested('#returnItemsBody .r-item-name')).toEqual(ITEM_SUGGESTIONS);
     expect(options('returnVendor')).toEqual(['Avon Cycles', 'Hero Parts']);
     expect(errors).toEqual([]);
   });
@@ -167,7 +176,7 @@ describe('from the Dashboard, on a session that never opened Items Master', () =
     await App.Wastage.openWastageModal();
 
     expect(options('itemList')).toEqual(ITEM_NAMES);
-    expect(document.querySelector('#wastageItemsBody .w-item-name').getAttribute('list')).toBe('itemList');
+    expect(suggested('#wastageItemsBody .w-item-name')).toEqual(ITEM_SUGGESTIONS);
     expect(options('vendorList')).toEqual(['Hero Parts', 'Avon Cycles']);
     expect(errors).toEqual([]);
   });

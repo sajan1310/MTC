@@ -2002,6 +2002,318 @@ const App = {
     }
   },
 
+  // ── Keyword suggestions under a free-text box ───────────────────────────
+  // The Item boxes on Return Goods and Log Wastage. The browser's datalist
+  // matched what was typed as one piece, so "26 rim" never found Rim in size
+  // 26 and "frame 20" never found Painted Frame 20. Here every word typed
+  // must appear somewhere in the item (its name, its size, the processes that
+  // make it) in any order: App.Utils.matchesKeywords, the rule every Select2
+  // list here uses. The phone's pickers search the same way (MApp.Search).
+  //
+  // A box opts in with data-suggest="<source>". A row's size box can be named
+  // with data-suggest-size="<selector>", and a pick then fills both. The box
+  // stays free text. A pick fires `input`, so a row's sizes, unit and colours
+  // follow exactly as they do for a typed name.
+  KeywordSuggest: {
+    MAX_SHOWN: 50,
+    // name -> () => [{ value, label, size?, sub?, detail? }]. `detail` is
+    // shown but not searched: "42 available" in the searched text would make
+    // "20" match every item holding 20-something.
+    _sources: {
+      items: () => App.KeywordSuggest.itemOptions()
+    },
+    _input: null,
+    _options: [],
+    _matches: [],
+    _active: -1,
+    _menu: null,
+    _picking: false,
+
+    register(name, getOptions) {
+      this._sources[name] = getOptions;
+    },
+
+    // Every Items Master item, one per name and size.
+    itemOptions() {
+      const seen = new Set();
+      const options = [];
+      (App.State.globalItems || []).forEach(item => {
+        const name = String(item.name || '').trim();
+        const size = String(item.size || '').trim();
+        const key = App.Utils.itemUnitKey(name, size);
+        if (!name || seen.has(key)) return;
+        seen.add(key);
+        options.push({ value: name, label: name, size });
+      });
+      const order = (a, b) => a.localeCompare(b, undefined, { numeric: true });
+      return options.sort((a, b) => order(a.label, b.label) || order(a.size, b.size));
+    },
+
+    // The matches, best first. A word typed that starts a word in the item
+    // counts for more than one found inside a word, and an item whose name
+    // starts with the first word, or is exactly what was typed, comes first.
+    // Equal scores keep the source's own order.
+    search(options, term) {
+      const words = this._words(term);
+      if (!words.length) return options.slice();
+      const typed = words.join(' ');
+      const hits = [];
+      options.forEach((option, i) => {
+        const text = [option.label, option.size, option.sub].filter(Boolean).join(' ').toLowerCase();
+        if (!App.Utils.matchesKeywords(text, typed)) return;
+        const name = String(option.label || '').toLowerCase();
+        let score = words.reduce((sum, w) => sum + (this._startsWord(text, w) ? 2 : 1), 0);
+        if (name.startsWith(words[0])) score += 3;
+        if (name === typed) score += 10;
+        hits.push({ option, score, i });
+      });
+      return hits.sort((a, b) => b.score - a.score || a.i - b.i).map(h => h.option);
+    },
+
+    _words(term) {
+      return String(term || '').toLowerCase().trim().split(/\s+/).filter(Boolean);
+    },
+
+    _startsWord(text, word) {
+      for (let at = text.indexOf(word); at !== -1; at = text.indexOf(word, at + 1)) {
+        if (at === 0 || !/[a-z0-9]/.test(text.charAt(at - 1))) return true;
+      }
+      return false;
+    },
+
+    // `text`, escaped, with each word typed in bold.
+    _mark(text, words) {
+      const s = String(text || '');
+      const lower = s.toLowerCase();
+      if (lower.length !== s.length) return escapeHtml(s);
+      const hit = new Array(s.length).fill(false);
+      words.forEach(w => {
+        for (let at = lower.indexOf(w); at !== -1; at = lower.indexOf(w, at + 1)) {
+          hit.fill(true, at, at + w.length);
+        }
+      });
+      let html = '';
+      for (let i = 0, j = 0; i < s.length; i = j) {
+        while (j < s.length && hit[j] === hit[i]) j++;
+        const part = escapeHtml(s.slice(i, j));
+        html += hit[i] ? `<mark>${part}</mark>` : part;
+      }
+      return html;
+    },
+
+    // `first`: start on the best match, so Enter takes it -- after typing,
+    // or ArrowDown. A click only shows the list.
+    open(input, first) {
+      if (input.disabled || input.readOnly) return;
+      const source = this._sources[input.dataset.suggest];
+      if (!source) return;
+      if (this._input !== input) {
+        this.close();
+        this._input = input;
+        this._options = source() || [];
+      }
+      this._matches = this.search(this._options, input.value);
+      this._active = first && this._matches.length ? 0 : -1;
+      this._render();
+    },
+
+    close() {
+      if (this._menu) {
+        this._menu.hidden = true;
+        this._menu.innerHTML = '';
+      }
+      if (this._input) {
+        this._input.setAttribute('aria-expanded', 'false');
+        this._input.removeAttribute('aria-activedescendant');
+      }
+      this._input = null;
+      this._options = [];
+      this._matches = [];
+      this._active = -1;
+    },
+
+    pick(index) {
+      const option = this._matches[index];
+      const input = this._input;
+      if (!option || !input) return;
+      this.close();
+      input.value = option.value;
+      const sizeSelector = input.dataset.suggestSize;
+      if (sizeSelector && option.size !== undefined) {
+        const sizeInput = input.closest('tr')?.querySelector(sizeSelector);
+        if (sizeInput) sizeInput.value = option.size;
+      }
+      this._picking = true;
+      try {
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      } finally {
+        this._picking = false;
+      }
+    },
+
+    _shownCount() {
+      return Math.min(this._matches.length, this.MAX_SHOWN);
+    },
+
+    _render() {
+      const input = this._input;
+      const words = this._words(input.value);
+      const shown = this._matches.slice(0, this.MAX_SHOWN);
+      let html = shown.map((o, i) => {
+        const sub = [o.sub ? this._mark(o.sub, words) : '', o.detail ? escapeHtml(o.detail) : ''].filter(Boolean);
+        return `<div class="kw-suggest-option${i === this._active ? ' active' : ''}" role="option" id="kwSuggestOpt${i}" data-index="${i}" aria-selected="${i === this._active}">
+          <span class="kw-suggest-label">${this._mark(o.label, words)}</span>${o.size ? ` <span class="kw-suggest-size">Size ${this._mark(o.size, words)}</span>` : ''}
+          ${sub.length ? `<div class="kw-suggest-sub">${sub.join(' · ')}</div>` : ''}
+        </div>`;
+      }).join('');
+      if (!shown.length) {
+        html = `<div class="kw-suggest-note">${this._options.length ? 'Nothing matches every word typed.' : 'Nothing to choose from.'}</div>`;
+      } else if (this._matches.length > shown.length) {
+        html += `<div class="kw-suggest-note">${shown.length} of ${this._matches.length} shown. Type another word to narrow them.</div>`;
+      }
+
+      const menu = this._menuEl();
+      menu.innerHTML = html;
+      menu.hidden = false;
+      input.setAttribute('role', 'combobox');
+      input.setAttribute('aria-autocomplete', 'list');
+      input.setAttribute('aria-controls', menu.id);
+      input.setAttribute('aria-expanded', 'true');
+      this._showActive();
+      this._place();
+    },
+
+    // Inside the dialog, not on <body>: the dialog keeps focus to itself.
+    _menuEl() {
+      if (!this._menu) {
+        const menu = document.createElement('div');
+        menu.id = 'kwSuggestMenu';
+        menu.className = 'kw-suggest';
+        menu.setAttribute('role', 'listbox');
+        menu.hidden = true;
+        // A press would take focus off the box, which closes the list
+        // before the click could land.
+        menu.addEventListener('mousedown', e => e.preventDefault());
+        menu.addEventListener('click', e => {
+          const option = e.target.closest('.kw-suggest-option');
+          if (option) this.pick(Number(option.dataset.index));
+        });
+        this._menu = menu;
+      }
+      const host = this._input.closest('.modal') || document.body;
+      if (this._menu.parentNode !== host) host.appendChild(this._menu);
+      return this._menu;
+    },
+
+    _move(delta) {
+      const count = this._shownCount();
+      if (!count) return;
+      this._active = this._active < 0
+        ? (delta > 0 ? 0 : count - 1)
+        : (this._active + delta + count) % count;
+      this._showActive();
+    },
+
+    _showActive() {
+      this._menu.querySelectorAll('.kw-suggest-option').forEach((el, i) => {
+        el.classList.toggle('active', i === this._active);
+        el.setAttribute('aria-selected', String(i === this._active));
+      });
+      if (this._active < 0) {
+        this._input.removeAttribute('aria-activedescendant');
+        return;
+      }
+      this._input.setAttribute('aria-activedescendant', `kwSuggestOpt${this._active}`);
+      this._menu.querySelector('.kw-suggest-option.active')?.scrollIntoView?.({ block: 'nearest' });
+    },
+
+    // Fixed to the window, so a table's scroll box can't clip it; opens
+    // upward when there is more room above the box than below.
+    _place() {
+      const input = this._input;
+      if (!input || !this._menu) return;
+      const r = input.getBoundingClientRect();
+      if (!input.isConnected || r.bottom < 0 || r.top > window.innerHeight) {
+        this.close();
+        return;
+      }
+      const width = Math.min(Math.max(r.width, 320), window.innerWidth - 16);
+      const below = window.innerHeight - r.bottom - 8;
+      const above = r.top - 8;
+      const up = below < 200 && above > below;
+      const style = this._menu.style;
+      style.width = `${width}px`;
+      style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - width - 8))}px`;
+      style.maxHeight = `${Math.min(320, up ? above : below)}px`;
+      style.top = up ? '' : `${r.bottom + 2}px`;
+      style.bottom = up ? `${window.innerHeight - r.top + 2}px` : '';
+    },
+
+    _onKeydown(e) {
+      const input = e.target;
+      if (!input.matches?.('input[data-suggest]')) return;
+      const isOpen = this._input === input;
+      switch (e.key) {
+        case 'ArrowDown':
+        case 'ArrowUp':
+          e.preventDefault();
+          if (isOpen) this._move(e.key === 'ArrowDown' ? 1 : -1);
+          else this.open(input, true);
+          break;
+        case 'Enter':
+          if (!isOpen) break;
+          if (this._active >= 0) {
+            // A pick, not a submit of the form around the box.
+            e.preventDefault();
+            e.stopPropagation();
+            this.pick(this._active);
+          } else {
+            this.close();
+          }
+          break;
+        case 'Escape':
+          // Closes the list and not the dialog, as for Select2 above.
+          if (!isOpen) break;
+          e.preventDefault();
+          e.stopPropagation();
+          this.close();
+          break;
+        case 'Tab':
+          if (isOpen) this.close();
+          break;
+        default:
+      }
+    },
+
+    // Bound once, to the document, since rows come and go with every form
+    // opened. Each listener goes through App rather than `this`, so it
+    // reaches whichever App is current (the tests load core.js afresh for
+    // every test, on one document). Keys are caught on the way down, before
+    // the dialog or the form can act on Escape or Enter.
+    listen() {
+      const bound = Symbol.for('erp.keywordSuggest');
+      if (document[bound]) return;
+      document[bound] = true;
+      const self = () => App.KeywordSuggest;
+      document.addEventListener('input', e => {
+        if (!self()._picking && e.target.matches?.('input[data-suggest]')) self().open(e.target, !!e.target.value.trim());
+      });
+      document.addEventListener('click', e => {
+        if (e.target.matches?.('input[data-suggest]') && self()._input !== e.target) self().open(e.target, false);
+      });
+      document.addEventListener('keydown', e => self()._onKeydown(e), true);
+      document.addEventListener('focusout', e => {
+        if (e.target === self()._input) self().close();
+      });
+      document.addEventListener('scroll', e => {
+        if (self()._input && !self()._menu?.contains(e.target)) self()._place();
+      }, true);
+      window.addEventListener('resize', () => self()._place());
+      document.addEventListener('hide.bs.modal', () => self().close());
+    }
+  },
+
   // ── One-row list toolbars: the date button and the ⇅ sort menu ─────────
   //
   // Every ledger's toolbar is search · date · ⇅ · actions, on one row. It
@@ -2859,6 +3171,7 @@ const App = {
 };
 
 window.App = App;
+App.KeywordSuggest.listen();
 
 function bindGlobalEvents() {
   const logoInput = document.getElementById('logo-upload-input');
