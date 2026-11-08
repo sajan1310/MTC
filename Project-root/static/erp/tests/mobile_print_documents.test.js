@@ -82,7 +82,9 @@ function desktopApp(state) {
       }),
       trigger: jest.fn()
     },
-    Production: { formatQty: v => Number(toNumber(v).toFixed(4)).toString() }
+    Production: { formatQty: v => Number(toNumber(v).toFixed(4)).toString() },
+    // return.js names the Processed Item box's suggestions as it loads.
+    KeywordSuggest: { register: jest.fn() }
   };
 }
 

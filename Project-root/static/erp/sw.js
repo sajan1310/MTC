@@ -558,7 +558,11 @@
 // v115: a lot marked Completed after a stock count taken on its own date now
 // comes off that count, and the Item Ledger says "completed after the
 // count" on its row. print-templates.js is precached.
-const CACHE_NAME = 'erp-shell-v115';
+// v116: the Item boxes on Return Goods and Log Wastage (Items Stock and
+// Warehouse Pool) search by keyword: every word typed, in any order, so
+// "26 rim" finds Rim in size 26. core.js, return.js and styles.css are
+// precached.
+const CACHE_NAME = 'erp-shell-v116';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

@@ -349,9 +349,9 @@ App.Return = {
   },
 
   // What this form reads from other modules: every row's Item and Size
-  // suggestions come from Items Master (the shared #itemList datalist,
-  // filled by App.Item.populateDatalists), the vendor dropdown from Vendor
-  // Master, the contact fallback from Bill history. loadData ensured only
+  // suggestions come from Items Master (App.KeywordSuggest, and the row's
+  // size datalist), the vendor dropdown from Vendor Master, the contact
+  // fallback from Bill history. loadData ensured only
   // the last two, and the Dashboard's "Return Goods" tile opens this form
   // without loadData at all -- so on a session that had not first visited
   // Items Master, PO, Bill or Production, every row's item list was empty
@@ -512,7 +512,7 @@ App.Return = {
     const unitItem = item.name ? App.Utils.itemUnitKey(item.name, item.size) : '';
     return `
     <tr data-row-uid="${rowUid}"${unitItem ? ` data-unit-item="${escapeHtml(unitItem)}"` : ''}>
-      <td><input type="text"   class="form-control r-item-name"  list="itemList" value="${escapeHtml(item.name || '')}" required></td>
+      <td><input type="text"   class="form-control r-item-name"  data-suggest="items" data-suggest-size=".r-item-size" value="${escapeHtml(item.name || '')}" required></td>
       <td><input type="text"   class="form-control r-item-size"  list="sizeList-${rowUid}" value="${escapeHtml(item.size || '')}">
           <datalist class="row-size-list" id="sizeList-${rowUid}"></datalist></td>
       <td><input type="text"   class="form-control r-item-narration" value="${escapeHtml(item.narration || '')}"></td>
@@ -760,7 +760,7 @@ App.Wastage = {
   },
 
   // Every row's Item/Size suggestions and the vendor box read Items Master
-  // (#itemList and #vendorList, App.Item.populateDatalists), which neither
+  // (App.KeywordSuggest and #vendorList, App.Item.populateDatalists), which neither
   // this tab nor the Dashboard's "Log Wastage" tile ever loaded -- see
   // App.Return.ensureFormData. The Warehouse Pool rows read the pool's
   // buckets, and Process Master for the process names beside them.
@@ -786,25 +786,30 @@ App.Wastage = {
       this._poolBuckets = [];
       App.Utils.showToast(`Warehouse Pool items could not be loaded: ${err.message || err}`, true);
     }
-    this.populatePoolItemList();
   },
 
-  populatePoolItemList() {
-    const list = document.getElementById('wastagePoolItemList');
-    if (!list) return;
+  // What the Processed Item box suggests (App.KeywordSuggest): each pool
+  // item once, with the processes that make it -- searched too, so
+  // "painting" finds the painted frames -- and what is on hand across its
+  // colours, as the phone's picker shows it.
+  poolItemOptions() {
     const processNames = new Map((App.State.globalProcesses || []).map(p => [p.processId, p.processName]));
     const byName = new Map();
     this._poolBuckets.forEach(b => {
       const name = String(b.outputItemName).trim();
-      const entry = byName.get(name.toLowerCase()) || { name, processes: new Set() };
+      const entry = byName.get(name.toLowerCase()) || { name, processes: new Set(), available: 0 };
       if (processNames.get(b.processId)) entry.processes.add(processNames.get(b.processId));
+      entry.available += Number(b.availableQty) || 0;
       byName.set(name.toLowerCase(), entry);
     });
-    list.innerHTML = [...byName.values()]
+    return [...byName.values()]
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map(e => `<option value="${escapeHtml(e.name)}"${e.processes.size
-        ? ` label="${escapeHtml([...e.processes].join(', '))}"` : ''}></option>`)
-      .join('');
+      .map(e => ({
+        value: e.name,
+        label: e.name,
+        sub: [...e.processes].join(', '),
+        detail: `${formatQty(e.available)} available`
+      }));
   },
 
   async openWastageModal() {
@@ -875,7 +880,7 @@ App.Wastage = {
     const unitItem = item.name ? App.Utils.itemUnitKey(item.name, item.size) : '';
     return `
     <tr data-row-uid="${rowUid}"${unitItem ? ` data-unit-item="${escapeHtml(unitItem)}"` : ''}>
-      <td><input type="text" class="form-control w-item-name" list="itemList" value="${escapeHtml(item.name || '')}" placeholder="Item name"></td>
+      <td><input type="text" class="form-control w-item-name" data-suggest="items" data-suggest-size=".w-item-size" value="${escapeHtml(item.name || '')}" placeholder="Item name"></td>
       <td><input type="text" class="form-control w-item-size" list="sizeList-${rowUid}" value="${escapeHtml(item.size || '')}" placeholder="Size">
           <datalist class="row-size-list" id="sizeList-${rowUid}"></datalist></td>
       <td><input type="number" class="form-control w-item-qty" step="0.01" value="${escapeHtml(String(item.qty ?? ''))}" min="0.01" placeholder="Qty"></td>
@@ -941,7 +946,7 @@ App.Wastage = {
     const selected = item.name ? { productTag: item.productTag || '', color: item.color || '' } : null;
     return `
     <tr data-row-uid="${rowUid}">
-      <td><input type="text" class="form-control wp-item-name" list="wastagePoolItemList" value="${escapeHtml(item.name || '')}" placeholder="Painted frame, fitted rim…" aria-label="Processed item"></td>
+      <td><input type="text" class="form-control wp-item-name" data-suggest="wastagePool" value="${escapeHtml(item.name || '')}" placeholder="Painted frame, fitted rim…" aria-label="Processed item"></td>
       <td><select class="form-select wp-bucket" aria-label="Colour / Product">${this._bucketOptionsHtml(item.name || '', selected)}</select></td>
       <td><input type="number" class="form-control wp-qty" step="1" min="1" value="${escapeHtml(String(item.qty ?? ''))}" placeholder="Qty" aria-label="Qty in pieces"></td>
       <td><input type="text" class="form-control wp-reason" value="${escapeHtml(item.reason || '')}" placeholder="e.g. Paint run, dent, weld crack…" aria-label="Reason for wastage"></td>
@@ -1240,6 +1245,8 @@ App.Wastage = {
     this.openPrintWindow(this.buildWastagePrintPageHtml([w]));
   }
 };
+
+App.KeywordSuggest.register('wastagePool', () => App.Wastage.poolItemOptions());
 
 // Form submit handlers + row-level listeners -- ported from
 // Script_Core.html's returnForm/wastageForm submit blocks and the

@@ -5410,3 +5410,59 @@ button.lot-panel-lot:hover { border-color: var(--secondary-color); }
    enter them (app/erp/services/financials.py). The server refuses the save
    either way. */
 .no-price-entry .finance-only { display: none !important; }
+
+/* Keyword suggestions under an Item box (App.KeywordSuggest, core.js). Fixed
+   to the window by the script, so a table's scroll box can't clip it. */
+.kw-suggest {
+  --kw-active-bg: rgb(99 102 241 / 12%);
+  --kw-hover-bg: rgb(99 102 241 / 6%);
+
+  position: fixed;
+  z-index: 1070;
+  padding: 4px;
+  overflow-y: auto;
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--bg-light);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  box-shadow: var(--shadow-lg);
+}
+
+[data-theme="dark"] .kw-suggest {
+  --kw-active-bg: rgb(129 140 248 / 20%);
+  --kw-hover-bg: rgb(129 140 248 / 10%);
+}
+
+.kw-suggest-option {
+  padding: 6px 10px;
+  cursor: pointer;
+  border-radius: var(--border-radius-sm);
+}
+
+.kw-suggest-option:hover { background: var(--kw-hover-bg); }
+.kw-suggest-option.active { background: var(--kw-active-bg); }
+
+.kw-suggest-size {
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.kw-suggest-sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.kw-suggest-note {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.kw-suggest mark {
+  padding: 0;
+  font-weight: 700;
+  color: inherit;
+  background: none;
+}
