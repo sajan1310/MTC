@@ -388,6 +388,77 @@ describe('what the lot consumes', () => {
     expect(MApp.Production.model.payloadLines().find(l => l.itemName === 'Bell')).toMatchObject({ colorGroup: 'Red', qty: 8, sourceType: 'ITEM' });
   });
 
+  // Changing an item meant Remove, then + Add material -- and the new item
+  // landed at the bottom of the list, out of the order the lot is printed in.
+  test('a line can be given another item in its place, keeping its quantity', async () => {
+    await openWithProcess('Frame Painting 20');
+    await tap(rowFor('Red').querySelector('[data-row-toggle]'));
+    type(rowFor('Red').querySelector('.mapp-lot-color-qty'), 8);
+    picks.push('Bell [GENERAL]', 'The whole lot');
+    await tap($('[data-mat-add]'));
+    const wholeLot = () => $$('.mapp-mat-section')[0];
+    const names = () => [...wholeLot().querySelectorAll('.mapp-mat-name')].map(n => n.textContent);
+    expect(names()).toEqual(['Primer 5 L', 'Bell GENERAL']);
+
+    picks.push('Painted Frame · Red-White');
+    await tap(wholeLot().querySelector('[data-mat-change]'));
+
+    expect(names()).toEqual(['Painted Frame', 'Bell GENERAL']);
+    const line = wholeLot().querySelector('.mapp-mat');
+    expect(line.querySelector('input').value).toBe('1'); // 8 x 0.125, as Primer had it
+    expect(line.textContent).toContain('Changed by hand');
+    expect(MApp.Production.model.payloadLines()[0]).toMatchObject({
+      itemName: 'Painted Frame', sourceType: 'POOL', poolColor: 'Red-White', colorGroup: 'COMMON', qty: 1, unit: ''
+    });
+
+    // "Use recipe" puts the recipe's own item back, not just its quantity.
+    await tap(line.querySelector('[data-mat-reset]'));
+    expect(names()).toEqual(['Primer 5 L', 'Bell GENERAL']);
+  });
+
+  test('a changed line keeps its unit only where the new item is kept in it', async () => {
+    await openWithProcess('Frame Painting 20');
+    MApp.Production.items.push({ name: 'Primer Grey', size: '5 L', baseUnit: 'Ltr', narration: 'Grey coat' });
+    await tap(rowFor('Red').querySelector('[data-row-toggle]'));
+    type(rowFor('Red').querySelector('.mapp-lot-color-qty'), 8);
+    const common = () => MApp.Production.model.payloadLines().find(l => l.colorGroup === 'COMMON');
+    const firstLine = () => $$('.mapp-mat-section')[0].querySelector('.mapp-mat');
+
+    picks.push('Primer Grey [5 L]');
+    await tap(firstLine().querySelector('[data-mat-change]'));
+    expect(common()).toMatchObject({ itemName: 'Primer Grey', size: '5 L', narration: 'Grey coat', unit: 'Ltr', qty: 1 });
+
+    // A bell is not kept in litres: the 1 is read as one bell, and the line says so.
+    picks.push('Bell [GENERAL]');
+    await tap(firstLine().querySelector('[data-mat-change]'));
+    expect(common()).toMatchObject({ itemName: 'Bell', size: 'GENERAL', unit: '', qty: 1 });
+    expect(firstLine().querySelector('.mapp-mat-unit').textContent).toBe('Pcs');
+  });
+
+  test('the arrows order a part of the list, and the lot is sent in that order', async () => {
+    await openWithProcess('Frame Painting 20');
+    await tap(rowFor('Red').querySelector('[data-row-toggle]'));
+    type(rowFor('Red').querySelector('.mapp-lot-color-qty'), 8);
+    picks.push('Bell [GENERAL]', 'The whole lot');
+    await tap($('[data-mat-add]'));
+    const wholeLot = () => $$('.mapp-mat-section')[0];
+    const names = () => [...wholeLot().querySelectorAll('.mapp-mat-name')].map(n => n.textContent);
+    const arrow = (row, delta) => wholeLot().querySelectorAll('.mapp-mat')[row]
+      .querySelector(`[data-mat-move][data-reorder-delta="${delta}"]`);
+    // A part of the list with one line has no order to set.
+    expect($$('.mapp-mat-section')[1].querySelector('[data-mat-move]')).toBeNull();
+    expect(arrow(0, -1).disabled).toBe(true);
+
+    await tap(arrow(1, -1));
+    expect(names()).toEqual(['Bell GENERAL', 'Primer 5 L']);
+    // Only the two lines trade places; the colour's own line stays put.
+    expect(MApp.Production.model.payloadLines().map(l => l.itemName)).toEqual(['Bell', 'Frame---Red', 'Primer']);
+
+    // The order outlasts a change to the quantities above it.
+    type(rowFor('Red').querySelector('.mapp-lot-color-qty'), 16);
+    expect(names()).toEqual(['Bell GENERAL', 'Primer 5 L']);
+  });
+
   // The pool buckets on this list always said what they held; the Stock
   // items said only "Stock", so a material could be picked with none of
   // it on the shelf and the shortfall only showed once it was on the lot.
@@ -731,6 +802,19 @@ describe('editing', () => {
     await MApp.Production.saveLot();
     expect(JSON.parse(mutate.mock.calls[0][2].componentsConsumed).map(l => [l.itemName, l.qty]))
       .toEqual([['Primer', 4], ['Frame---Red', 25], ['Frame---Blue', 10]]);
+  });
+
+  test('a saved line can be given another item, and goes back in its place', async () => {
+    await MApp.Production.load();
+    await MApp.Production.openEditSheet(LOTS[0]);
+    picks.push('Bell [GENERAL]');
+    const primer = $$('.mapp-mat').find(el => el.textContent.includes('Primer'));
+    await tap(primer.querySelector('[data-mat-change]'));
+    await MApp.Production.saveLot();
+    // The 4 recorded for Primer stays with the line; Primer's litres do not
+    // carry over to a bell.
+    expect(JSON.parse(mutate.mock.calls[0][2].componentsConsumed).map(l => [l.itemName, l.qty, l.unit]))
+      .toEqual([['Bell', 4, ''], ['Frame---Red', 20, ''], ['Frame---Blue', 10, '']]);
   });
 });
 

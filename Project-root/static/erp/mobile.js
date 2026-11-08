@@ -4783,8 +4783,12 @@ MApp.LotModel = {
     m.rowSeq = 0;
     m.manual = false;
     m.pins = new Map();
+    m.swaps = new Map();
     m.removed = new Set();
     m.added = [];
+    // Line ids in the order the operator arranged them, or null while the
+    // recipe's own order stands -- see _arranged.
+    m.order = null;
     m.saved = null;
     m.matrixRows = [];
     m.poolColorMap = m.getPoolColorAwareItemNames();
@@ -5848,14 +5852,55 @@ MApp.LotModel = {
   },
 
   // Recipe lines, then the operator's own edits on top: a typed quantity
-  // replaces the calculated one, a removed line stays removed, an added
-  // line is kept as added.
+  // replaces the calculated one, a line changed to another item keeps its
+  // place and its quantity, a removed line stays removed, an added line is
+  // kept as added -- all in the order the operator arranged, if they did.
   lines() {
     const base = this._withIds(this.baseLines()).filter(l => !this.removed.has(l.id)).map(l => {
-      if (!this.pins.has(l.id)) return { ...l, edited: false };
-      return { ...l, qty: this.pins.get(l.id), edited: true };
+      const swap = this.swaps.get(l.id);
+      const line = swap ? { ...l, ...swap } : { ...l };
+      const pinned = this.pins.has(l.id);
+      if (pinned) line.qty = this.pins.get(l.id);
+      return { ...line, edited: pinned || !!swap, swapped: !!swap };
     });
-    return base.concat(this.added.map(l => ({ ...l, edited: true, addedByHand: true })));
+    return this._arranged(base.concat(this.added.map(l => ({ ...l, edited: true, addedByHand: true }))));
+  },
+
+  // Which part of the list a line is shown in: the whole lot ('') or one
+  // colour. Lines move up and down among their own part only.
+  sectionOf(line) {
+    return this.isCommon(line.colorGroup) ? '' : line.colorGroup;
+  },
+
+  // The order the operator set with the arrows, or the recipe's own while
+  // they set none. A line the arranged order has never seen -- a colour
+  // checked afterwards, a material added since -- follows the arranged
+  // lines in the recipe's order, so it lands at the bottom of its part.
+  _arranged(lines) {
+    if (!this.order) return lines;
+    const at = new Map(this.order.map((id, i) => [id, i]));
+    const placed = lines.filter(l => at.has(l.id)).sort((a, b) => at.get(a.id) - at.get(b.id));
+    return placed.concat(lines.filter(l => !at.has(l.id)));
+  },
+
+  // One line up (-1) or down (+1) among the lines of its own part. The
+  // order is what the lot saves (payloadLines), and so the order the
+  // Production Sheet, its print and a later edit list the materials in --
+  // the order desktop's drag handles set. Swaps the line with its
+  // neighbour in that part and leaves every other line where it is.
+  moveLine(id, delta) {
+    const all = this.lines();
+    const line = all.find(l => l.id === id);
+    if (!line) return false;
+    const part = all.filter(l => this.sectionOf(l) === this.sectionOf(line));
+    const other = part[part.indexOf(line) + delta];
+    if (!other) return false;
+    const i = all.indexOf(line);
+    const j = all.indexOf(other);
+    const ids = all.map(l => l.id);
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    this.order = ids;
+    return true;
   },
 
   pinQty(id, qty) {
@@ -5868,11 +5913,28 @@ MApp.LotModel = {
     this.pins.delete(id);
   },
 
+  // Another item on the same line -- what desktop's per-row item picker
+  // does. The line keeps its place, its quantity and what it is for (the
+  // whole lot or one colour); `fields` say what is drawn and from where.
+  swapLine(id, fields) {
+    const added = this.added.find(l => l.id === id);
+    if (added) { Object.assign(added, fields); return; }
+    this.swaps.set(id, { ...fields });
+  },
+
+  // "Use recipe": the line as the recipe (or, editing a lot, as it was
+  // saved) has it -- its own item as well as its own quantity.
+  useRecipe(id) {
+    this.pins.delete(id);
+    this.swaps.delete(id);
+  },
+
   removeLine(id) {
     const i = this.added.findIndex(l => l.id === id);
     if (i !== -1) { this.added.splice(i, 1); return; }
     this.removed.add(id);
     this.pins.delete(id);
+    this.swaps.delete(id);
   },
 
   addLine(line) {
@@ -7712,20 +7774,22 @@ MApp.Production = {
 
     const sections = new Map();
     lines.forEach(l => {
-      const key = MApp.LotModel.isCommon(l.colorGroup) ? '' : l.colorGroup;
+      const key = m.sectionOf(l);
       if (!sections.has(key)) sections.set(key, []);
       sections.get(key).push(l);
     });
     const order = [...sections.keys()].sort((a, b) => (a === '' ? -1 : b === '' ? 1 : 0));
 
-    const lineHtml = l => {
+    // `part` is the line's own part of the list (the whole lot or one
+    // colour), which is where its arrows move it.
+    const lineHtml = (l, index, part) => {
       const avail = m.lineAvailability(l);
       const short = avail !== null && Number(l.qty) > avail;
       const unit = l.unit || m.G._resolveDisplayUnit(l.itemName, l.size) || '';
       const sub = [
         l.sourceType === 'POOL' ? `Warehouse Pool${l.poolColor ? ` · ${l.poolColor}` : ''}` : 'Stock',
         avail !== null ? `${fq(avail)} avail.` : '',
-        l.addedByHand ? 'Added by hand' : (l.edited ? 'Entered by hand' : '')
+        l.addedByHand ? 'Added by hand' : (l.swapped ? 'Changed by hand' : (l.edited ? 'Entered by hand' : ''))
       ].filter(Boolean).join(' · ');
       return `
         <div class="mapp-mat${l.edited ? ' is-edited' : ''}${short ? ' is-short' : ''}">
@@ -7737,20 +7801,27 @@ MApp.Production = {
             <input type="number" inputmode="decimal" step="any" aria-label="${e(l.itemName)} quantity" data-mat-qty="${e(l.id)}" value="${e(fq(l.qty))}">
             <span class="mapp-mat-unit">${e(unit)}</span>
           </div>
-          <div class="mapp-mat-actions">
-            ${l.edited && !l.addedByHand ? `<button type="button" class="mb-btn-text mapp-lot-link" data-mat-reset="${e(l.id)}">Use recipe</button>` : ''}
-            <button type="button" class="mb-btn-text mapp-lot-link mapp-mat-remove" data-mat-remove="${e(l.id)}">Remove</button>
+          <div class="mapp-mat-tools">
+            ${part.length > 1 ? MApp.Reorder.controlsHtml('mat-move', index, part.length, e(l.id)) : ''}
+            <div class="mapp-mat-actions">
+              <button type="button" class="mb-btn-text mapp-lot-link" data-mat-change="${e(l.id)}">Change</button>
+              ${l.edited && !l.addedByHand ? `<button type="button" class="mb-btn-text mapp-lot-link" data-mat-reset="${e(l.id)}">Use recipe</button>` : ''}
+              <button type="button" class="mb-btn-text mapp-lot-link mapp-mat-remove" data-mat-remove="${e(l.id)}">Remove</button>
+            </div>
           </div>
         </div>`;
     };
 
     const body = lines.length === 0
       ? `<div class="mb-field-hint">${noQtyYet ? 'Enter the quantity to see what this lot consumes.' : 'This process has no recipe — add what the lot consumed below.'}</div>`
-      : order.map(key => `
+      : order.map(key => {
+        const part = sections.get(key);
+        return `
           <div class="mapp-mat-section">
             <div class="mapp-section-label">${e(key === '' ? 'Whole lot' : key)}</div>
-            ${sections.get(key).map(lineHtml).join('')}
-          </div>`).join('');
+            ${part.map((l, i) => lineHtml(l, i, part)).join('')}
+          </div>`;
+      }).join('');
 
     const open = this._materialsOpen || edited > 0;
     el.innerHTML = `
@@ -7759,13 +7830,19 @@ MApp.Production = {
           <span class="mapp-lot-mats-title">Materials consumed</span>
           <span class="mapp-lot-mats-count">${lines.length} line${lines.length === 1 ? '' : 's'}${edited ? ` · ${edited} by hand` : ''}</span>
         </summary>
-        <div class="mb-field-hint">From the process recipe, scaled to this lot. Change any quantity to what was actually used — it stays as you enter it.</div>
+        <div class="mb-field-hint">From the process recipe, scaled to this lot. Change any quantity to what was actually used — it stays as you enter it. Change puts another item on a line in its place; the arrows set the order the lot lists its materials in.</div>
         ${body}
         <button type="button" class="mb-btn-text mapp-lot-link" data-mat-add>+ Add material</button>
       </details>`;
 
     const details = el.querySelector('details');
     details.addEventListener('toggle', () => { this._materialsOpen = details.open; });
+    el.querySelectorAll('[data-mat-change]').forEach(btn => btn.addEventListener('click', () => {
+      this.changeMaterial(btn.dataset.matChange);
+    }));
+    el.querySelectorAll('[data-mat-move]').forEach(btn => btn.addEventListener('click', () => {
+      this.moveMaterial(btn.dataset.matMove, Number(btn.dataset.reorderDelta));
+    }));
     el.querySelectorAll('[data-mat-qty]').forEach(input => {
       input.addEventListener('change', () => {
         if (String(input.value).trim() === '' || !Number.isFinite(Number(input.value))) {
@@ -7779,7 +7856,7 @@ MApp.Production = {
       });
     });
     el.querySelectorAll('[data-mat-reset]').forEach(btn => btn.addEventListener('click', () => {
-      m.unpin(btn.dataset.matReset);
+      m.useRecipe(btn.dataset.matReset);
       this._renderMaterials();
     }));
     el.querySelectorAll('[data-mat-remove]').forEach(btn => btn.addEventListener('click', () => {
@@ -7790,9 +7867,65 @@ MApp.Production = {
     el.querySelector('[data-mat-add]').addEventListener('click', () => this.addMaterial());
   },
 
-  // Desktop's "+ Add Component": any Items Master item, or a Warehouse
-  // Pool bucket (item and colour), for the whole lot or one colour. It
-  // starts at one per unit of what it is for.
+  // Up or down within its own part of the list (the whole lot, or one
+  // colour). The arrow keeps focus, so the same button can be tapped again
+  // to carry the line further.
+  moveMaterial(id, delta) {
+    const m = this.model;
+    if (!m || !m.moveLine(id, delta)) return;
+    MApp.Haptics.light();
+    this._materialsOpen = true;
+    this._renderMaterials();
+    const el = document.getElementById('lot-materials-section');
+    const again = el && [...el.querySelectorAll('[data-mat-move]')]
+      .find(b => b.dataset.matMove === id && Number(b.dataset.reorderDelta) === delta);
+    if (again && !again.disabled) again.focus();
+  },
+
+  // Another item on a line, in place -- desktop's per-row item picker. The
+  // line keeps its place in the list, its quantity and what it is for (the
+  // whole lot or one colour). Removing it and adding the new item instead
+  // put the new one at the bottom, out of the order the lot is printed in.
+  async changeMaterial(id) {
+    const m = this.model;
+    if (!m) return;
+    const line = m.lines().find(l => l.id === id);
+    if (!line) return;
+    const picked = await MApp.Picker.open({ title: `Change ${line.itemName}`, items: this._materialOptions(), allowCustom: true });
+    if (!picked) return;
+    const isPool = picked.src === 'POOL';
+    const itemName = picked.isCustom ? picked.value : picked.name;
+    const size = picked.isCustom ? '' : (picked.size || '');
+    m.swapLine(id, {
+      itemName,
+      size,
+      narration: isPool ? '' : m.G._resolveDisplayNarration(itemName, size, ''),
+      color: isPool ? (picked.poolColor || '') : '',
+      sourceType: isPool ? 'POOL' : 'ITEM',
+      poolColor: isPool ? (picked.poolColor || '') : '',
+      unit: this._unitAfterChange(line, itemName, size, isPool)
+    });
+    this._materialsOpen = true;
+    this._renderMaterials();
+  },
+
+  // The quantity stays, so the unit it is counted in stays too -- when the
+  // new item is kept in the same base unit as the old: 2 Gross of one spoke
+  // is 2 Gross of another. Otherwise the number is read in the new item's
+  // own base unit, which the line then shows beside it, rather than carried
+  // into a unit the item is not kept in: 18 Mtr of tube would have become
+  // 18 Mtr of bells. The pool counts pieces and has no unit to carry.
+  _unitAfterChange(line, itemName, size, isPool) {
+    const unit = String(line.unit || '').trim();
+    if (!unit || isPool || line.sourceType === 'POOL') return '';
+    const G = this.model.G;
+    const before = String(G._resolveDisplayUnit(line.itemName, line.size) || '').trim().toLowerCase();
+    const after = String(G._resolveDisplayUnit(itemName, size) || '').trim().toLowerCase();
+    return before && before === after ? unit : '';
+  },
+
+  // What a material line can be: any Items Master item, or a Warehouse Pool
+  // bucket (item and colour).
   //
   // Every option says what it holds -- a pool bucket its balance, a Stock
   // item its stock on hand in its own unit -- because this is the moment
@@ -7800,9 +7933,8 @@ MApp.Production = {
   // one with nothing on the shelf looked no different from one with
   // plenty. The figure rides in `detail`, which the picker shows but does
   // not search (see MApp.Picker).
-  async addMaterial() {
+  _materialOptions() {
     const m = this.model;
-    if (!m) return;
     const fq = v => MApp.LotModel.formatQty(v);
     // One pass over Stock, keyed as Items Master names the item and size.
     // An item with no Stock row gets no figure, rather than a zero that
@@ -7831,7 +7963,16 @@ MApp.Production = {
         pool.push({ value: `pool:${pool.length}`, label: color ? `${name} · ${color}` : name, sublabel: 'Warehouse Pool', detail: `${fq(qty)} avail.`, src: 'POOL', name, size: '', poolColor: color });
       });
     });
-    const picked = await MApp.Picker.open({ title: 'Add material', items: pool.concat(items), allowCustom: true });
+    return pool.concat(items);
+  },
+
+  // Desktop's "+ Add Component": any Items Master item, or a Warehouse
+  // Pool bucket (item and colour), for the whole lot or one colour. It
+  // starts at one per unit of what it is for.
+  async addMaterial() {
+    const m = this.model;
+    if (!m) return;
+    const picked = await MApp.Picker.open({ title: 'Add material', items: this._materialOptions(), allowCustom: true });
     if (!picked) return;
 
     let scope = 'COMMON';
@@ -13591,11 +13732,13 @@ MApp.Reorder = {
 
   // Up/down controls for one card. Rendered only when the list is whole:
   // `disabled` at the ends rather than hidden, so the row does not change
-  // width as it travels.
-  controlsHtml(action, index, total) {
+  // width as it travels. `value` is what the buttons carry, when that is
+  // not the position itself -- a production lot's material lines carry
+  // their line id, already escaped for the attribute.
+  controlsHtml(action, index, total, value = index) {
     const btn = (delta, label, path) => `
       <button type="button" class="mb-btn-text mapp-reorder-btn"
-              data-${action}="${index}" data-reorder-delta="${delta}"
+              data-${action}="${value}" data-reorder-delta="${delta}"
               aria-label="${label}"
               ${(delta < 0 && index === 0) || (delta > 0 && index === total - 1) ? 'disabled' : ''}>
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
