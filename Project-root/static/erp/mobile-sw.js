@@ -246,7 +246,10 @@
 // failing until a reload; the offline copy of a list is stored once, when
 // the phone is idle, as JSON text, so opening Production no longer holds up
 // a tap. mobile.js, mobile_styles.css, api.js and offline-cache.js carry it.
-const CACHE_NAME = 'erp-mobile-shell-v105';
+// v106: the printed Item Ledger says "completed after the count" on a lot
+// marked Completed after a count taken on its own date, the lot that now
+// comes off that count. print-templates.js carries it.
+const CACHE_NAME = 'erp-mobile-shell-v106';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

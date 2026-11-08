@@ -2120,12 +2120,15 @@ def _ledger_entry(
         # stock again -- see get_item_ledger_data.
         "superseded": False,
         # When the row takes effect against a count (ISO) -- the moment the
-        # Stock formula judges it by. A bill's is when it was entered, which
-        # is why a bill can sit later in the ledger than its own date.
+        # Stock formula judges it by. A bill's is when it was entered, and a
+        # lot marked Completed on or before its own date takes effect at
+        # that click (stock_service._LOT_STOCK_MOMENT_SQL), which is why
+        # either can sit later in the ledger than its own date.
         "effectiveAt": "",
         # The date (ISO) of a count this row is dated on or before but took
-        # effect after -- an invoice delivered after the shelf was counted.
-        # Such a row sits after that count, out of date order; "" otherwise.
+        # effect after -- an invoice delivered after the shelf was counted,
+        # or a lot marked Completed after a count taken that day. Such a row
+        # sits after that count, out of date order; "" otherwise.
         "arrivedAfterCount": "",
     }
     entry.update(kwargs)

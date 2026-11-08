@@ -67,6 +67,14 @@ from ..registry import rpc_method
 # done. Measured since the activity log began: 113 of the 124 lots dated on
 # a count day were entered before the count.
 #
+# A Completed lot also has the moment somebody marked it Completed
+# (migration 051), and the two are read together -- see
+# _LOT_STOCK_MOMENT_SQL. Marked Completed on or before its own date, the
+# lot takes effect at that click: the work was still going on, with its
+# parts on the shelf, when a count earlier that day was taken. Marked
+# Completed on a later day, it keeps its date: the work was done on that
+# day and the click is paperwork after it.
+#
 # Bills are not physical events. A bill's date is the supplier's invoice
 # date, not when the goods reached the shelf, and the bill form already
 # asks the operator about exactly that case -- checkStockAdjustmentConflicts
@@ -95,6 +103,37 @@ _BILL_MOMENT_SQL = (
     "ELSE h.created_at END)"
 )
 _LOT_MOMENT_SQL = _doc_moment_sql("p.production_date", "p.created_at")
+
+# When a lot's consumption takes effect against an item's count: its date,
+# which says which day the work was done, read together with the Completed
+# click, which says when that day it finished.
+#
+# - Marked Completed on or before its own date: the click. A count taken
+#   earlier that day still had the lot's parts on the shelf, so they come
+#   off it. BAG-KIT---WHITE 14 inch, 06/11/2026: counted 440 at 17:15,
+#   seven lots dated 05-06/11 marked Completed 17:16-17:32 -- 251 bags that
+#   never came off, until the next day's recount found 100. A lot finished
+#   ahead of its date is caught too: its date would put it after a count
+#   that already saw its parts gone.
+# - Marked Completed on a later day: its date, as before (_LOT_MOMENT_SQL).
+#   The work was done that day and the click is paperwork after it, so a
+#   count in between already saw the parts gone. 03/11/2026: counted 325 at
+#   17:01, then lots dated 02-03/11 worth 334 bags were marked Completed
+#   that evening and the next day -- more than the shelf held, so their
+#   bags were already in boxes.
+# - No click recorded (completed before migration 051), or the received
+#   share of a lot still open (migration 055): its date.
+#
+# Scored on every pair of consecutive counts in the 07/11/2026 backup, by how
+# far the book lands from the next count: 8,690 against 9,007 for the date
+# alone and 9,112 for the click alone (357 against 587 and 680 since
+# 15/10). The click alone would also have lowered 129 items by 11,521 on that
+# day; this rule lowers 16 by 486.
+_LOT_STOCK_MOMENT_SQL = (
+    "(CASE WHEN lower(p.status) = 'completed' AND p.completed_at IS NOT NULL"
+    " AND p.completed_at::date <= p.production_date"
+    f" THEN p.completed_at ELSE {_LOT_MOMENT_SQL} END)"
+)
 
 # Each item's newest count: the figure its Current Stock starts from, and the
 # moment that decides which movements it already holds. ADJUST is a count
@@ -166,7 +205,7 @@ def _iter_completed_production_components(cur):
         f"""
         SELECT p.id, p.status, p.lot_number, p.production_date, p.process_id,
                p.product_name, p.output_item_name, p.components_consumed,
-               {_LOT_MOMENT_SQL} AS stock_at
+               {_LOT_STOCK_MOMENT_SQL} AS stock_at
         FROM {table} p
         WHERE p.deleted_at IS NULL
           AND (lower(p.status) = 'completed' OR p.id = ANY(%s))
@@ -220,7 +259,7 @@ def _iter_completed_production_components(cur):
                 "lotNumber": str(row["lot_number"] or "").strip(),
                 "productionDate": row["production_date"],
                 # When this consumption takes effect against a count -- the
-                # same _LOT_MOMENT_SQL the Stock formula filters on.
+                # same _LOT_STOCK_MOMENT_SQL the Stock formula filters on.
                 "stockAt": row["stock_at"],
                 "processId": str(row["process_id"] or "").strip(),
                 "productName": str(row["product_name"] or "").strip(),
@@ -336,10 +375,12 @@ _MOVEMENT_SQL = _MOVEMENT_SQL_TEMPLATE.format(
 # convert(sum(q)) == sum(convert(q)) for a fixed unit. Verified by test against
 # the row-by-row implementation, which is retained for the Item Ledger.
 #
-# A lot dated at or before an item's newest count is inside that count
+# A lot is judged by _LOT_STOCK_MOMENT_SQL. Dated at or before an item's
+# newest count and marked Completed on a later day, it is inside that count
 # whenever it was completed -- the defect migration 049 closes: completing a
 # lot days after a count used to take its components off a figure that had
-# already been counted without them.
+# already been counted without them. Marked Completed on its own date after
+# the count, it comes off: the count was taken while the work was going on.
 #
 # The components are expanded once, into their own MATERIALIZED CTE, and
 # only then joined to the anchors. Joined inside the lateral expansion, the
@@ -357,7 +398,7 @@ _PRODUCTION_CONSUMED_SQL = (
                btrim(COALESCE(comp ->> 'unit', ''))              AS unit,
                COALESCE(NULLIF(comp ->> 'qty', '')::numeric, 0)  AS qty,
                """
-    + _LOT_MOMENT_SQL
+    + _LOT_STOCK_MOMENT_SQL
     + """                                       AS at
         FROM {table} p
         CROSS JOIN LATERAL jsonb_array_elements(p.components_consumed) AS comp
@@ -389,9 +430,11 @@ _PRODUCTION_CONSUMED_SQL = (
 # one above, so the query every Stock read runs is unchanged when nothing is
 # received in part, which is most of the time.
 #
-# The moment is the lot's own, as for a Completed lot: the materials left on
-# the lot's date, so a count taken while they were with the contractor
-# already holds their absence and must not lose them a second time.
+# The moment is the lot's date (_LOT_MOMENT_SQL), as for a lot marked
+# Completed on a later day: the materials left on the lot's date, so a count
+# taken while they were with the contractor already holds their absence and
+# must not lose them a second time. A lot still open has no Completed click
+# to read.
 _RECEIVED_LOT_CONSUMED_SQL = (
     """
     WITH """

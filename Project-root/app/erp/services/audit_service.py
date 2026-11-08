@@ -854,11 +854,14 @@ def _check_used_before_made(ctx: _Context, today: date) -> list:
 
 
 def _check_counts_before_completion(ctx: _Context) -> list:
-    """Items Stock judges a lot by its date. An in-house lot dated on or
-    before an item's newest count but marked Completed after it is inside
-    that count -- right if its parts had already left the shelf, an
-    overstatement if they had not. Job-work lots are skipped: their material
-    leaves when the lot starts (the decision of 2026-10-15)."""
+    """Items Stock judges a lot by its date, unless it was marked Completed
+    on or before that date -- then by the click (stock_service.
+    _LOT_STOCK_MOMENT_SQL), which is why such a lot never lands here. An
+    in-house lot dated on or before an item's newest count but marked
+    Completed on a later day, after the count, is inside that count -- right
+    if its parts had already left the shelf, an overstatement if the work
+    slipped to the day it was marked Completed. Job-work lots are skipped:
+    their material leaves when the lot starts (the decision of 2026-10-15)."""
     cur = ctx.cur
     terms_anchor = stock_service._anchor_map(cur)
     lots_info = {}
@@ -900,9 +903,9 @@ def _check_counts_before_completion(ctx: _Context) -> list:
                     f"{lot} ({_fmt(q)}, completed {t:%d/%m %H:%M})"
                     for lot, q, t in lots
                 )
-                + f" are dated on or before the count, so their {_fmt(qty)} is treated as already "
-                "gone from the count. If those parts were still on the shelf when counted, "
-                f"Stock is {_fmt(qty)} too high.",
+                + f" are dated on or before the count and were marked Completed on a later day, "
+                f"so their {_fmt(qty)} is treated as already gone from the count. If those parts "
+                f"were still on the shelf when counted, Stock is {_fmt(qty)} too high.",
                 item=name,
                 size=size,
                 refs=[f"Count #{anchor[2]}"] + [lot for lot, _q, _t in lots],

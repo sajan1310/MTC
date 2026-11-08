@@ -11,10 +11,13 @@ the count, and every other item counted that day moved by that lot's exact
 consumption.
 
 The rule pinned down here: Current Stock = the newest count + only what
-takes effect after it. Lots, issues, returns and wastage take effect on
-their own date (the start of it, when entered on another day). A bill takes
-effect when it was entered -- its date is the supplier's invoice date, and
-the bill form already asks whether a count holds those goods.
+takes effect after it. Issues, returns and wastage take effect on their own
+date (the start of it, when entered on another day). So does a lot, unless
+it was marked Completed on or before its own date: then it takes effect at
+that click, because a count taken earlier that day still had its parts on
+the shelf. A bill takes effect when it was entered -- its date is the
+supplier's invoice date, and the bill form already asks whether a count
+holds those goods.
 """
 
 from __future__ import annotations
@@ -195,7 +198,8 @@ def test_a_lot_completed_after_a_count_but_dated_before_it_leaves_the_count(
     erp_client,
 ):
     """The BB-AXLE case. The lot's components left the shelf on its own
-    date, so the count saw them gone; completing the lot later must not
+    date, so the count saw them gone; completing the lot later -- on a later
+    day than its date, so the click is paperwork after the work -- must not
     take them off a second time."""
     name = _unique_name("AnchorLot")
     _make_item(erp_client, name, initial=100)
@@ -230,6 +234,102 @@ def test_a_lot_completed_after_a_count_but_dated_before_it_leaves_the_count(
     assert recon["countedAt"]
     assert recon["currentStock"] == 70
     assert recon["balanced"] is True
+
+
+@pytest.mark.parametrize("entered_days_ahead", [0, 2])
+def test_a_lot_completed_on_its_own_date_after_a_count_comes_off_it(
+    erp_client, entered_days_ahead
+):
+    """BAG-KIT---WHITE 14 inch, 06/11/2026: counted 440 at 17:15, then seven
+    lots dated that day were marked Completed between 17:16 and 17:32. Their
+    251 bags never came off, and the next day's recount found 100. A lot
+    marked Completed on its own date takes effect at that click: the count
+    was taken while the work was going on, its parts still on the shelf.
+    Whether the lot was entered that morning or days ahead (the packing
+    lots were) makes no difference -- before, either one was inside."""
+    name = _unique_name("AnchorSameDay")
+    _make_item(erp_client, name, initial=100)
+    process_id = _process(erp_client)
+    today = _db_today()
+
+    row_idx, lot = _lot(erp_client, process_id, name, 30, "Pending", today.isoformat())
+    if entered_days_ahead:
+        with database.get_conn() as (_conn, cur):
+            cur.execute(
+                "UPDATE erp.production SET created_at = created_at - %s * interval '1 day' "
+                "WHERE id = %s",
+                (entered_days_ahead, row_idx),
+            )
+
+    _count(erp_client, name, 100)  # the shelf, the lot's 30 still on it
+    _set_status(erp_client, row_idx, 30, "Completed")
+
+    assert _current(erp_client, name) == 70  # read 100 before
+
+    data = _ledger(erp_client, name)
+    assert data["entries"][0]["ref"] == lot  # newest first: after the count
+    lot_row = data["entries"][0]
+    assert lot_row["superseded"] is False
+    assert lot_row["countsTowardStock"] is True
+    assert lot_row["balance"] == 70
+    # Dated on the count's day but taking effect after it: the ledger says
+    # why it sits after the count.
+    assert lot_row["arrivedAfterCount"] == today.isoformat()
+    assert data["reconciliation"][0]["balanced"] is True
+
+
+def test_a_lot_marked_completed_the_day_after_its_date_stays_inside_the_count(
+    erp_client,
+):
+    """03/11/2026: counted 325 at 17:01, then lots dated 02-03/11 worth 334
+    bags were marked Completed that evening and the next day -- more than
+    the shelf held, so the work had been done on their dates and the clicks
+    were paperwork. A click on a later day than the lot's date keeps the
+    date, which a count taken in between already holds."""
+    name = _unique_name("AnchorNextDay")
+    _make_item(erp_client, name, initial=100)
+    process_id = _process(erp_client)
+    yesterday = _db_today() - timedelta(days=1)
+
+    row_idx, lot = _lot(
+        erp_client, process_id, name, 30, "Pending", yesterday.isoformat()
+    )
+    _count(erp_client, name, 70)  # the shelf, without the 30 the lot used
+    _set_status(erp_client, row_idx, 30, "Completed")
+
+    assert _current(erp_client, name) == 70
+
+    data = _ledger(erp_client, name)
+    lot_row = next(e for e in data["entries"] if e["ref"] == lot)
+    assert lot_row["superseded"] is True
+    assert data["reconciliation"][0]["balanced"] is True
+
+
+def test_a_lot_finished_ahead_of_its_date_is_inside_a_count_taken_after_it(
+    erp_client,
+):
+    """A lot marked Completed before its own date was done early, and its
+    parts left when it was marked. Judged by its date, it came off a count
+    taken in between a second time."""
+    name = _unique_name("AnchorEarly")
+    _make_item(erp_client, name, initial=100)
+    process_id = _process(erp_client)
+    tomorrow = _db_today() + timedelta(days=1)
+
+    row_idx, lot = _lot(
+        erp_client, process_id, name, 30, "Pending", tomorrow.isoformat()
+    )
+    _set_status(erp_client, row_idx, 30, "Completed")
+    assert _current(erp_client, name) == 70
+
+    _count(erp_client, name, 70)  # the shelf, without the 30 the lot used
+
+    assert _current(erp_client, name) == 70  # read 40 before
+
+    data = _ledger(erp_client, name)
+    lot_row = next(e for e in data["entries"] if e["ref"] == lot)
+    assert lot_row["superseded"] is True
+    assert data["reconciliation"][0]["balanced"] is True
 
 
 def test_a_lot_logged_after_a_count_still_comes_off_it(erp_client):
