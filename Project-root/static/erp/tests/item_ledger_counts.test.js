@@ -147,6 +147,20 @@ describe('the Item Ledger reads from the count', () => {
       .toContain('entered after the 04/08/2026 count');
   });
 
+  test('a lot marked Completed after a count taken on its date says so', () => {
+    // A lot is entered ahead of its date. What came after the count is the
+    // Completed click -- that is why it sits there and comes off the count.
+    const late = [{
+      ...ENTRIES[0], ref: 'LOT-PKG012-0040', dateRaw: '2026-08-04', date: '04/08/2026',
+      arrivedAfterCount: '2026-08-04',
+    }, ...ENTRIES.slice(1)];
+    const { histHtml } = sections(late);
+    const row = rowFor(histHtml, 'LOT-PKG012-0040');
+
+    expect(row.textContent).toContain('completed after the 04/08/2026 count');
+    expect(row.textContent).not.toContain('entered after');
+  });
+
   test('the stock table starts from the last count, not Initial Stock', () => {
     const { stockHtml } = sections();
 

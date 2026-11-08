@@ -1274,10 +1274,13 @@ const PrintTemplates = {
         ? ' class="text-muted"'
         : (entry.countsTowardStock ? '' : ' class="text-muted fst-italic"');
       // Dated on or before a count it followed onto the shelf -- typically an
-      // invoice delivered after the count -- which is why it sits after that
-      // count, out of date order.
+      // invoice delivered after the count, or a lot marked Completed on its
+      // own date after it -- which is why it sits after that count, out of
+      // date order. A lot is entered ahead of its date, so what came after
+      // the count is the Completed click, not the entry.
+      const arrivalVerb = entry.kind === 'PRODUCTION' ? 'completed' : 'entered';
       const arrivalNote = entry.arrivedAfterCount
-        ? `<div><small class="text-muted">entered after the ${esc(String(entry.arrivedAfterCount).split('-').reverse().join('/'))} count</small></div>`
+        ? `<div><small class="text-muted">${arrivalVerb} after the ${esc(String(entry.arrivedAfterCount).split('-').reverse().join('/'))} count</small></div>`
         : '';
 
       // A count states the shelf: its balance IS the counted figure, and its

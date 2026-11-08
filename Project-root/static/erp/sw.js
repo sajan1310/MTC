@@ -555,7 +555,10 @@
 // of every call failing with "Your session has expired" until a reload; the
 // smart alerts wait until the first screen has settled. api.js and core.js
 // are precached.
-const CACHE_NAME = 'erp-shell-v114';
+// v115: a lot marked Completed after a stock count taken on its own date now
+// comes off that count, and the Item Ledger says "completed after the
+// count" on its row. print-templates.js is precached.
+const CACHE_NAME = 'erp-shell-v115';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
