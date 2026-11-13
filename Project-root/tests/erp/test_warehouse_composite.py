@@ -647,6 +647,161 @@ def test_mirror_axis_without_axis_keys_still_folds_by_name(erp_client):
     }
 
 
+def _frame_rim_mudguard_setup(erp_client):
+    """A Fitting process taking a painted frame, a fitted rim and a painted
+    mudguard from the pool, in that recipe order, the frame primary.
+    Returns (down_payload, down_id, {"frame"|"rim"|"mudguard": item name}).
+    """
+    upstream = {}
+    for part, colors in (
+        ("frame", ("Blue-White", "Pink-White", "Red-Black")),
+        ("rim", ("Black", "BCP")),
+        ("mudguard", ("Blue", "Pink", "Red")),
+    ):
+        payload, pid = _save_process(erp_client)
+        for color in colors:
+            _rpc(
+                erp_client,
+                "saveWarehousePoolOpening",
+                [{"processId": pid, "qty": 50, "color": color}],
+                mutation=True,
+            )
+        upstream[part] = payload["outputItemName"]
+
+    down_payload, down_id = _save_process(
+        erp_client,
+        primaryColorAxis=upstream["frame"],
+        components=[
+            {
+                "itemName": upstream[part],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            }
+            for part in ("frame", "rim", "mudguard")
+        ],
+    )
+    return down_payload, down_id, upstream
+
+
+def _fitting_lot(erp_client, down_id, upstream, frame, qty, mudguard):
+    """One frame colour on a Black rim, its mudguard painted to match."""
+    _save_lot(
+        erp_client,
+        down_id,
+        upstream["frame"],
+        [
+            {
+                "color": frame,
+                "qty": qty,
+                "countsTowardTotal": True,
+                "axisKey": _axis_key(upstream["frame"]),
+            },
+            {
+                "color": "Black",
+                "qty": qty,
+                "countsTowardTotal": False,
+                "axisKey": _axis_key(upstream["rim"]),
+            },
+            {
+                "color": mudguard,
+                "qty": qty,
+                "countsTowardTotal": False,
+                "axisKey": _axis_key(upstream["mudguard"]),
+            },
+        ],
+    )
+
+
+def test_single_colour_lot_keeps_a_rim_that_shares_a_word_with_its_frame(
+    erp_client,
+):
+    """A lot of ONE frame colour is credited "frame / rim" even when the
+    rim's colour is a word of the frame's.
+
+    Regression for LOT-FTD001-0014, -0031 and -0034 (Fitting Frame 14 inch
+    Crysta S/Rim): Red-Black frames on Black rims, credited bare "Red-Black"
+    while every other lot on the process credited "... / Black". With one
+    counting colour, "Black" names every counting colour there is, so the
+    rim axis passed for a mirror and was folded away. The process's other
+    lots show the rim does not follow the frame colour (Black under
+    Blue-White and Pink-White too), and that now decides. The mudguard,
+    which does follow it, is still folded on the very same lot.
+    """
+    down_payload, down_id, upstream = _frame_rim_mudguard_setup(erp_client)
+    _fitting_lot(erp_client, down_id, upstream, "Blue-White", 7, "Blue")
+    _fitting_lot(erp_client, down_id, upstream, "Pink-White", 5, "Pink")
+    _fitting_lot(erp_client, down_id, upstream, "Red-Black", 4, "Red")
+
+    assert _credited_buckets(erp_client, down_payload["outputItemName"]) == {
+        "Blue-White / Black": 7,
+        "Pink-White / Black": 5,
+        "Red-Black / Black": 4,
+    }
+
+    axes = _rpc(erp_client, "getProcessColorAxes", [down_id]).get_json()["data"]
+    assert axes["independentAxisKeys"] == [_axis_key(upstream["rim"])]
+
+
+def test_single_colour_lot_with_nothing_else_to_go_by_keeps_the_name_rule(
+    erp_client,
+):
+    """The history decides only once it shows the rim apart from the frame
+    colour. A process whose only lot is Red-Black on Black has nothing to
+    tell a rim from a matching mudguard by, so the name rule stands -- the
+    same reading the Production form's preview gives (no
+    independentAxisKeys yet).
+    """
+    down_payload, down_id, upstream = _frame_rim_mudguard_setup(erp_client)
+    _fitting_lot(erp_client, down_id, upstream, "Red-Black", 4, "Red")
+
+    assert _credited_buckets(erp_client, down_payload["outputItemName"]) == {
+        "Red-Black": 4
+    }
+    axes = _rpc(erp_client, "getProcessColorAxes", [down_id]).get_json()["data"]
+    assert axes["independentAxisKeys"] == []
+
+
+def test_independent_axes_by_process_counts_every_lot_and_keeps_ties():
+    """No database: the vote itself. Every lot votes, a single-colour one
+    included; an axis is listed only when it misses more often than it
+    names the counting colour; entries with no axisKey keep no history."""
+    from app.erp.services.warehouse_service import independent_axes_by_process
+
+    def lot(pid, primaries, others):
+        return {
+            "process_id": pid,
+            "color_breakdown": [
+                {"color": c, "qty": 1, "countsTowardTotal": True} for c in primaries
+            ]
+            + [
+                {"color": c, "qty": 1, "countsTowardTotal": False, "axisKey": k}
+                for k, c in others
+            ],
+        }
+
+    rows = [
+        # Rim: missed twice, named once -> independent.
+        lot("PRC-A", ["Blue-White"], [("pool:rim", "Black")]),
+        lot("PRC-A", ["Pink-White"], [("pool:rim", "Black")]),
+        lot("PRC-A", ["Red-Black"], [("pool:rim", "Black")]),
+        # Mudguard: named in every lot, the multi-colour one included.
+        lot(
+            "PRC-A",
+            ["Blue-White", "Red-Black"],
+            [("pool:mg", "Blue"), ("pool:mg", "Red")],
+        ),
+        lot("PRC-A", ["Pink-White"], [("pool:mg", "Pink")]),
+        # A tie keeps the name rule.
+        lot("PRC-B", ["Blue-White"], [("pool:rim", "Black")]),
+        lot("PRC-B", ["Red-Black"], [("pool:rim", "Black")]),
+        # Legacy entries carry no axis to keep a history for.
+        lot("PRC-C", ["Blue-White"], [("", "Black")]),
+        lot("PRC-C", ["Pink-White"], [("", "Black")]),
+    ]
+    assert independent_axes_by_process(rows) == {"prc-a": {"pool:rim"}}
+
+
 def test_pool_consumption_resolves_token_against_hyphenated_bucket(erp_client):
     """A recipe Color Sub-Group naming part of a hyphenated colour must debit
     the real bucket, not open a phantom one.

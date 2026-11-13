@@ -4833,6 +4833,30 @@ MApp.LotModel = {
     return new RegExp(`(^|[-/\\s])${escaped}($|[-/\\s])`).test(longer);
   },
 
+  // production.js#_mirrorAxisKeys -- the non-counting axes Pass 1 folds
+  // away as the counting colour restated. One counting colour proves
+  // nothing by name (a Black rim "matches" a Red-Black frame), so an axis
+  // this process's own lots show does not follow it is never folded then.
+  mirrorAxisKeys(primaryColors, otherEntries) {
+    const mirrors = new Set();
+    if (!primaryColors.length) return mirrors;
+    const byAxis = new Map();
+    (otherEntries || []).forEach(e => {
+      const key = String(e.axisKey || '').trim().toLowerCase();
+      if (!byAxis.has(key)) byAxis.set(key, []);
+      byAxis.get(key).push(e);
+    });
+    const oneColour = new Set(primaryColors.map(c => String(c || '').trim().toLowerCase())).size === 1;
+    const independent = new Set(((this.ctx.axesData || {}).independentAxisKeys || [])
+      .map(k => String(k || '').trim().toLowerCase()));
+    byAxis.forEach((entries, key) => {
+      if (!primaryColors.every(pc => entries.some(e => this.colorNamesMatch(pc, e.color)))) return;
+      if (oneColour && key && independent.has(key)) return;
+      mirrors.add(key);
+    });
+    return mirrors;
+  },
+
   // production.js#_matchedColorToken
   matchedColorToken(colorGroup, color) {
     const cg = String(colorGroup || '').trim();
@@ -5242,8 +5266,9 @@ MApp.LotModel = {
       const segs = String(pc || '').split(' / ').map(s => s.trim()).filter(Boolean);
       if (segs.length >= 2) segs.forEach(s => inherited.add(s.toLowerCase()));
     });
+    const mirrorAxes = this.mirrorAxisKeys(primaryColors, otherEntries);
     const independent = otherEntries.filter(e => inherited.has(String(e.color || '').trim().toLowerCase())
-      || !primaryColors.some(pc => this.colorNamesMatch(pc, e.color)));
+      || !mirrorAxes.has(String(e.axisKey || '').trim().toLowerCase()));
     const axisCounts = new Map();
     independent.forEach(e => {
       const key = String(e.axisKey || '').trim().toLowerCase() || '__no_axis_key__';
@@ -5277,8 +5302,9 @@ MApp.LotModel = {
       if (!byAxis.has(key)) byAxis.set(key, []);
       byAxis.get(key).push(c);
     });
-    const independent = [...byAxis.entries()].filter(([, entries]) =>
-      !primaryColors.every(pc => entries.some(e => this.colorNamesMatch(pc, e.color))));
+    const mirrorAxes = this.mirrorAxisKeys(primaryColors, checked.filter(c => !c.countsTowardTotal));
+    const independent = [...byAxis.entries()].filter(([key]) =>
+      !mirrorAxes.has(String(key || '').trim().toLowerCase()));
     const lotTotal = primaries.reduce((s, p) => s + p.qty, 0);
     const isCoConsumption = entries => entries.every(e => Math.abs(e.qty - lotTotal) < 0.0001);
     const splittable = independent.filter(([, entries]) => entries.length > 1 && !isCoConsumption(entries));

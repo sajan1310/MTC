@@ -2631,6 +2631,35 @@ App.Production = {
     return new RegExp(`(^|[-/\\s])${escaped}($|[-/\\s])`).test(longer);
   },
 
+  // The non-counting axes that restate the counting colour -- a mirror,
+  // folded away rather than combined -- by warehouse_service Pass 1's own
+  // reading, so the preview and the allocation grid show what the pool
+  // will credit. An axis is a mirror when it names a partner for EVERY
+  // counting colour (Blue/Pink mudguards on Blue-White/Pink-White frames).
+  // With ONE counting colour that proves nothing -- a Black rim "matches" a
+  // Red-Black frame -- so an axis this process's own lots show does not
+  // follow the counting colour (getProcessColorAxes' independentAxisKeys)
+  // is never folded then. Keyed by the entries' axisKey, lowercased; '' for
+  // entries without one, which keep the name rule.
+  _mirrorAxisKeys(primaryColors, otherEntries) {
+    const mirrors = new Set();
+    if (!primaryColors.length) return mirrors;
+    const byAxis = new Map();
+    (otherEntries || []).forEach(e => {
+      const key = String(e.axisKey || '').trim().toLowerCase();
+      if (!byAxis.has(key)) byAxis.set(key, []);
+      byAxis.get(key).push(e);
+    });
+    const oneColour = new Set(primaryColors.map(c => String(c || '').trim().toLowerCase())).size === 1;
+    const independent = this._independentAxisKeys || new Set();
+    byAxis.forEach((entries, key) => {
+      if (!primaryColors.every(pc => entries.some(e => this._colorNamesMatch(pc, e.color)))) return;
+      if (oneColour && key && independent.has(key)) return;
+      mirrors.add(key);
+    });
+    return mirrors;
+  },
+
   // The quantity a CHECKED non-primary axis row should be filled with.
   //
   // The pairing below (mirror the primary color this one shares a name
@@ -3038,10 +3067,16 @@ App.Production = {
     // Hoisted: the single-axis case is resolved further down, in the
     // fallback paths, long after this try block has returned or thrown.
     let axes = [];
+    // Another process's history must not shape this one's preview while
+    // this one's is loading, or if it fails to load.
+    this._independentAxisKeys = new Set();
     try {
       const axesRes = await Api.call('getProcessColorAxes', processId);
       if (seq !== undefined && seq !== this._compLoadSeq) return;
       axes = (axesRes.success && axesRes.data && Array.isArray(axesRes.data.axes)) ? axesRes.data.axes : [];
+      this._independentAxisKeys = new Set(
+        ((axesRes.success && axesRes.data && axesRes.data.independentAxisKeys) || [])
+          .map(k => String(k || '').trim().toLowerCase()));
       if (axes.length >= 2) {
         checklistEl.innerHTML = '';
         // primaryIsDefault true means nobody has actually chosen this axis
@@ -3654,12 +3689,13 @@ App.Production = {
     // A MIRROR axis is the primary axis restated -- it carries a partner
     // for EVERY primary color (Blue/Orange/Pink against Blue-White/
     // Orange-White/Pink-White). The server folds it away rather than
-    // crediting it, so there is nothing to allocate across. Same coverage
-    // rule as warehouse_service._axis_is_mirror, deliberately -- a grid
-    // over an axis the server then folds would collect numbers that go
-    // nowhere.
-    const independent = [...byAxis.entries()].filter(([, entries]) =>
-      !primaryColors.every(pc => entries.some(e => this._colorNamesMatch(pc, e.color))));
+    // crediting it, so there is nothing to allocate across. Same reading
+    // as warehouse_service Pass 1, deliberately (see _mirrorAxisKeys) -- a
+    // grid over an axis the server then folds would collect numbers that
+    // go nowhere.
+    const mirrorAxes = this._mirrorAxisKeys(primaryColors, checked.filter(c => !c.countsTowardTotal));
+    const independent = [...byAxis.entries()].filter(([key]) =>
+      !mirrorAxes.has(String(key || '').trim().toLowerCase()));
 
     // CO-CONSUMPTION is not a split. An axis whose every value carries the
     // WHOLE lot quantity is saying each unit got all of them -- 20 bikes
@@ -5210,11 +5246,12 @@ App.Production = {
   // same unambiguous-pairing rule the backend's Warehouse Pool crediting
   // uses to decide the actual saved/credited bucket color -- shown here so
   // the operator sees "Blue-White / Black / BCP" while still filling in
-  // the form, not just after saving. A redundant axis (its checked value
-  // name-matches the primary, e.g. Mudguard "Red" against Frame
+  // the form, not just after saving. A redundant axis (one naming a
+  // partner for every primary, e.g. Mudguard "Red" against Frame
   // "Red-White") is excluded from the combination the same way the
-  // backend excludes it. Any number of independent axes combine as long
-  // as each contributes exactly one checked color; if some axis has 2+
+  // backend excludes it (see _mirrorAxisKeys). Any number of independent
+  // axes combine as long as each contributes exactly one checked color; if
+  // some axis has 2+
   // (no way to tell which pairs with which), this shows each axis's own
   // colors instead of guessing at one combined string.
   _updateColorCombinationPreview() {
@@ -5234,17 +5271,21 @@ App.Production = {
     const primaryColors = primaryEntries.map(e => e.color);
     // An entry that exactly equals one segment of a COMPOSITE primary is
     // an inherited-segment collision, not a mirror -- it belongs to a
-    // different axis that merely shares the name. Everything else that
-    // name-matches a primary color is the same batch described twice.
+    // different axis that merely shares the name. Otherwise an entry is
+    // folded only when its whole AXIS restates the primary, as Pass 1
+    // reads it: one "Black" rim among six frame colours used to drop out
+    // here because it name-matched a "Red-Black" frame, while the pool
+    // credited every colour "/ Black".
     const inheritedSegments = new Set();
     primaryColors.forEach(pc => {
       const segs = String(pc || '').split(' / ').map(s => s.trim()).filter(Boolean);
       if (segs.length < 2) return;
       segs.forEach(s => inheritedSegments.add(s.toLowerCase()));
     });
+    const mirrorAxes = this._mirrorAxisKeys(primaryColors, otherEntries);
     const independent = otherEntries.filter(e => {
       if (inheritedSegments.has(String(e.color || '').trim().toLowerCase())) return true;
-      return !primaryColors.some(pc => this._colorNamesMatch(pc, e.color));
+      return !mirrorAxes.has(String(e.axisKey || '').trim().toLowerCase());
     });
 
     const axisCounts = new Map();

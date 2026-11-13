@@ -252,7 +252,10 @@
 // v107: a production lot's material line can be changed to another item in
 // its place, and the arrows set the order of the lines, as desktop's row
 // picker and drag handles do. mobile.js and mobile_styles.css carry it.
-const CACHE_NAME = 'erp-mobile-shell-v107';
+// v108: "Now producing" and the allocation grid read a lot's colours the way
+// the Warehouse Pool credits them: a Black rim stays on a Red-Black frame,
+// in a lot of one frame colour or several. mobile.js carries it.
+const CACHE_NAME = 'erp-mobile-shell-v108';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

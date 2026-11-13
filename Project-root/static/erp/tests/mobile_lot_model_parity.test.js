@@ -239,7 +239,42 @@ const PROCESSES = {
       pool('Painted Frame 20W', 'Red-White', 30),
       pool('Painted Frame 20W', 'Red-Black', 30)
     ]
+  },
+
+  // A rim this process's own lots show does not follow the frame colour
+  // (getProcessColorAxes' independentAxisKeys), beside mudguards that do.
+  // "Black" names the "Red-Black" frame all the same.
+  'PRC-SRIM': {
+    process: { processId: 'PRC-SRIM', processName: 'Fitting Frame 14 S/Rim', processType: 'Fitting', outputItemName: 'Fitted Frame 14 inch', sequence: 3, active: true, isFinalStage: false },
+    colors: ['Blue-White', 'Red-Black', 'BCP', 'Black', 'Blue', 'Red'],
+    axes: {
+      axes: [
+        { key: 'pool:painted frame 14', label: 'Painted Frame 14', colors: ['Blue-White', 'Red-Black'], source: 'pool' },
+        { key: 'pool:fitted rim 14', label: 'Fitted Rim 14', colors: ['BCP', 'Black'], source: 'pool' },
+        { key: 'pool:mudguard 14', label: 'Mudguard 14', colors: ['Blue', 'Red'], source: 'pool' }
+      ],
+      primaryAxisKey: 'pool:painted frame 14', primaryIsDefault: false,
+      independentAxisKeys: ['pool:fitted rim 14']
+    },
+    recipe: [
+      comp('Painted Frame 14', 'COMMON', 1, { sourceType: 'POOL', size: '14 inch' }),
+      comp('Fitted Rim 14', 'COMMON', 2, { sourceType: 'POOL', size: '14 inch' }),
+      comp('Mudguard 14', 'COMMON', 2, { sourceType: 'POOL', size: '14 inch' })
+    ],
+    pool: [
+      pool('Painted Frame 14', 'Blue-White', 30), pool('Painted Frame 14', 'Red-Black', 30),
+      pool('Fitted Rim 14', 'BCP', 100), pool('Fitted Rim 14', 'Black', 100),
+      pool('Mudguard 14', 'Blue', 50), pool('Mudguard 14', 'Red', 50)
+    ]
   }
+};
+
+// PRC-SRIM before any lot had shown the rim apart from the frame colour.
+PROCESSES['PRC-SRIM-NEW'] = {
+  ...PROCESSES['PRC-SRIM'],
+  process: { ...PROCESSES['PRC-SRIM'].process, processId: 'PRC-SRIM-NEW' },
+  axes: { ...PROCESSES['PRC-SRIM'].axes, independentAxisKeys: [] },
+  pool: []
 };
 
 const ALL_POOL = Object.values(PROCESSES).flatMap(p => p.pool);
@@ -576,6 +611,69 @@ describe('a rim colour more than one frame colour names', () => {
     // Unticking the Blue-White frames used to untick White too, though the
     // Red-White frames still carry it.
     for (const r of [desktop, phone]) expect(qtyOf(r, 'White')).toBe(5);
+  });
+});
+
+describe('what the lot will be credited as, before it is saved', () => {
+  // The pool folds an axis away only when it restates the frame colour.
+  // Desktop and the phone used to drop any entry that merely shared a word
+  // with one frame colour, so a lot with a Red-Black frame among others
+  // read "Now producing: Blue-White, Red-Black" while the pool credited
+  // "Blue-White / Black" and "Red-Black / Black". With ONE frame colour the
+  // shared word proves nothing, and the process's own history decides
+  // (warehouse_service.independent_axes_by_process).
+  const previews = async (processId, steps) => {
+    const { p } = await both(processId, steps);
+    App.Production._updateColorCombinationPreview();
+    return {
+      desktop: document.getElementById('productionColorCombinationPreview').innerText,
+      phone: p.model.combinationPreview()
+    };
+  };
+  // Ticking Red-Black ticks the Black rim and the Red mudguard with it.
+  const singleRedBlack = [
+    s => s.check('Red-Black'), s => s.type('Red-Black', 10),
+    s => s.type('Black', 10), s => s.type('Red', 10)
+  ];
+
+  test('a lot of several frame colours keeps the rim on every one, Red-Black included', async () => {
+    // Ticking a frame colour ticks the rim and mudguard rows that name it
+    // (Blue-White: Blue; Red-Black: Black and Red), on both.
+    const r = await previews('PRC-SRIM-NEW', [
+      s => s.check('Blue-White'), s => s.type('Blue-White', 10),
+      s => s.check('Red-Black'), s => s.type('Red-Black', 10),
+      s => s.type('Black', 20), s => s.type('Blue', 10), s => s.type('Red', 10)
+    ]);
+    expect(r.desktop).toBe('Now producing: Blue-White / Black, Red-Black / Black');
+    expect(r.phone).toBe(r.desktop);
+  });
+
+  test('one Red-Black frame on a Black rim reads Red-Black / Black, its mudguard still folded', async () => {
+    const r = await previews('PRC-SRIM', singleRedBlack);
+    expect(r.desktop).toBe('Now producing: Red-Black / Black');
+    expect(r.phone).toBe(r.desktop);
+  });
+
+  test('with no lot yet showing the rim apart, the name decides as before', async () => {
+    const r = await previews('PRC-SRIM-NEW', singleRedBlack);
+    expect(r.desktop).toBe('Now producing: Red-Black');
+    expect(r.phone).toBe(r.desktop);
+  });
+
+  test('one frame colour on two rims asks which went with which, on both', async () => {
+    const { p } = await both('PRC-SRIM', [
+      s => s.check('Red-Black'), s => s.type('Red-Black', 10),
+      s => s.type('Black', 6),
+      s => s.check('BCP'), s => s.type('BCP', 4)
+    ]);
+    const shapeOf = shape => shape && {
+      axisKey: shape.axisKey,
+      rows: shape.primaries.map(x => x.color),
+      columns: shape.columns.map(x => x.color).sort()
+    };
+    const desktop = shapeOf(App.Production._allocationShape());
+    expect(desktop).toEqual({ axisKey: 'pool:fitted rim 14', rows: ['Red-Black'], columns: ['BCP', 'Black'] });
+    expect(shapeOf(p.model.allocationShape())).toEqual(desktop);
   });
 });
 

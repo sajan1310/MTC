@@ -2554,6 +2554,7 @@ def get_process_color_axes(process_id):
             ),
             None,
         )
+        independent_axis_keys = _independent_axis_keys(cur, process_id)
 
     saved_primary_color_axis = str(
         (process or {}).get("primaryColorAxis") or ""
@@ -2603,7 +2604,36 @@ def get_process_color_axes(process_id):
             "dispatchDifferentiator": str(
                 (process or {}).get("dispatchDifferentiator") or ""
             ).strip(),
+            # Axes this process's own lots show do not follow the counting
+            # colour (a rim, not a colour-matched mudguard). The Production
+            # form's "Now producing" preview and allocation grid read it so
+            # a single-colour lot reads the way the pool credits it.
+            "independentAxisKeys": independent_axis_keys,
         },
+    )
+
+
+def _independent_axis_keys(cur, process_id) -> list:
+    """warehouse_service.independent_axes_by_process for one process, over
+    the same Completed lots Warehouse Pool Pass 1 reads."""
+    # Deferred import: warehouse_service imports this module at load time.
+    from . import warehouse_service
+
+    table = config_maps.TABLE_NAMES.get("PRODUCTION")
+    key = str(process_id or "").strip().lower()
+    if not table or not key:
+        return []
+    cur.execute(
+        f"""
+        SELECT process_id, color_breakdown
+        FROM {table}
+        WHERE deleted_at IS NULL AND lower(status) = 'completed'
+          AND lower(process_id) = %s
+        """,
+        (key,),
+    )
+    return sorted(
+        warehouse_service.independent_axes_by_process(cur.fetchall()).get(key, set())
     )
 
 
