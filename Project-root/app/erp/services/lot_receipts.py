@@ -129,12 +129,18 @@ class LotShape:
 
     def _axis_reading(self) -> tuple:
         """(mirror axis keys, inherited segments) -- which non-counting axes
-        restate the primary colours, by Pass 1's own test (_axis_is_mirror),
-        so a receipt credits and consumes along the same reading the pool
-        composes by. A value that is a whole segment of a composite primary
-        colour is another stage's axis, never a mirror (Pass 1's
-        inherited_segments). Worked out on first use: showing a lot's
-        balance never needs it."""
+        restate the primary colours, by Pass 1's own name test
+        (_axis_names_every_primary), so a receipt credits and consumes along
+        the same reading the pool composes by. A value that is a whole
+        segment of a composite primary colour is another stage's axis, never
+        a mirror (Pass 1's inherited_segments). Worked out on first use:
+        showing a lot's balance never needs it.
+
+        Pass 1 also lets the process's history unfold an axis on a lot with
+        ONE counting colour (independent_axes_by_process). That needs no
+        mirror here: every line of such a lot is that one colour, so a value
+        matched to it by name and a value spread over the whole lot reach
+        the same lines."""
         if self._axes is None:
             primary_colors = [line["color"] for line in self.lines if line["color"]]
             axis_entries: dict = {}

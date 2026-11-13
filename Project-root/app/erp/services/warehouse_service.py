@@ -349,6 +349,78 @@ def _color_names_match(a, b) -> bool:
     return re.search(rf"(^|[-/\s]){escaped}($|[-/\s])", longer) is not None
 
 
+def _axis_names_every_primary(primary_colors: list, entries: list) -> bool:
+    """Does this non-counting axis name a partner for EVERY counting colour
+    of the lot? That is what a mirror axis looks like: the counting axis
+    restated, the same batch described a second way (Blue / Pink / Red
+    mudguards on Blue-White / Pink-White / Red-White frames).
+    """
+    return bool(primary_colors) and all(
+        any(_color_names_match(pc, e.get("color")) for e in entries)
+        for pc in primary_colors
+    )
+
+
+def independent_axes_by_process(lot_rows) -> dict:
+    """{processIdLower: {axisKeyLower, ...}} -- the non-counting axes that,
+    on that process's own lots, do NOT follow the counting colour.
+
+    The name test above is decisive only when a lot counts 2+ colours: one
+    rim value matching every one of them is not a coincidence. With ONE
+    counting colour a single shared word is no evidence at all -- a Black
+    rim under a Red-Black frame "matches" exactly as a Red mudguard would,
+    and Pass 1 folded the rim away, crediting "Red-Black" instead of
+    "Red-Black / Black" (LOT-FTD001-0014/-0031/-0034).
+
+    So the process's other lots decide for such a lot. An axis whose values,
+    lot after lot, fail to name the counting colour (a Black rim on Blue-
+    White, Orange-White and Pink-White frames) does not follow it; one that
+    names it in most lots does. Every lot votes, the single-colour ones
+    included, so one mismatched mudguard among many cannot flip a mirror
+    axis. Only an axis that misses MORE often than it matches is listed;
+    a tie keeps the name rule.
+
+    Entries without an axisKey (legacy rows) carry no axis identity to keep
+    a history for, and stay on the name rule. `lot_rows` are production
+    rows with process_id and color_breakdown -- the Completed lots Pass 1
+    credits, and getProcessColorAxes reads the same set so the Production
+    form's preview agrees with what the pool credits.
+    """
+    tallies: dict = {}  # (pid, axis key) -> [named every primary, missed]
+    for row in lot_rows or []:
+        pid = str(row.get("process_id") or "").strip().lower()
+        entries = [
+            e
+            for e in (row.get("color_breakdown") or [])
+            if isinstance(e, dict) and str(e.get("color") or "").strip()
+        ]
+        primary_colors = [
+            str(e["color"]).strip()
+            for e in entries
+            if e.get("countsTowardTotal") is not False
+        ]
+        if not pid or not primary_colors:
+            continue
+        by_axis: dict = {}
+        for e in entries:
+            if e.get("countsTowardTotal") is not False:
+                continue
+            axis_key = str(e.get("axisKey") or "").strip().lower()
+            if axis_key:
+                by_axis.setdefault(axis_key, []).append(e)
+        for axis_key, axis_entries in by_axis.items():
+            tally = tallies.setdefault((pid, axis_key), [0, 0])
+            tally[
+                0 if _axis_names_every_primary(primary_colors, axis_entries) else 1
+            ] += 1
+
+    result: dict = {}
+    for (pid, axis_key), (matched, missed) in tallies.items():
+        if missed > matched:
+            result.setdefault(pid, set()).add(axis_key)
+    return result
+
+
 def _resolve_composite_color_token(
     candidate_colors: list, token_lower: str
 ) -> str | None:
@@ -1018,12 +1090,17 @@ def _build_warehouse_pool_buckets(
             )
             return cur.fetchall()
 
+        completed_rows = cur.fetchall()
+        # Read off the whole lots, before they are sliced by receipt below,
+        # so each lot votes once. See independent_axes_by_process.
+        independent_axes = independent_axes_by_process(completed_rows)
+
         # Lots received in parts (migration 055) join as one slice per
         # receipt, each dated when it was received, plus the rest of a
         # Completed lot. A lot nobody received against passes through as it
         # always did. See lot_receipts.pool_rows.
         completed_lots = lot_receipts.pool_rows(
-            cur, cur.fetchall(), received_but_not_completed
+            cur, completed_rows, received_but_not_completed
         )
 
         for row in completed_lots:
@@ -1178,17 +1255,20 @@ def _build_warehouse_pool_buckets(
                         )
                         axis_entries.setdefault(axis_key, []).append(entry)
 
-                    def _axis_is_mirror(entries) -> bool:
-                        return all(
-                            any(_color_names_match(pc, e.get("color")) for e in entries)
-                            for pc in primary_colors
-                        )
-
                     mirror_axis_keys = {
                         k
                         for k, entries in axis_entries.items()
-                        if _axis_is_mirror(entries)
+                        if _axis_names_every_primary(primary_colors, entries)
                     }
+                    # One counting colour: the name test proves nothing (a
+                    # Black rim "matches" a Red-Black frame), so an axis this
+                    # process's own lots show does not follow the counting
+                    # colour is never folded on it. 2+ counting colours keep
+                    # the name test alone -- see independent_axes_by_process.
+                    if len({c.lower() for c in primary_colors}) == 1:
+                        mirror_axis_keys -= independent_axes.get(
+                            process_id.lower(), set()
+                        )
 
                     def _is_independent(entry):
                         color_lower = str(entry.get("color") or "").strip().lower()

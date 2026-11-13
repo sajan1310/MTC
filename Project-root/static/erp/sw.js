@@ -565,7 +565,10 @@
 // v117: the Log Production Lot form loads Items Master and the product list
 // itself, so its component pickers are no longer empty when it is opened
 // from the Dashboard tile. production.js is precached.
-const CACHE_NAME = 'erp-shell-v117';
+// v118: "Now producing" and the allocation grid read a lot's colours the way
+// the Warehouse Pool credits them: a Black rim stays on a Red-Black frame,
+// in a lot of one frame colour or several. production.js is precached.
+const CACHE_NAME = 'erp-shell-v118';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
