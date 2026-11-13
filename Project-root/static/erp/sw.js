@@ -571,7 +571,11 @@
 // v119: a rim (any pool colour) ticked while editing a lot is drawn from the
 // Warehouse Pool at once, as on a new lot and on the phone, instead of only
 // once its quantity was typed. production.js is precached.
-const CACHE_NAME = 'erp-shell-v119';
+// v120: in a lot opened for editing, a frame quantity changed in Colors to
+// Produce moves the mudguard and rim rows that follow it, and their
+// Warehouse Pool lines, as on a new lot and on the phone. production.js is
+// precached.
+const CACHE_NAME = 'erp-shell-v120';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

@@ -7801,6 +7801,21 @@ App.Production = {
         if (qtyInput) { qtyInput.disabled = false; qtyInput.value = qty; }
       });
       touchedGroups.forEach(groupKey => this._syncColorGroupMasterCheckbox(groupKey));
+      // A secondary row (a mudguard, a rim) saved at exactly what it would
+      // have followed was following the lot, and goes on following it; one
+      // saved at anything else was typed, and stays as typed. The rows above
+      // never went through handleColorCheckToggle, so none carried the
+      // flag, and a frame quantity changed while editing reached neither
+      // these rows nor their Warehouse Pool tables (2026-11-13). The same
+      // rule as the phone's MApp.LotModel.restore.
+      $$('#productionColorChecklist .production-color-row[data-primary="false"]')
+        .filter(r => claimedRows.has(r))
+        .forEach(r => {
+          const fill = this._nonPrimaryFillQty(r);
+          const saved = toNumber(r.querySelector('.production-color-qty')?.value);
+          if (fill > 0 && Math.abs(saved - toNumber(this.formatQty(fill))) < 0.0001) r.dataset.autoSynced = 'true';
+          else delete r.dataset.autoSynced;
+        });
       // The rows above were checked/quantified by setting checkbox.checked
       // and qtyInput.value directly (not via handleColorCheckToggle/
       // onColorQtyChanged), so refreshCommonSuggestedQty's own preview

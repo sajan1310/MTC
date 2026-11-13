@@ -897,6 +897,47 @@ describe('editing a lot', () => {
     expect(comparable(p.result().componentsConsumed)).toEqual(comparable(d.result().componentsConsumed));
   });
 
+  // 2026-11-13: in an edited lot, a frame quantity changed on desktop moved
+  // neither the mudguard and rim rows that follow it nor their Warehouse
+  // Pool lines -- restored rows had lost "follows the lot". The phone kept
+  // them following; both now do, by the same rule.
+  const twoFrames = [
+    s => s.check('Blue-White'), s => s.type('Blue-White', 10),
+    s => s.check('Red-Black'), s => s.type('Red-Black', 10)
+  ];
+  const checklistOf = r => Object.fromEntries(r.colorBreakdown.map(c => [c.color, c.qty]));
+  const poolOf = r => Object.fromEntries(r.componentsConsumed
+    .filter(l => l.sourceType === 'POOL')
+    .map(l => [`${l.itemName} ${l.colorGroup}`, l.qty]));
+
+  test('a frame quantity changed while editing moves the mudguards and rim that follow it, on both', async () => {
+    // Ticking Red-Black ticks the Black rim (the lot total, 20) and each
+    // frame ticks its mudguard. Two rims and two mudguards a frame.
+    const lot = await savedLot('PRC-SRIM', twoFrames);
+    const d = await desktopOpen('PRC-SRIM', lot);
+    const p = phoneOpen('PRC-SRIM', lot);
+    for (const s of [d, p]) {
+      s.type('Blue-White', 12);
+      s.type('Red-Black', 6);
+    }
+    for (const r of [d.result(), p.result()]) {
+      expect(checklistOf(r)).toEqual({ 'Blue-White': 12, 'Red-Black': 6, Black: 18, Blue: 12, Red: 6 });
+      expect(poolOf(r)).toMatchObject({ 'Fitted Rim 14 Black': 36, 'Mudguard 14 Blue': 24, 'Mudguard 14 Red': 12 });
+    }
+    expect(comparable(p.result().componentsConsumed)).toEqual(comparable(d.result().componentsConsumed));
+  });
+
+  test('a mudguard typed by hand before saving stays as typed while editing, on both', async () => {
+    const lot = await savedLot('PRC-SRIM', [...twoFrames, s => s.type('Blue', 9)]);
+    const d = await desktopOpen('PRC-SRIM', lot);
+    const p = phoneOpen('PRC-SRIM', lot);
+    for (const s of [d, p]) s.type('Blue-White', 12);
+    for (const r of [d.result(), p.result()]) {
+      expect(checklistOf(r)).toMatchObject({ 'Blue-White': 12, Blue: 9, Black: 22 });
+      expect(poolOf(r)).toMatchObject({ 'Mudguard 14 Blue': 18, 'Fitted Rim 14 Black': 44 });
+    }
+  });
+
   test('a colour ticked off takes its lines with it; one ticked on brings its recipe', async () => {
     const [processId, steps] = FLOWS['flat colours: per-colour parts, a common part overridden for one colour, a shared item, a one-colour pool part'];
     const lot = await savedLot(processId, [steps[0], steps[1]]);
