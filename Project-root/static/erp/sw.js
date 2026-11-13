@@ -562,7 +562,10 @@
 // Warehouse Pool) search by keyword: every word typed, in any order, so
 // "26 rim" finds Rim in size 26. core.js, return.js and styles.css are
 // precached.
-const CACHE_NAME = 'erp-shell-v116';
+// v117: the Log Production Lot form loads Items Master and the product list
+// itself, so its component pickers are no longer empty when it is opened
+// from the Dashboard tile. production.js is precached.
+const CACHE_NAME = 'erp-shell-v117';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

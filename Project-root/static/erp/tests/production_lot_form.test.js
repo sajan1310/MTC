@@ -347,3 +347,61 @@ describe('Create/Edit Production Lot form: overlapping opens', () => {
     expect(document.getElementById('productionDate').value).toBe('2026-02-09');
   });
 });
+
+describe('Create/Edit Production Lot form: opened from the Dashboard tile', () => {
+  beforeEach(() => {
+    document.body.innerHTML = fs.readFileSync(PARTIAL, 'utf8');
+    installGlobals();
+    loadProductionAsGlobal();
+  });
+
+  // The Dashboard's "Log Production" tile calls openCreateModal on a session
+  // that may never have visited the Production tab, and only that tab's
+  // loadData loaded Items Master and the product list. Every component's item
+  // picker reads App.State.globalItems, so each one opened on "No results
+  // found" (reported 2026-11-13), and the Product dropdown offered only
+  // "Untagged". The form now loads both itself, the way Issue and
+  // Return/Wastage do for their own Dashboard tiles.
+  test('loads Items Master and the product list before the form is used', async () => {
+    const items = [{ name: 'Chain Cover', size: '14 inch' }, { name: 'Backrest', size: 'GENERAL' }];
+    const products = [{ productId: 'P-001', productName: 'Cycle 14 inch' }];
+    global.Api = {
+      call: jest.fn().mockImplementation(method => Promise.resolve(
+        method === 'getItemsData' ? { success: true, data: items }
+          : method === 'getBOMProductionData' ? { success: true, data: products }
+            : { success: false, message: `unexpected ${method}` })),
+    };
+    const resolved = { ensureLoaded: jest.fn().mockResolvedValue(undefined) };
+    App.Process = resolved;
+    App.Contractor = resolved;
+    App.ProcessType = resolved;
+    App.Model = resolved;
+    // The same contract as App.Item.ensureLoaded / App.BOM.ensureProductListLoaded.
+    App.Item = {
+      async ensureLoaded() {
+        if (App.State.globalItems.length) return;
+        const res = await Api.call('getItemsData');
+        if (res.success) App.State.globalItems = res.data;
+      },
+    };
+    App.BOM = {
+      async ensureProductListLoaded() {
+        if (App.State.globalBOMs && App.State.globalBOMs.length) return;
+        const res = await Api.call('getBOMProductionData');
+        if (res.success) App.State.globalBOMs = res.data;
+      },
+    };
+    // The cascade and contractor widgets past the loads are out of scope here.
+    App.Production.initContractorSelect2 = jest.fn();
+    App.Production.refreshExtraChargeOptions = jest.fn().mockResolvedValue(undefined);
+    App.Production.populateSizeSelect = jest.fn();
+    App.Production.handleSizeChange = jest.fn().mockResolvedValue(undefined);
+
+    await App.Production.openCreateModal();
+
+    expect(Api.call).not.toHaveBeenCalledWith('getProductionData');
+    expect(App.State.globalItems).toEqual(items);
+    const productOptions = Array.from(document.querySelectorAll('#productionProductId option')).map(o => o.value);
+    expect(productOptions).toEqual(['', 'P-001']);
+  });
+});
