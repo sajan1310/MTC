@@ -7484,6 +7484,27 @@ App.Production = {
     App.Issue.openIssueModal(lotNumber || outputItem || '');
   },
 
+  // Every list the Create/Edit Lot form reads from another page, loaded by
+  // the form itself and not only by this tab's loadData: the Dashboard's
+  // "Log Production" tile opens it on a session that may never have visited
+  // the Production tab. Without Items Master every component's item picker
+  // answered "No results found" and narrations and units fell back to what
+  // was stored (reported 2026-11-13); without the product list the Product
+  // dropdown offered only "Untagged". The same gap Issue and Return/Wastage
+  // close for their own Dashboard tiles (App.Return.ensureFormData). Each
+  // load is a no-op once its list is in, and retries one that failed.
+  _ensureFormLookups() {
+    return Promise.all([
+      App.Process.ensureLoaded(),
+      App.Contractor.ensureLoaded(),
+      App.ProcessType.ensureLoaded(),
+      App.Model.ensureLoaded(),
+      App.Item ? App.Item.ensureLoaded() : Promise.resolve(),
+      // Never rejects (see its own comment); fills the dropdown itself.
+      App.BOM ? App.BOM.ensureProductListLoaded() : Promise.resolve()
+    ]);
+  },
+
   async resetCreateForm() {
     const seq = ++this._compLoadSeq;
     this._resetProcDataCache();
@@ -7502,7 +7523,7 @@ App.Production = {
     const form = document.getElementById('productionForm');
     if (form) form.reset();
 
-    await Promise.all([App.Process.ensureLoaded(), App.Contractor.ensureLoaded(), App.ProcessType.ensureLoaded(), App.Model.ensureLoaded()]);
+    await this._ensureFormLookups();
     // Same superseded-load guard openEditModal takes: this is the other
     // writer of the same fields, so an Edit Lot opened while this is
     // awaiting must not have its record blanked back out to a fresh form
@@ -7553,7 +7574,7 @@ App.Production = {
     const form = document.getElementById('productionForm');
     if (form) form.reset();
 
-    await Promise.all([App.Process.ensureLoaded(), App.Contractor.ensureLoaded(), App.ProcessType.ensureLoaded(), App.Model.ensureLoaded()]);
+    await this._ensureFormLookups();
     // Every later await in this method already bails on a superseded load,
     // but this FIRST one did not -- and the whole block of field writes that
     // follows sits after it. Two overlapping opens (holding Nav's next
