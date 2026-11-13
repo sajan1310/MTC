@@ -3472,6 +3472,14 @@ App.Production = {
       this.refreshPoolColorGroupCells(row?.dataset.group);
     }
     this.syncPoolColorGroupColumns();
+    // A column a tick just added starts from the lot's SAVED figure, and an
+    // edited lot has none for a colour it never used -- so the cell stayed
+    // blank and the lot saved the colour with nothing drawn for it: a Black
+    // rim ticked on LOT-FTD003-0043 and -0051 took no rims off the pool
+    // (2026-11-13). Typing the quantity filled it; the tick now does too,
+    // as on a new lot and on the phone. Same recompute onColorQtyChanged
+    // runs, so a figure typed by hand is still left alone.
+    if (checkboxEl.checked) this.refreshPoolColorGroupCells(row?.dataset.group);
     this.refreshCommonSuggestedQty();
     this.refreshPayableHint();
 

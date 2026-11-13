@@ -874,6 +874,29 @@ describe('editing a lot', () => {
     expect(lines.find(l => l.itemName === 'Poly Bag').qty).toBe(45);
   });
 
+  test('a rim ticked on a saved lot that had none is drawn from the pool, on both', async () => {
+    // LOT-FTD003-0043 and -0051, 2026-11-13: the rim was left unticked when
+    // the lot was logged, and ticked at a desk afterwards. The tick filled
+    // the rim's quantity but not its pool cell, so the lot was saved with
+    // the rim colour and no rim drawn. Only typing the quantity filled it.
+    const lot = await savedLot('PRC-SRIM', [s => s.check('Blue-White'), s => s.type('Blue-White', 10)]);
+    lot.status = 'Completed';
+    const rimLines = r => r.componentsConsumed
+      .filter(l => l.itemName === 'Fitted Rim 14')
+      .map(l => [l.colorGroup, l.qty]);
+    expect(rimLines(lot)).toEqual([]);
+
+    const d = await desktopOpen('PRC-SRIM', lot);
+    await d.check('Black');
+    const p = phoneOpen('PRC-SRIM', lot);
+    await p.check('Black');
+
+    // Two rims a frame (the recipe's rate), ten frames.
+    expect(rimLines(d.result())).toEqual([['Black', 20]]);
+    expect(rimLines(p.result())).toEqual(rimLines(d.result()));
+    expect(comparable(p.result().componentsConsumed)).toEqual(comparable(d.result().componentsConsumed));
+  });
+
   test('a colour ticked off takes its lines with it; one ticked on brings its recipe', async () => {
     const [processId, steps] = FLOWS['flat colours: per-colour parts, a common part overridden for one colour, a shared item, a one-colour pool part'];
     const lot = await savedLot(processId, [steps[0], steps[1]]);

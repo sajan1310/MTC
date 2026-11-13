@@ -568,7 +568,10 @@
 // v118: "Now producing" and the allocation grid read a lot's colours the way
 // the Warehouse Pool credits them: a Black rim stays on a Red-Black frame,
 // in a lot of one frame colour or several. production.js is precached.
-const CACHE_NAME = 'erp-shell-v118';
+// v119: a rim (any pool colour) ticked while editing a lot is drawn from the
+// Warehouse Pool at once, as on a new lot and on the phone, instead of only
+// once its quantity was typed. production.js is precached.
+const CACHE_NAME = 'erp-shell-v119';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
