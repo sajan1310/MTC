@@ -17324,8 +17324,9 @@ MApp.SheetGrouping = {
 // ================================================================
 // INSPECTION — a floor inspector goes through a production lot's
 // checklist (its live Production Sheet), ticking each item that is
-// accounted for, ticks "Needs admin review" when something is wrong, and
-// clears the lot. inspection_service.py owns every rule: what the checklist
+// accounted for and writing a remark on any that is not right, ticks "Needs
+// admin review" when something is wrong, and clears the lot.
+// inspection_service.py owns every rule: what the checklist
 // is, which ticks still count after an admin edits the lot, who may clear
 // what, and whether the sheet moved under a submit. This screen draws what
 // it is given and sends one decision at a time, then takes the server's
@@ -17365,6 +17366,8 @@ MApp.Inspection = {
   rowIdx: null,
   _saving: new Set(),
   _reconcile: null,
+  // The row whose remark is open in sheet-inspection-remark.
+  _remarkKey: null,
 
   // ── The lot list ───────────────────────────────────────────────────
   async open() {
@@ -17533,7 +17536,7 @@ MApp.Inspection = {
         <span><span class="mb-card-title">${e(lot.lotNumber)}</span><span class="mb-insp-lsub">${e(lot.date)}</span></span>
         <span>${e(lot.processName)}<span class="mb-insp-lsub">${e(lot.outputItemName || lot.productName || '')}</span></span>
         <span><span class="mb-chip ${MApp.Util.statusChipClass(lot.status)}">${e(lot.status)}</span></span>
-        <span>${this._stateBadge(lot)}</span>
+        <span>${this._stateBadge(lot)}${this._remarkCount(lot) ? `<span class="mb-insp-lsub">${e(this._remarkCount(lot))}</span>` : ''}</span>
         <span class="mb-insp-lsub">${e(this._when(lot.lastUpdated))}</span>
       </button>`;
   },
@@ -17553,8 +17556,15 @@ MApp.Inspection = {
     return `<span class="mb-insp-badge ${cls}">${label}${count}${recheck ? ` · ${recheck} to re-check` : ''}</span>`;
   },
 
+  // "2 item remarks": how many items the inspector wrote a remark on.
+  _remarkCount(lot) {
+    const n = Number(((lot.inspection || {}).summary || {}).remarked) || 0;
+    return n ? `${n} item remark${n === 1 ? '' : 's'}` : '';
+  },
+
   _cardHtml(lot, e) {
     const updated = this._when(lot.lastUpdated);
+    const remarks = this._remarkCount(lot);
     const sub = [lot.processName, lot.outputItemName].filter(Boolean).map(e).join(' · ');
     return `
       <button type="button" class="mb-card mb-card-tappable mb-insp-card" style="border:none;" data-insp-lot="${e(lot.rowIdx)}">
@@ -17568,6 +17578,7 @@ MApp.Inspection = {
         <div class="mb-insp-card-meta">
           ${this._stateBadge(lot)}
           <span>${e(lot.itemCount)} item${lot.itemCount === 1 ? '' : 's'}</span>
+          ${remarks ? `<span>${e(remarks)}</span>` : ''}
           ${updated ? `<span>Updated ${e(updated)}</span>` : ''}
         </div>
       </button>`;
@@ -17702,6 +17713,15 @@ MApp.Inspection = {
       const img = photo.querySelector('img');
       if (img) img.addEventListener('error', () => img.remove());
     }
+    const remark = row.querySelector('[data-insp-remark]');
+    if (remark) {
+      // Inside the box's label too: a tap writes a remark, never a tick.
+      remark.addEventListener('click', ev => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this.editRemark(row.dataset.inspRow);
+      });
+    }
   },
 
   _photoTitle(item) {
@@ -17814,7 +17834,7 @@ MApp.Inspection = {
   _itemHeadHtml() {
     return `
       <div class="mb-insp-thead" aria-hidden="true">
-        <span></span>${this._withPhotos ? '<span>Photo</span>' : ''}<span>Item</span><span>Size</span><span>Colour</span><span>Specification</span><span class="mb-insp-num">Qty</span>${this._withStock ? '<span class="mb-insp-num">In stock</span>' : ''}
+        <span></span>${this._withPhotos ? '<span>Photo</span>' : ''}<span>Item</span><span>Size</span><span>Colour</span><span>Specification</span><span class="mb-insp-num">Qty</span>${this._withStock ? '<span class="mb-insp-num">In stock</span>' : ''}<span>Remark</span>
       </div>`;
   },
 
@@ -17843,8 +17863,101 @@ MApp.Inspection = {
           <span class="mb-insp-cell">${e(item.narration)}</span>
           <span class="mb-insp-qty">${qty}${this._wasHtml(item, e)}</span>
           ${this._stockHtml(item, e)}
+          ${this._remarkHtml(item, e)}
         </span>
+        ${this._remarkBtnHtml(item, e, closed)}
       </label>`;
+  },
+
+  // ── Item remarks ───────────────────────────────────────────────────
+  // The inspector's note on one item -- what is wrong with it, or what
+  // should change -- for the admin reviewing the lot (inspection_service
+  // setInspectionItemRemark). A phone shows it under the item; a wider
+  // screen across the row, under its cells. The speech-bubble button at
+  // the row's end (the Remark column from 46rem) writes or changes it in
+  // sheet-inspection-remark. A cleared lot shows its remarks and keeps the
+  // column's place empty.
+  _remarkHtml(item, e) {
+    const r = item.remark;
+    if (!r) return '';
+    const by = [r.byName, this._when(r.at)].filter(Boolean).map(e).join(' · ');
+    return `<span class="mb-insp-remark">${e(r.text)}${by ? ` <span class="mb-insp-remark-by">— ${by}</span>` : ''}</span>`;
+  },
+
+  _remarkBtnHtml(item, e, closed) {
+    if (closed) return '<span class="mb-insp-remark-btn mb-insp-remark-none" aria-hidden="true"></span>';
+    const label = `${item.remark ? 'Change the remark on' : 'Write a remark on'} ${item.itemName}`;
+    return `<button type="button" class="mb-insp-remark-btn${item.remark ? ' is-set' : ''}" data-insp-remark aria-label="${e(label)}">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/>${item.remark ? '<path d="M8 9h8M8 12.5h5"/>' : ''}</svg>
+      </button>`;
+  },
+
+  _hasItemRemarks() {
+    const d = this.data;
+    return !!d && (d.items.some(i => i.remark) || d.removed.some(r => r.remark));
+  },
+
+  editRemark(key) {
+    const item = this.data && this.data.items.find(i => i.key === key);
+    if (!item) return;
+    this._remarkKey = key;
+    const e = MApp.Util.escapeHtml;
+    const r = item.remark;
+    const head = document.getElementById('inspection-remark-item');
+    if (head) {
+      const meta = [item.size, item.color, item.narration].filter(Boolean).map(e).join(' · ');
+      head.innerHTML = `<div class="mb-card-title">${e(item.itemName)}</div>
+        <div class="mb-card-sub">${meta ? `${meta} · ` : ''}${e(MApp.Util.formatQty(item.qty))}${item.unit ? ` ${e(item.unit)}` : ''}</div>`;
+    }
+    const field = document.getElementById('inspection-remark-text');
+    if (field) field.value = r ? r.text : '';
+    const by = document.getElementById('inspection-remark-by');
+    if (by) by.textContent = r ? `Written by ${[r.byName, this._when(r.at)].filter(Boolean).join(', ')}` : '';
+    const remove = document.getElementById('inspection-remark-remove-btn');
+    if (remove) remove.style.display = r ? '' : 'none'; // .mb-btn's display beats [hidden]
+    MApp.Sheet.open('sheet-inspection-remark');
+    if (field) field.focus();
+  },
+
+  closeRemark() {
+    if (this._isOpen('sheet-inspection-remark')) MApp.Sheet.close('sheet-inspection-remark');
+  },
+
+  // Saves the open remark -- or, with `remove`, takes it off. The sheet
+  // closes on success and stays open, text and all, when it fails.
+  async saveRemark(remove) {
+    const d = this.data;
+    const key = this._remarkKey;
+    const item = d && d.items.find(i => i.key === key);
+    if (!item) return;
+    const field = document.getElementById('inspection-remark-text');
+    const text = remove ? '' : (field ? field.value : '');
+    if (text.trim() === (item.remark ? item.remark.text : '')) {
+      this.closeRemark(); // nothing to save
+      return;
+    }
+    const buttons = ['inspection-remark-save-btn', 'inspection-remark-remove-btn']
+      .map(id => document.getElementById(id)).filter(Boolean);
+    buttons.forEach(b => { b.disabled = true; });
+    try {
+      const res = await MApp.Api.mutate('setInspectionItemRemark', this.rowIdx, key, text);
+      if (!res || !res.success) {
+        MApp.Toast.error((res && res.message) || 'The remark was not saved.');
+        return;
+      }
+      if (this.data !== d) return;
+      item.remark = res.data.remark;
+      d.summary = res.data.summary;
+      if (res.data.stage) d.inspection.stage = res.data.stage;
+      this.closeRemark();
+      this._repaintRow(item);
+      this._paintProgress();
+      MApp.Toast.success(res.message || 'Remark saved.');
+    } catch (err) {
+      MApp.Toast.error((err && err.message) || 'No connection. The remark was not saved.');
+    } finally {
+      buttons.forEach(b => { b.disabled = false; });
+    }
   },
 
   // What the records say is on hand for the row's item (inspection_service
@@ -17881,7 +17994,7 @@ MApp.Inspection = {
         <div class="mapp-section-label">Removed from the sheet since inspection began</div>
         ${removed.map(r => {
           const name = [r.itemName, r.size, r.color].filter(Boolean).map(e).join(' · ');
-          return `<div class="mb-insp-meta">${name} — ${e(MApp.Util.formatQty(r.qty))}</div>`;
+          return `<div class="mb-insp-meta">${name} — ${e(MApp.Util.formatQty(r.qty))}${this._remarkHtml(r, e)}</div>`;
         }).join('')}
       </div>`;
   },
@@ -17938,6 +18051,7 @@ MApp.Inspection = {
     if (s.added) extra.push(`${s.added} new`);
     const short = this.data.items.filter(i => i.stock && i.stock.short).length;
     if (short) extra.push(`${short} short of stock`);
+    if (s.remarked) extra.push(`${s.remarked} with a remark`);
     el.innerHTML = `
       <div class="mb-insp-progress-text"><strong>${s.checked}/${s.total}</strong> items ticked · ${extra.join(' · ')}</div>
       <div class="mb-insp-progress-bar" role="progressbar" aria-label="Items ticked" aria-valuemin="0" aria-valuemax="${s.total}" aria-valuenow="${s.checked}"><span style="width:${pct}%"></span></div>`;
@@ -18035,7 +18149,8 @@ MApp.Inspection = {
 
   // Saves "Needs admin review" and the remarks together: the box saves the
   // moment it changes, "Save remarks" whenever the text does. Asking for a
-  // review needs remarks saying what the admin should look at.
+  // review needs remarks saying what the admin should look at -- here, or
+  // on an item.
   async saveReview() {
     const d = this.data;
     if (!d) return;
@@ -18044,9 +18159,9 @@ MApp.Inspection = {
     const saved = d.inspection.status === 'flagged';
     const needsReview = box ? box.checked : saved;
     const remarks = field ? field.value : '';
-    if (needsReview && !remarks.trim()) {
+    if (needsReview && !remarks.trim() && !this._hasItemRemarks()) {
       if (box) box.checked = saved;
-      MApp.Toast.error('Write what the admin should look at, then tick Needs admin review.');
+      MApp.Toast.error('Write what the admin should look at, here or on an item, then tick Needs admin review.');
       if (field) field.focus();
       return;
     }
@@ -18166,22 +18281,24 @@ MApp.Inspection = {
     if (!this._isOpen('sheet-inspection-reconcile')) MApp.Sheet.open('sheet-inspection-reconcile');
   },
 
-  // "Spoke 12G · 26in: quantity changed from 50 to 45"
+  // "Spoke 12G · 26in: quantity changed from 50 to 45", with the
+  // inspector's remark on the item under it when there is one.
   _diffHtml(x, e) {
     const name = [x.itemName, x.size, x.color].filter(Boolean).map(e).join(' · ');
+    const remark = x.remark ? `<span class="mb-insp-remark">${e(x.remark)}</span>` : '';
     if (x.kind === 'unchecked') {
-      return `<div class="mb-insp-diff-row" role="listitem"><span class="mb-insp-badge">Not ticked</span> ${name}: ${e(MApp.Util.formatQty(x.qty))}${x.unit ? ` ${e(x.unit)}` : ''}</div>`;
+      return `<div class="mb-insp-diff-row" role="listitem"><span class="mb-insp-badge">Not ticked</span> ${name}: ${e(MApp.Util.formatQty(x.qty))}${x.unit ? ` ${e(x.unit)}` : ''}${remark}</div>`;
     }
     if (x.kind === 'added') {
-      return `<div class="mb-insp-diff-row" role="listitem"><span class="mb-insp-badge mb-insp-badge-new">New</span> ${name}: added, ${e(MApp.Util.formatQty(x.qty))}</div>`;
+      return `<div class="mb-insp-diff-row" role="listitem"><span class="mb-insp-badge mb-insp-badge-new">New</span> ${name}: added, ${e(MApp.Util.formatQty(x.qty))}${remark}</div>`;
     }
     if (x.kind === 'removed') {
-      return `<div class="mb-insp-diff-row" role="listitem"><span class="mb-insp-badge mb-insp-badge-flagged">Removed</span> ${name}: no longer on the sheet</div>`;
+      return `<div class="mb-insp-diff-row" role="listitem"><span class="mb-insp-badge mb-insp-badge-flagged">Removed</span> ${name}: no longer on the sheet${remark}</div>`;
     }
     const changes = (x.changes || []).map(c => (c.field === 'qty'
       ? `quantity changed from ${e(MApp.Util.formatQty(c.from))} to ${e(MApp.Util.formatQty(c.to))}`
       : `specification changed from "${e(c.from || '—')}" to "${e(c.to || '—')}"`)).join('; ');
-    return `<div class="mb-insp-diff-row" role="listitem"><span class="mb-insp-badge mb-insp-badge-revised">Changed</span> ${name}: ${changes || 'changed'}</div>`;
+    return `<div class="mb-insp-diff-row" role="listitem"><span class="mb-insp-badge mb-insp-badge-revised">Changed</span> ${name}: ${changes || 'changed'}${remark}</div>`;
   },
 
   closeReconcile() {

@@ -262,7 +262,10 @@
 // Api.call takes the answers to the requests the page sent before its
 // scripts loaded. mobile.js and api.js carry it. (The page itself, never
 // cached, sends Home's two requests straight after its top bar.)
-const CACHE_NAME = 'erp-mobile-shell-v109';
+// v110: every item on an inspection checklist takes a remark, written from
+// the speech-bubble button at the end of its row, for the admin reviewing
+// the lot. mobile.js and mobile_styles.css carry it.
+const CACHE_NAME = 'erp-mobile-shell-v110';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

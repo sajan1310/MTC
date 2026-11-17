@@ -582,7 +582,11 @@
 // stock.js, styles.css and api.js are precached. (The page itself, which is
 // never cached, now sends the Dashboard's request from its <head> and shows
 // without a fade.)
-const CACHE_NAME = 'erp-shell-v121';
+// v122: every item on an inspection checklist has a Remarks box -- what is
+// wrong with it, or what should change -- for the admin reviewing the lot,
+// and the dialog before clearing shows each item's remark. inspection.js
+// and styles.css are precached.
+const CACHE_NAME = 'erp-shell-v122';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

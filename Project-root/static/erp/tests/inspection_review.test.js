@@ -335,7 +335,7 @@ describe('inspecting on the desktop', () => {
     await flush();
     expect(mutations).toHaveLength(0);
     expect(document.getElementById('inspectionNeedsReview').checked).toBe(false);
-    expect(toast).toHaveBeenCalledWith('Write what the admin should look at, then tick Needs admin review.', true);
+    expect(toast).toHaveBeenCalledWith('Write what the admin should look at, here or on an item, then tick Needs admin review.', true);
 
     document.getElementById('inspectionRemarks').value = 'Spokes are 13G';
     document.getElementById('inspectionNeedsReview').click();

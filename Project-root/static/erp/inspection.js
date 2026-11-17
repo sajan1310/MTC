@@ -2,11 +2,12 @@
 // inspection.js -- App.Inspection, the desktop side of lot inspection.
 // Production > Inspections lists every lot waiting for inspection or already
 // inspected; opening one shows its checklist. Anyone the server lets inspect
-// ticks items, asks for an admin's review and clears a lot here exactly as
-// in the phone app (MApp.Inspection, mobile.js): the same RPCs, so the same
-// rules. An admin also reviews and clears any open lot -- partly ticked or
-// waiting for review -- after seeing what is not ticked, and can send a lot
-// back. Every rule lives in app/erp/services/inspection_service.py.
+// ticks items, writes a remark on any of them, asks for an admin's review
+// and clears a lot here exactly as in the phone app (MApp.Inspection,
+// mobile.js): the same RPCs, so the same rules. An admin also reviews and
+// clears any open lot -- partly ticked or waiting for review -- after seeing
+// what is not ticked, and can send a lot back. Every rule lives in
+// app/erp/services/inspection_service.py.
 
 // Where a lot stands, as inspection_service.stage() names it: a badge on each
 // lot and a filter each. The list keeps the server's order (see _visible).
@@ -47,6 +48,11 @@ App.Inspection = {
   _reconcile: null,
   _dirty: false,
   _bound: false,
+  // What is typed in a row's Remark box and not saved yet, by row key, for
+  // the lot in _draftsFor: a row redrawn after a tick keeps it.
+  _drafts: new Map(),
+  _draftsFor: null,
+  _repainting: false,
 
   async load() {
     const tbody = document.getElementById('inspectionsTableBody');
@@ -134,6 +140,7 @@ App.Inspection = {
       const recheck = (s.revised || 0) + (s.added || 0);
       const by = insp.clearedByName || insp.flaggedByName || '';
       const remarks = String(insp.remarks || '');
+      const onItems = toNumber(s.remarked);
       const done = this._stage(insp) === 'cleared';
       return `<tr>
         <td><strong>${escapeHtml(lot.lotNumber)}</strong><br><span class="text-muted small">${escapeHtml(lot.date)}</span></td>
@@ -141,7 +148,7 @@ App.Inspection = {
         <td class="text-center"><span class="badge ${INSPECTION_LOT_STATUS[lot.status] || 'bg-secondary'}">${escapeHtml(lot.status)}</span></td>
         <td>${this._stageBadge(insp)}</td>
         <td class="text-end text-nowrap">${toNumber(s.checked)}/${toNumber(s.total, lot.itemCount)}${recheck ? `<br><span class="text-warning-emphasis small">${recheck} to re-check</span>` : ''}</td>
-        <td class="small">${escapeHtml(remarks.length > 140 ? `${remarks.slice(0, 140)}…` : remarks)}</td>
+        <td class="small">${escapeHtml(remarks.length > 140 ? `${remarks.slice(0, 140)}…` : remarks)}${onItems ? `${remarks ? '<br>' : ''}<span class="text-warning-emphasis">${onItems} item remark${onItems === 1 ? '' : 's'}</span>` : ''}</td>
         <td class="small text-nowrap">${escapeHtml(this._when(lot.lastUpdated))}${by ? `<br><span class="text-muted">by ${escapeHtml(by)}</span>` : ''}</td>
         <td class="text-center"><button type="button" class="btn btn-sm ${done ? 'btn-outline-dark' : 'btn-dark'} btn-action" onclick="App.Inspection.openDetail(${toNumber(lot.rowIdx)})">${done ? 'View' : 'Inspect'}</button></td>
       </tr>`;
@@ -155,11 +162,23 @@ App.Inspection = {
     const body = document.getElementById('inspectionDetailBody');
     if (!body) return;
     this._bound = true;
-    // One delegated listener, because rows are re-rendered after each tick.
+    // Delegated listeners, because rows are re-rendered after each tick.
     body.addEventListener('change', ev => {
       const box = ev.target.closest('[data-insp-key]');
       if (box) this.toggle(box.dataset.inspKey);
       else if (ev.target.id === 'inspectionNeedsReview') this.saveReview();
+    });
+    // A remark saves when its box loses focus with something new in it --
+    // on focusout, not change: a row redrawn under the cursor (a tick
+    // answering) gets a fresh box, whose change would miss what was typed
+    // in the old one.
+    body.addEventListener('input', ev => {
+      const remark = ev.target.closest('[data-insp-remark]');
+      if (remark) this._drafts.set(remark.dataset.inspRemark, remark.value);
+    });
+    body.addEventListener('focusout', ev => {
+      const remark = ev.target.closest('[data-insp-remark]');
+      if (remark && !this._repainting) this.saveRemark(remark.dataset.inspRemark, remark.value);
     });
     // Counts and badges on the list may have moved while the lot was open.
     document.getElementById('inspectionDetailModal')?.addEventListener('hidden.bs.modal', () => {
@@ -179,6 +198,12 @@ App.Inspection = {
     this._current = null;
     this._saving = new Set();
     this._reconcile = null;
+    // Reopening the same lot (after a refused tick, or Send back) keeps what
+    // was typed and not saved; another lot starts clean.
+    if (this._draftsFor !== rowIdx) {
+      this._drafts = new Map();
+      this._draftsFor = rowIdx;
+    }
     body.innerHTML = '<div class="text-center p-4 text-muted">Loading…</div>';
     if (actions) actions.innerHTML = '';
     if (typeof bootstrap !== 'undefined') bootstrap.Modal.getOrCreateInstance(modalEl).show();
@@ -231,7 +256,72 @@ App.Inspection = {
       <td>${escapeHtml(item.narration)}</td>
       <td class="text-end text-nowrap">${escapeHtml(formatQty(item.qty))}${unit}${this._was(item)}</td>
       ${this._withStock() ? `<td class="text-end text-nowrap">${this._stockCell(item)}</td>` : ''}
+      ${this._withRemarks(closed) ? `<td class="insp-remark-cell">${this._remarkCell(item, closed)}</td>` : ''}
     </tr>`;
+  },
+
+  // ── Item remarks ──────────────────────────────────────────────────────
+  // The inspector's note on one item -- what is wrong with it, or what
+  // should change -- for the admin reviewing the lot (inspection_service
+  // setInspectionItemRemark). A box on every row while the lot is open,
+  // saved when it loses focus; once cleared, the column shows only when an
+  // item has a remark.
+  _withRemarks(closed) {
+    const d = this._current;
+    return !closed || !!(d && d.items.some(i => i.remark));
+  },
+
+  _remarkBy(remark) {
+    if (!remark) return '';
+    return [remark.byName, this._when(remark.at)].filter(Boolean).join(' · ');
+  },
+
+  _remarkCell(item, closed) {
+    const remark = item.remark;
+    if (closed) {
+      return remark
+        ? `<div class="insp-remark-text">${escapeHtml(remark.text)}</div><div class="small text-muted">${escapeHtml(this._remarkBy(remark))}</div>`
+        : '';
+    }
+    const value = this._drafts.has(item.key) ? this._drafts.get(item.key) : (remark ? remark.text : '');
+    return `<textarea class="form-control form-control-sm insp-remark" rows="1" maxlength="500" data-insp-remark="${escapeHtml(item.key)}" aria-label="Remark on ${escapeHtml(item.itemName)}" placeholder="Remark">${escapeHtml(value)}</textarea>
+      <div class="small text-muted insp-remark-by">${escapeHtml(this._remarkBy(remark))}</div>`;
+  },
+
+  async saveRemark(key, text) {
+    const d = this._current;
+    const item = d && d.items.find(i => i.key === key);
+    if (!item) return;
+    const saved = item.remark ? item.remark.text : '';
+    if (String(text || '').trim() === saved) {
+      this._drafts.delete(key);
+      return;
+    }
+    try {
+      const res = await Api.mutate('setInspectionItemRemark', d.lot.rowIdx, key, text);
+      if (this._current !== d) return;
+      if (!res?.success) {
+        // The text stays in its box (a draft) to be saved again.
+        App.Utils.showToast(res?.message || 'The remark was not saved.', true);
+        return;
+      }
+      item.remark = res.data.remark;
+      // Typed on since this save left: that newer text is still to save.
+      if (this._drafts.get(key) === text) this._drafts.delete(key);
+      d.summary = res.data.summary;
+      if (res.data.stage) d.inspection.stage = res.data.stage;
+      this._dirty = true;
+      const by = this._rowEl(key)?.querySelector('.insp-remark-by');
+      if (by) by.textContent = this._remarkBy(item.remark);
+      this._paintProgress();
+      App.Utils.showToast(res.message || 'Remark saved.');
+    } catch (err) {
+      App.Utils.showToast((err && err.message) || 'No connection. The remark was not saved.', true);
+    }
+  },
+
+  _hasItemRemarks(d) {
+    return d.items.some(i => i.remark) || d.removed.some(r => r.remark);
   },
 
   // ── Stock on hand ─────────────────────────────────────────────────────
@@ -339,15 +429,18 @@ App.Inspection = {
     App.Utils.showToast(res.message || 'Photo saved.');
   },
 
+  // One line of what clearing would accept, with the inspector's remark on
+  // the item under it when there is one.
   _diffLine(x) {
     const name = [x.itemName, x.size, x.color].filter(Boolean).map(escapeHtml).join(' · ');
-    if (x.kind === 'unchecked') return `<li>${name}: not ticked (${escapeHtml(formatQty(x.qty))}${x.unit ? ` ${escapeHtml(x.unit)}` : ''})</li>`;
-    if (x.kind === 'added') return `<li>${name}: added (${escapeHtml(formatQty(x.qty))})</li>`;
-    if (x.kind === 'removed') return `<li>${name}: removed from the sheet</li>`;
+    const remark = x.remark ? `<br><span class="small text-warning-emphasis">Remark: ${escapeHtml(x.remark)}</span>` : '';
+    if (x.kind === 'unchecked') return `<li>${name}: not ticked (${escapeHtml(formatQty(x.qty))}${x.unit ? ` ${escapeHtml(x.unit)}` : ''})${remark}</li>`;
+    if (x.kind === 'added') return `<li>${name}: added (${escapeHtml(formatQty(x.qty))})${remark}</li>`;
+    if (x.kind === 'removed') return `<li>${name}: removed from the sheet${remark}</li>`;
     const changes = (x.changes || []).map(c => (c.field === 'qty'
       ? `quantity ${escapeHtml(formatQty(c.from))} → ${escapeHtml(formatQty(c.to))}`
       : `specification "${escapeHtml(c.from || '—')}" → "${escapeHtml(c.to || '—')}"`)).join('; ');
-    return `<li>${name}: ${changes || 'changed'}</li>`;
+    return `<li>${name}: ${changes || 'changed'}${remark}</li>`;
   },
 
   renderDetail() {
@@ -386,7 +479,8 @@ App.Inspection = {
       ['Colours', escapeHtml((lot.colors || []).join(', ') || '—')]
     ];
     const removed = d.removed.length
-      ? `<div class="small text-muted mb-2"><strong>Removed from the sheet since inspection began:</strong> ${d.removed.map(r => escapeHtml([r.itemName, r.size, r.color].filter(Boolean).join(' · '))).join(', ')}</div>`
+      ? `<div class="small text-muted mb-2"><strong>Removed from the sheet since inspection began:</strong> ${d.removed.map(r => escapeHtml([r.itemName, r.size, r.color].filter(Boolean).join(' · '))
+        + (r.remark ? ` (remark: ${escapeHtml(r.remark.text)})` : '')).join(', ')}</div>`
       : '';
     const remarks = closed
       ? `<section class="insp-review border rounded-3 p-3" aria-labelledby="inspectionReviewHeading"><h6 id="inspectionReviewHeading" class="text-uppercase small fw-bold text-muted mb-2">Remarks</h6><div class="text-break" style="white-space: pre-wrap;">${escapeHtml(insp.remarks || '—')}</div></section>`
@@ -405,7 +499,7 @@ App.Inspection = {
           <div id="inspectionProgress" class="mb-2" role="status" aria-live="polite"></div>
           <div class="table-responsive">
             <table class="table table-sm table-bordered align-middle mb-2">
-              <thead class="table-light"><tr><th class="text-center" style="width: 4.5rem;">Ticked</th>${this._withPhotos() ? '<th class="text-center" style="width: 6rem;">Photo</th>' : ''}<th>Item</th><th>Size</th><th>Colour</th><th>Specification</th><th class="text-end">Qty</th>${this._withStock() ? '<th class="text-end">In stock</th>' : ''}</tr></thead>
+              <thead class="table-light"><tr><th class="text-center" style="width: 4.5rem;">Ticked</th>${this._withPhotos() ? '<th class="text-center" style="width: 6rem;">Photo</th>' : ''}<th>Item</th><th>Size</th><th>Colour</th><th>Specification</th><th class="text-end">Qty</th>${this._withStock() ? '<th class="text-end">In stock</th>' : ''}${this._withRemarks(closed) ? '<th>Remarks</th>' : ''}</tr></thead>
               <tbody>${d.items.length ? d.items.map(item => this._itemRow(item, closed)).join('') : '<tr><td colspan="6" class="text-center text-muted">Nothing on the Production Sheet to inspect.</td></tr>'}</tbody>
             </table>
           </div>
@@ -461,6 +555,8 @@ App.Inspection = {
     if (s.added) extra.push(`${toNumber(s.added)} new`);
     const short = d.items.filter(i => i.stock && i.stock.short).length;
     if (short) extra.push(`${short} short of stock`);
+    const remarked = toNumber(s.remarked);
+    if (remarked) extra.push(`${remarked} with a remark`);
     el.innerHTML = `
       <div class="small mb-1"><strong>${checked}/${total}</strong> items ticked · ${extra.map(escapeHtml).join(' · ')}</div>
       <div class="progress" style="height: 6px;" role="progressbar" aria-label="Items ticked" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${checked}"><div class="progress-bar bg-success" style="width: ${pct}%;"></div></div>`;
@@ -507,7 +603,23 @@ App.Inspection = {
 
   _repaintRow(item) {
     const el = this._rowEl(item.key);
-    if (el) el.outerHTML = this._itemRow(item, false);
+    if (!el) return;
+    // A remark being typed in this row keeps its focus and caret.
+    const typing = document.activeElement;
+    const keep = typing && el.contains(typing) && typing.matches('[data-insp-remark]')
+      ? [typing.selectionStart, typing.selectionEnd] : null;
+    // Taking the box away may blur it; that is not the inspector leaving it.
+    this._repainting = true;
+    try {
+      el.outerHTML = this._itemRow(item, false);
+    } finally {
+      this._repainting = false;
+    }
+    const fresh = keep && this._rowEl(item.key)?.querySelector('[data-insp-remark]');
+    if (fresh) {
+      fresh.focus();
+      fresh.setSelectionRange(keep[0], keep[1]);
+    }
   },
 
   _repaintStage() {
@@ -563,7 +675,8 @@ App.Inspection = {
 
   // Saves "Needs admin review" and the remarks together: the box saves the
   // moment it changes, "Save remarks" whenever the text does. Asking for a
-  // review needs remarks saying what the admin should look at.
+  // review needs remarks saying what the admin should look at -- here, or
+  // on an item.
   async saveReview() {
     const d = this._current;
     if (!d) return;
@@ -572,9 +685,9 @@ App.Inspection = {
     const saved = d.inspection.status === 'flagged';
     const needsReview = box ? box.checked : saved;
     const remarks = field ? field.value : '';
-    if (needsReview && !remarks.trim()) {
+    if (needsReview && !remarks.trim() && !this._hasItemRemarks(d)) {
       if (box) box.checked = saved;
-      App.Utils.showToast('Write what the admin should look at, then tick Needs admin review.', true);
+      App.Utils.showToast('Write what the admin should look at, here or on an item, then tick Needs admin review.', true);
       if (field) field.focus();
       return;
     }

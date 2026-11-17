@@ -81,7 +81,7 @@ const viewer = () => document.querySelector('.photo-viewer-overlay');
 describe('the Photo column', () => {
   test('a thumbnail, Add photo on an item or a pool row, nothing on a row neither knows', async () => {
     await open([SEAT, BAG, FRAME, LOOSE]);
-    expect(headers()).toEqual(['Ticked', 'Photo', 'Item', 'Size', 'Colour', 'Specification', 'Qty']);
+    expect(headers()).toEqual(['Ticked', 'Photo', 'Item', 'Size', 'Colour', 'Specification', 'Qty', 'Remarks']);
     const img = rowOf('seat').querySelector('img.insp-photo-thumb');
     expect(img.getAttribute('src')).toBe('/erp/item-photo/12?v=40');
     expect(img.getAttribute('loading')).toBe('lazy');
@@ -92,7 +92,7 @@ describe('the Photo column', () => {
 
   test('no column on a sheet with nothing to photograph', async () => {
     await open([LOOSE]);
-    expect(headers()).toEqual(['Ticked', 'Item', 'Size', 'Colour', 'Specification', 'Qty']);
+    expect(headers()).toEqual(['Ticked', 'Item', 'Size', 'Colour', 'Specification', 'Qty', 'Remarks']);
   });
 });
 

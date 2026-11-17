@@ -245,7 +245,7 @@ describe('the checklist', () => {
     data.data.items[1] = item('tape', 'Rim Tape', 60, { state: 'checked', result: 'pass', color: 'Red', narration: 'Cloth' });
     await openChecklist(data);
     const head = [...body().querySelectorAll('.mb-insp-thead span')].map(s => s.textContent);
-    expect(head).toEqual(['', 'Item', 'Size', 'Colour', 'Specification', 'Qty']);
+    expect(head).toEqual(['', 'Item', 'Size', 'Colour', 'Specification', 'Qty', 'Remark']);
     const tape = [...body().querySelectorAll('[data-insp-row]')].find(r => r.dataset.inspRow === 'tape');
     expect([...tape.querySelectorAll('.mb-insp-cell')].map(c => c.textContent)).toEqual(['26in', 'Red', 'Cloth']);
     expect(tape.querySelector('.mb-insp-meta').textContent).toBe('26in · Red · Cloth'); // the phone's one line

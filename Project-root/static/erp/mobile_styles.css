@@ -3059,6 +3059,49 @@ fieldset.mb-field {
 .mb-insp-stock-note::before { content: "· "; }
 .mb-insp-stock-none { display: none; }
 
+/* The inspector's remark on an item (MApp.Inspection._remarkHtml): a note
+   under the item on a phone, across the row under its cells from 46rem.
+   The speech-bubble button at the row's end writes or changes it; a button
+   of its own inside the row's label, so a tap never ticks the item. */
+.mb-insp-remark {
+  display: block;
+  margin-top: var(--mb-sp-1);
+  padding: var(--mb-sp-1) var(--mb-sp-2);
+  border-left: 3px solid var(--mb-enamel-amber);
+  border-radius: var(--mb-radius-sm);
+  background: var(--mb-enamel-amber-bg);
+  font-size: 0.875rem;
+  font-weight: 400;
+  color: var(--mb-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.mb-insp-remark-by { font-size: 0.75rem; color: var(--mb-ink-soft); white-space: normal; }
+
+.mb-insp-remark-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--mb-tap-min);
+  height: var(--mb-tap-min);
+  padding: 0;
+  border: 1px solid var(--mb-steel-faint);
+  border-radius: var(--mb-radius-sm);
+  background: transparent;
+  color: var(--mb-steel);
+  cursor: pointer;
+}
+
+.mb-insp-remark-btn.is-set {
+  border-color: var(--mb-enamel-amber);
+  background: var(--mb-enamel-amber-bg);
+  color: var(--mb-enamel-amber-ink);
+}
+/* A cleared lot's rows: no button, only the Remark column's place from
+   46rem. */
+.mb-insp-remark-none { display: none; border-color: transparent; cursor: inherit; }
+
 /* The checklist's table: on a phone the column names and the per-column
    cells are hidden and size · colour · specification run as one line under
    the name; from 46rem every row lays its cells out under the names. */
@@ -3068,11 +3111,15 @@ fieldset.mb-field {
 }
 
 @media (min-width: 46rem) {
+  /* The last column, the remark button's, is on every sheet. The
+     columns' least widths let every one of them fit an 800px tablet,
+     photo and stock columns included; a narrower screen scrolls the
+     table sideways rather than cut its last columns off. */
   .mb-insp-list {
-    --mb-insp-cols: 2.25rem minmax(11rem, 2.4fr) minmax(4.5rem, 0.8fr) minmax(5rem, 1fr) minmax(7rem, 1.8fr) minmax(7rem, 1fr);
+    --mb-insp-cols: 2.25rem minmax(8rem, 2.4fr) minmax(3.5rem, 0.8fr) minmax(4rem, 1fr) minmax(5rem, 1.8fr) minmax(5rem, 1fr) var(--mb-tap-min);
 
     gap: 0;
-    overflow: hidden;
+    overflow-x: auto;
     border-radius: var(--mb-radius-md);
     background: var(--mb-surface);
     box-shadow: var(--mb-shadow-card);
@@ -3099,18 +3146,29 @@ fieldset.mb-field {
 
   /* A photo column after the box, only on a sheet that has a photo. */
   .mb-insp-list.mb-insp-with-photos {
-    --mb-insp-cols: 2.25rem var(--mb-tap-min) minmax(11rem, 2.4fr) minmax(4.5rem, 0.8fr) minmax(5rem, 1fr) minmax(7rem, 1.8fr) minmax(7rem, 1fr);
+    --mb-insp-cols: 2.25rem var(--mb-tap-min) minmax(8rem, 2.4fr) minmax(3.5rem, 0.8fr) minmax(4rem, 1fr) minmax(5rem, 1.8fr) minmax(5rem, 1fr) var(--mb-tap-min);
   }
 
   /* An "In stock" column after the quantity, when the records know any
      row's item. */
   .mb-insp-list.mb-insp-with-stock {
-    --mb-insp-cols: 2.25rem minmax(11rem, 2.4fr) minmax(4.5rem, 0.8fr) minmax(5rem, 1fr) minmax(7rem, 1.8fr) minmax(6rem, 1fr) minmax(7rem, 1fr);
+    --mb-insp-cols: 2.25rem minmax(8rem, 2.4fr) minmax(3.5rem, 0.8fr) minmax(4rem, 1fr) minmax(5rem, 1.8fr) minmax(5rem, 1fr) minmax(5rem, 1fr) var(--mb-tap-min);
   }
 
   .mb-insp-list.mb-insp-with-photos.mb-insp-with-stock {
-    --mb-insp-cols: 2.25rem var(--mb-tap-min) minmax(11rem, 2.4fr) minmax(4.5rem, 0.8fr) minmax(5rem, 1fr) minmax(7rem, 1.8fr) minmax(6rem, 1fr) minmax(7rem, 1fr);
+    --mb-insp-cols: 2.25rem var(--mb-tap-min) minmax(8rem, 2.4fr) minmax(3.5rem, 0.8fr) minmax(4rem, 1fr) minmax(5rem, 1.8fr) minmax(5rem, 1fr) minmax(5rem, 1fr) var(--mb-tap-min);
   }
+
+  /* A remark runs under the row's cells, from the item's column to the
+     button's: placed in the row's second line, so the cells keep theirs. */
+  .mb-insp-row .mb-insp-remark {
+    grid-row: 2;
+    grid-column: 2 / -2;
+    margin-bottom: var(--mb-sp-1);
+  }
+
+  .mb-insp-list.mb-insp-with-photos .mb-insp-row .mb-insp-remark { grid-column: 3 / -2; }
+  .mb-insp-row .mb-insp-remark-none { display: block; }
 
   .mb-insp-row .mb-insp-item { display: contents; }
   .mb-insp-row .mb-insp-meta { display: none; }
