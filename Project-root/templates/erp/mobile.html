@@ -87,6 +87,55 @@
               aria-label="List layout" onclick="MApp.Density.choose()"></button>
     </header>
 
+    {% if sees_figures %}
+    <!-- Home's figures, both requests, asked for now. Home is the screen this
+         app opens on, and its figures used to be asked for only once the whole
+         page and mobile.js had been read and run, and then one after the other:
+         on a tablet the dashboard's numbers were the last thing to appear, at
+         3.2-3.5 s (lab, 2026-11-13). A plain fetch, the same POST api.js
+         sends, so it needs no script to load first: api.js loaded in the
+         <head> instead held the first paint back by 50-150 ms (lab,
+         2026-11-17). Here, just after the top bar, rather than in the <head>:
+         there the browser drew a frame or two before any of the page existed
+         and the top bar came a frame later, and before the stylesheets it
+         also took the connections they need on a first visit. api.js's Api.call takes each answer when Home asks
+         (see _takeEarly there), and asks again itself if anything about it is
+         not a plain answer.
+
+         Only when the page is certain to open on Home: no tab in the address
+         and none remembered, or Home named by either. Narrower than
+         MApp.Shell.resolveInitialTab on purpose -- it can miss, and then Home
+         asks for itself as it always did, but it never asks for figures a
+         screen will not show. first_screen_requests.test.js keeps the key, the
+         two methods and the request in step with mobile.js and api.js. -->
+    <script>
+      (function () {
+        try {
+          var tab = String(location.hash || '').replace(/^#/, '');
+          if (!tab) {
+            try { tab = localStorage.getItem('maharaja-erp-mobile-last-tab') || ''; } catch (e) { tab = ''; }
+          }
+          if ((tab && tab !== 'home') || typeof fetch !== 'function') return;
+          var meta = document.querySelector('meta[name="csrf-token"]');
+          var token = (meta && meta.getAttribute('content')) || '';
+          var calls = window.__erpEarlyCalls = window.__erpEarlyCalls || {};
+          ['getMobileDashboard', 'getDashboardData'].forEach(function (method) {
+            var call = { at: Date.now() };
+            var done = function () { call.doneAt = Date.now(); };
+            call.response = fetch('/api/erp/rpc/' + method, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token },
+              credentials: 'same-origin',
+              body: JSON.stringify({ args: [] })
+            });
+            call.response.then(done, done);
+            calls[method] = call;
+          });
+        } catch (e) { /* nothing to do: Home asks for itself */ }
+      }());
+    </script>
+    {% endif %}
+
     <!-- ═══════════════════════════════════════════════════════════════
          CONTENT OUTLET — screens are cloned from mobile_views.html
          <template> tags into here by MApp.Shell.showTab()/navigateTo()

@@ -66,6 +66,38 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='erp/vendor/select2-bootstrap-5-theme-1.3.0.min.css') }}">
   <!-- Inter + Outfit, self-hosted (latin subsets only) -->
   <link rel="stylesheet" href="{{ url_for('static', filename='erp/vendor/google-fonts.css') }}">
+  <!-- The two font files the page is drawn in (Inter for text, Outfit for
+       headings), fetched alongside the stylesheets. A font is otherwise
+       asked for only when the first text in it is laid out, and when it
+       arrives the page is laid out again in it. `crossorigin` is required
+       for a font preload to be used, same origin or not. -->
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="{{ url_for('static', filename='erp/vendor/fonts/inter-latin-1.woff2') }}">
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="{{ url_for('static', filename='erp/vendor/fonts/outfit-latin-5.woff2') }}">
+  {% if sees_money %}
+  <!-- The faces that draw "₹", fetched just after the first paint, for an
+       account that is shown amounts. The rupee sign is not in the files
+       above (it is in the latin-ext subset, U+20AD-20C0), so the browser
+       fetched these only when the first amount was laid out, and then laid
+       the whole page out again in them: 2,600 elements, just after the
+       Dashboard's figures appeared (lab, 2026-11-16). Not preloaded: a font
+       preload in the head competes with the stylesheets for the first
+       paint. An account that sees no amounts never draws a "₹". -->
+  <script>
+    (function () {
+      try {
+        if (!document.fonts || typeof document.fonts.load !== 'function' || typeof requestAnimationFrame !== 'function') return;
+        requestAnimationFrame(function () {
+          setTimeout(function () {
+            ['400 1em Inter', '500 1em Inter', '600 1em Inter', '700 1em Inter',
+              '500 1em Outfit', '600 1em Outfit', '700 1em Outfit', '800 1em Outfit'].forEach(function (font) {
+              document.fonts.load(font, '₹').catch(function () {});
+            });
+          }, 0);
+        });
+      } catch (e) { /* they load when first needed, as before */ }
+    }());
+  </script>
+  {% endif %}
 
   <link rel="stylesheet" href="{{ url_for('static', filename='erp/styles.css') }}">
 
@@ -87,12 +119,65 @@
       -moz-osx-font-smoothing: grayscale;
       background-color: var(--bg-color, #f4f7f6);
     }
-    #app-container { visibility: hidden; opacity: 0; transition: opacity 300ms ease-in-out; }
-    #app-container.loaded { visibility: visible; opacity: 1; }
+    /* Shown whole the moment the scripts are ready, not faded in from
+       transparent. A fade's first frame paints the page at opacity 0, and the
+       browser counts neither that frame nor the rest of the fade as the page
+       appearing: Largest Contentful Paint waited for something to repaint the
+       heading, which was the notification strip filling in two seconds later
+       (lab, 2026-11-14: heading on screen at 1.4 s, counted at 3.3 s). The
+       300 ms of fade was also 300 ms of a ready page nobody could read. */
+    #app-container { visibility: hidden; }
+    #app-container.loaded { visibility: visible; }
     .tab-content { display: none; animation: fadeIn 300ms ease-in-out; }
     .tab-content.active { display: block; }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
   </style>
+  {% if sees_figures and permitted_tabs is none %}
+  <!-- The Dashboard's figures, asked for now. They are the first thing the
+       page shows and the slowest thing it waits for, and the request used to
+       go out only after 430 KB of page and twenty-odd scripts had been read
+       and run -- about a second in at an office PC's speed (lab, 2026-11-14).
+       A plain fetch, the same POST api.js sends, so it needs no script to
+       load first, and after the stylesheets, so it does not take the
+       connections they need on a first visit. api.js's Api.call takes the answer
+       when App.Dashboard asks (see _takeEarly there), and asks again itself
+       if anything about it is not a plain answer.
+
+       Only when the page is certain to open on the Dashboard: no tab in the
+       address and none remembered, or the Dashboard named by either. That is
+       narrower than App.Navigation.resolveInitialTab (which also falls back
+       to the Dashboard from a tab that no longer exists), on purpose -- it
+       can miss, and then the Dashboard asks for itself as it always did, but
+       it never asks for figures a page will not show.
+       first_screen_requests.test.js keeps the key, the method and the
+       request in step with core.js, dashboard.js and api.js. -->
+  <script>
+    (function () {
+      try {
+        var tab = String(location.hash || '').replace(/^#/, '');
+        if (!tab) {
+          try { tab = localStorage.getItem('maharaja-erp-last-tab') || ''; } catch (e) { tab = ''; }
+        }
+        if ((tab && tab !== 'dashboardTab') || typeof fetch !== 'function') return;
+        var meta = document.querySelector('meta[name="csrf-token"]');
+        var token = (meta && meta.getAttribute('content')) || '';
+        var calls = window.__erpEarlyCalls = window.__erpEarlyCalls || {};
+        ['getDashboardData'].forEach(function (method) {
+          var call = { at: Date.now() };
+          var done = function () { call.doneAt = Date.now(); };
+          call.response = fetch('/api/erp/rpc/' + method, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token },
+            credentials: 'same-origin',
+            body: JSON.stringify({ args: [] })
+          });
+          call.response.then(done, done);
+          calls[method] = call;
+        });
+      } catch (e) { /* nothing to do: the Dashboard asks for itself */ }
+    }());
+  </script>
+  {% endif %}
 </head>
 <body{% if not enters_prices %} class="no-price-entry"{% endif %}>
 

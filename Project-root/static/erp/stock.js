@@ -2578,7 +2578,7 @@ App.Stock = {
     <div class="card-body py-2 px-3 bg-white">
       <div class="row g-2" style="max-height: 180px; overflow-y: auto;">
         ${lowStockItems.map(item => `
-          <div class="col-md-4 col-sm-6">
+          <div class="col-md-4 col-sm-6 low-stock-tile">
             <div class="p-2 border rounded bg-light d-flex justify-content-between align-items-center shadow-xs">
               <div style="min-width: 0;">
                 <strong class="text-dark text-truncate d-block" style="font-size: 13px;" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>
