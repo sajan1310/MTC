@@ -41,6 +41,18 @@ Each checklist row also shows what the records say is on hand for its item
 from -- marked when an open lot needs more than that. Read only, for the
 inspector to hold against the shelf; getInspection alone sends it.
 
+Item remarks (owner, 2026-11-17)
+--------------------------------
+Each row can carry the inspector's remark: what is wrong with that item, or
+what should change on it, for the admin reviewing the lot (migration 059,
+erp.lot_inspections.item_remarks, keyed by the row's key). A remark is a
+note, not a tick: it vouches for nothing, so it is not tied to the row's
+fingerprint and stays when the row is revised -- the admin's fix shows as
+Revised beside the remark that asked for it. It does not ask for a review
+by itself; the review box does, and item remarks are enough to tick it.
+The admin sees them on the checklist and against each item in the dialog
+before clearing, and the clearance keeps them with what it accepted.
+
 Ticks, review, and the stage a lot is at (owner, 2026-10-26)
 ------------------------------------------------------------
 A tick says the item is there as the sheet says. The first version had
@@ -139,6 +151,7 @@ LOT_STATUSES_TO_INSPECT = ("Pending", "In Progress")
 
 MAX_REMARKS = 2000
 MAX_NOTE = 1000
+MAX_ITEM_REMARK = 500
 
 _BUILTIN_ROLE_LABELS = {"user": "User", "admin": "Admin", "super_admin": "Super Admin"}
 
@@ -495,6 +508,30 @@ def attach_stock(cur, lot, items) -> None:
                 item["stock"]["short"] = qty + 0.0001 < needs[group]
 
 
+def _item_remarks(inspection) -> dict:
+    """The inspection's remarks by row key (migration 059); {} before any."""
+    stored = inspection.get("item_remarks") if inspection else None
+    return stored if isinstance(stored, dict) else {}
+
+
+def attach_remarks(inspection, items, removed=()) -> None:
+    """Gives each checklist row -- and each row removed since -- `remark`,
+    the inspector's note on that item as {text, byName, at}, or None."""
+    remarks = _item_remarks(inspection)
+    for row in [*items, *removed]:
+        note = remarks.get(row.get("key"))
+        text = _text(note.get("text")) if isinstance(note, dict) else ""
+        row["remark"] = (
+            {
+                "text": text,
+                "byName": _text(note.get("byName")),
+                "at": _text(note.get("at")),
+            }
+            if text
+            else None
+        )
+
+
 def summarize(items, removed=()) -> dict:
     checked = sum(1 for i in items if i["state"] == "checked")
     return {
@@ -507,6 +544,8 @@ def summarize(items, removed=()) -> dict:
         "revised": sum(1 for i in items if i["state"] == "revised"),
         "added": sum(1 for i in items if i["state"] == "new"),
         "removed": len(removed),
+        # Items on the sheet with the inspector's remark (attach_remarks).
+        "remarked": sum(1 for i in items if i.get("remark")),
         # Every item on the sheet ticked and unchanged: all accounted for.
         "complete": bool(items) and checked == len(items),
     }
@@ -533,6 +572,15 @@ def _row_label(row: dict) -> dict:
         "color": row.get("color") or "",
         "unit": row.get("unit") or "",
     }
+
+
+def _with_remark(entry: dict, row: dict) -> dict:
+    """A line of the dialog before clearing, with the inspector's remark on
+    its item when there is one: the admin accepts it knowing why."""
+    remark = row.get("remark")
+    if remark:
+        entry["remark"] = remark["text"]
+    return entry
 
 
 def discrepancies(items, removed) -> list[dict]:
@@ -566,23 +614,33 @@ def discrepancies(items, removed) -> list[dict]:
                         "to": item["narration"],
                     }
                 )
-            out.append(dict(_row_label(item), kind="changed", changes=changes))
+            out.append(
+                _with_remark(
+                    dict(_row_label(item), kind="changed", changes=changes), item
+                )
+            )
         elif item["state"] == "new":
             out.append(
-                dict(
-                    _row_label(item),
-                    kind="added",
-                    qty=item["qty"],
-                    narration=item["narration"],
+                _with_remark(
+                    dict(
+                        _row_label(item),
+                        kind="added",
+                        qty=item["qty"],
+                        narration=item["narration"],
+                    ),
+                    item,
                 )
             )
     for row in removed:
         out.append(
-            dict(
-                _row_label(row),
-                kind="removed",
-                qty=row.get("qty"),
-                narration=row.get("narration") or "",
+            _with_remark(
+                dict(
+                    _row_label(row),
+                    kind="removed",
+                    qty=row.get("qty"),
+                    narration=row.get("narration") or "",
+                ),
+                row,
             )
         )
     return out
@@ -796,6 +854,7 @@ def get_inspection_lots():
         items, removed = merge_checklist(
             rows, checks, inspection["baseline"] if inspection else None
         )
+        attach_remarks(inspection, items)
         header = _lot_header(lot, names.get(_text(lot["process_id"]).lower()))
         stamps = [
             s
@@ -834,6 +893,7 @@ def get_inspection(row_idx):
         )
         attach_photos(cur, lot, items)
         attach_stock(cur, lot, items)
+        attach_remarks(inspection, items, removed)
         header = _lot_header(lot, _process_name(cur, lot["process_id"]))
         identity = _identity(cur)
     summary = summarize(items, removed)
@@ -933,6 +993,7 @@ def set_inspection_check(conn, cur, row_idx, item_key, result, item_fingerprint)
     items, removed = merge_checklist(
         rows, _load_checks(cur, inspection["id"]), inspection["baseline"]
     )
+    attach_remarks(inspection, items, removed)
     message = (
         f"Lot #{lot['lot_number']} is now In Progress."
         if lot_status != lot["status"]
@@ -1031,6 +1092,75 @@ def set_inspection_item_photo(conn, cur, row_idx, item_key, image):
     )
 
 
+@rpc_method("setInspectionItemRemark", mutation=True)
+@database.transactional
+def set_inspection_item_remark(conn, cur, row_idx, item_key, remark=""):
+    """Writes, changes or (empty) removes the inspector's remark on one
+    checklist row: what is wrong with that item, or what should change on
+    it, for the admin reviewing the lot.
+
+    Not a tick, so not tied to what the screen showed: the row needs only to
+    be on the live sheet, and the remark stays when the row is revised. It
+    neither starts the lot (a check does) nor asks for a review (the review
+    box does). Open inspections only; a cleared one keeps its remarks."""
+    lot = _load_lot(cur, row_idx, for_update=True)
+    rows = sheet_rows(lot["custom_components"], lot["components_consumed"])
+    key = _text(item_key)
+    if not any(r["key"] == key for r in rows):
+        raise ValueError(
+            "That item is no longer on this lot's Production Sheet. Reload the checklist."
+        )
+    text = _text(remark)[:MAX_ITEM_REMARK]
+
+    inspection = _start_inspection(cur, lot, rows)
+    _refuse_if_closed(lot, inspection)
+
+    user_id = get_current_user_id()
+    if text:
+        # The time is the database's, as every other stamp on the inspection.
+        cur.execute(
+            """
+            UPDATE erp.lot_inspections
+               SET item_remarks = item_remarks
+                       || jsonb_build_object(%s::text, %s::jsonb || jsonb_build_object('at', NOW())),
+                   updated_by = %s
+             WHERE id = %s
+            RETURNING item_remarks
+            """,
+            (
+                key,
+                psycopg2.extras.Json(
+                    {"text": text, "by": user_id, "byName": _identity(cur)["name"]}
+                ),
+                user_id,
+                inspection["id"],
+            ),
+        )
+    else:
+        cur.execute(
+            "UPDATE erp.lot_inspections SET item_remarks = item_remarks - %s::text, "
+            "updated_by = %s WHERE id = %s RETURNING item_remarks",
+            (key, user_id, inspection["id"]),
+        )
+    saved = cur.fetchone()
+
+    items, removed = merge_checklist(
+        rows, _load_checks(cur, inspection["id"]), inspection["baseline"]
+    )
+    attach_remarks(saved, items, removed)
+    summary = summarize(items, removed)
+    return build_response(
+        True,
+        {
+            "key": key,
+            "remark": next(i["remark"] for i in items if i["key"] == key),
+            "summary": summary,
+            "stage": stage(inspection["status"], summary),
+        },
+        "Remark saved." if text else "Remark removed.",
+    )
+
+
 @rpc_method("saveInspectionRemarks", mutation=True)
 @database.transactional
 def save_inspection_remarks(conn, cur, row_idx, remarks, flag_for_admin=False):
@@ -1083,15 +1213,20 @@ def set_inspection_review(conn, cur, row_idx, needs_review, remarks=""):
     """Tick or untick "Needs admin review", saving the remarks with it.
 
     Ticking asks an admin to look at the lot, and needs remarks saying what
-    to look at; the admin can then clear the lot however much of it is
-    ticked, or send it back. Unticking takes the request back. The checklist
-    is left as it is either way."""
+    to look at -- these, or a remark on an item; the admin can then clear
+    the lot however much of it is ticked, or send it back. Unticking takes
+    the request back. The checklist is left as it is either way."""
     lot = _load_lot(cur, row_idx, for_update=True)
     remarks = _text(remarks)[:MAX_REMARKS]
     needs_review = bool(needs_review)
-    if needs_review and not remarks:
+    if (
+        needs_review
+        and not remarks
+        and not _item_remarks(_load_inspection(cur, lot["id"]))
+    ):
         raise ValueError(
-            "Write what the admin should look at before asking for a review."
+            "Write what the admin should look at, in Remarks or on an item, "
+            "before asking for a review."
         )
 
     rows = sheet_rows(lot["custom_components"], lot["components_consumed"])
@@ -1130,6 +1265,7 @@ def set_inspection_review(conn, cur, row_idx, needs_review, remarks=""):
     items, removed = merge_checklist(
         rows, _load_checks(cur, inspection["id"]), inspection["baseline"]
     )
+    attach_remarks(inspection, items, removed)
     summary = summarize(items, removed)
     return build_response(
         True,
@@ -1202,6 +1338,7 @@ def clear_inspection(conn, cur, row_idx, acknowledge_token=None):
     items, removed = merge_checklist(
         rows, _load_checks(cur, inspection["id"]), inspection["baseline"]
     )
+    attach_remarks(inspection, items, removed)
 
     # What clearing now would accept. Revised and new rows are already in
     # the sheet's differences; the rest of the unticked ones only an admin
@@ -1210,8 +1347,14 @@ def clear_inspection(conn, cur, row_idx, acknowledge_token=None):
     unticked = [i for i in items if i["state"] == "pending"]
     if admin:
         pending += [
-            dict(
-                _row_label(i), kind="unchecked", qty=i["qty"], narration=i["narration"]
+            _with_remark(
+                dict(
+                    _row_label(i),
+                    kind="unchecked",
+                    qty=i["qty"],
+                    narration=i["narration"],
+                ),
+                i,
             )
             for i in unticked
         ]

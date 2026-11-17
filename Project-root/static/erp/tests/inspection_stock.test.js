@@ -74,13 +74,14 @@ beforeAll(load);
 const rowOf = key => [...document.querySelectorAll('#inspectionDetailBody [data-insp-row]')]
   .find(r => r.dataset.inspRow === key);
 const headers = () => [...document.querySelectorAll('#inspectionDetailBody thead th')].map(th => th.textContent);
-const stockCell = key => [...rowOf(key).querySelectorAll('td')].pop();
+// The In stock cell is the last but one: Remarks comes after it.
+const stockCell = key => [...rowOf(key).querySelectorAll('td')].at(-2);
 const text = el => el.textContent.replace(/\s+/g, ' ').trim();
 
 describe('the In stock column', () => {
   test('what is on hand and where, or a dash when neither ledger knows the item', async () => {
     await open([SEAT, FRAME, STICKER]);
-    expect(headers()).toEqual(['Ticked', 'Item', 'Size', 'Colour', 'Specification', 'Qty', 'In stock']);
+    expect(headers()).toEqual(['Ticked', 'Item', 'Size', 'Colour', 'Specification', 'Qty', 'In stock', 'Remarks']);
     expect(text(stockCell('seat'))).toBe('240 PcsStock');
     expect(text(stockCell('frame|red'))).toBe('30 PcsPool · Red');
     expect(text(stockCell('sticker'))).toBe('—');
@@ -102,7 +103,7 @@ describe('the In stock column', () => {
 
   test('no column on a sheet the records know nothing of', async () => {
     await open([STICKER]);
-    expect(headers()).toEqual(['Ticked', 'Item', 'Size', 'Colour', 'Specification', 'Qty']);
+    expect(headers()).toEqual(['Ticked', 'Item', 'Size', 'Colour', 'Specification', 'Qty', 'Remarks']);
   });
 
   test('a tick keeps the figure the checklist loaded', async () => {
