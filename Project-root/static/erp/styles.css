@@ -3080,6 +3080,19 @@
     color: #fca5a5 !important;
   }
 
+  /* Low Stock Warnings (above the Stock list): one tile per understocked
+     item, in a box three rows tall that scrolls. By November 2026 that was
+     368 tiles -- 2,951 of the Stock tab's 3,449 elements -- and every visit
+     to the tab laid all of them out to show nine: ~300 ms of the click at an
+     office PC's speed (lab, 2026-11-14). A tile outside the box's window is
+     now left unbuilt until it is scrolled to; it keeps its place at the
+     height below (a tile's own), and its real height once it has been seen.
+     Nothing else changes: the text is still found by Ctrl+F. */
+  .low-stock-tile {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 57px;
+  }
+
   /* ─────────────────────────────────────────────────────────────────────
      BADGES & LABELS
      ───────────────────────────────────────────────────────────────────── */

@@ -10,6 +10,7 @@ Handles:
 from __future__ import annotations
 
 import datetime
+import gc
 import json
 import logging
 import os
@@ -414,6 +415,14 @@ def perform_full_backup(
         except Exception as exc:
             mirror_error = str(exc)
             logger.error("[backup_service] GAS sheet mirror failed: %s", exc)
+
+    # The Google clients the two steps above built are held together by
+    # reference cycles, about 19 MB each, so only the cycle collector frees
+    # them -- and this runs inside a web worker, where Python 3.14's
+    # collector left such garbage in place until the next restart (see
+    # sheets_client.reuse_resources). Once per run, now that they are done
+    # with.
+    gc.collect()
 
     # Build final status summary.
     #

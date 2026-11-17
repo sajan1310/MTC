@@ -2947,10 +2947,56 @@ const App = {
       // shell whose data the server refuses.
       if (!this.isValidTab(id)) return undefined;
 
-      $$('.tab-content').forEach(tab => {
-        tab.style.display = tab.id === id ? 'block' : 'none';
-      });
+      // The address first, while the page is still as the last frame drew
+      // it. history.pushState records the scroll position of the entry
+      // being left, and for that the browser brings layout up to date on the
+      // spot. After the panels below had changed places that meant laying
+      // out the incoming panel inside this click, then again once its own
+      // module had redrawn it: 60-170 ms of a tab switch at an office PC's
+      // speed (lab, 2026-11-14), the largest single part of its delay.
+      // Asked for here, nothing has changed yet and it costs nothing.
+      this.current = id;
+      this.syncHash(id, !!(opts && opts.replace));
+      try { localStorage.setItem(this.LAST_TAB_KEY, id); } catch (e) { /* storage inaccessible */ }
 
+      this.showPanel(id);
+
+      if (typeof App.Dashboard !== 'undefined') App.Dashboard.stopAutoRefresh();
+
+      // A click on the sidebar shows the tab first and fills it a moment
+      // later. Filling it is the slow part -- a ledger redrawn, its vendor
+      // boxes rebuilt, the Dashboard's charts -- and done inside the click it
+      // held the screen still for 300-600 ms before the tab even changed
+      // (lab, 2026-11-14, an office PC's speed). The highlight and the panel
+      // now appear at once, as the panel was last left, and its own load
+      // starts as soon as that has been drawn.
+      //
+      // Only for the click: code that opens a tab and carries straight on
+      // (a Dashboard tile opening a form, a link into another ledger) gets
+      // the load started before showTab returns, as it always has. And only
+      // if the tab is still the one on screen by then -- somebody clicking
+      // through the sidebar does not start the loads of tabs they have
+      // already left, nor the Dashboard's refresh timer behind another tab.
+      if (opts && opts.paintFirst) {
+        return this.afterPaint().then(() => (this.current === id ? this._loadTab(id) : undefined));
+      }
+      return this._loadTab(id);
+    },
+
+    // The sidebar highlight and the panel on screen, and nothing else: no
+    // address, no load. showTab does this as part of every switch. The
+    // page's start-up also does it once on its own, before the page is first
+    // shown, so a reload on Stock opens on Stock: the markup ships with the
+    // Dashboard's panel showing, and that panel would otherwise be on screen
+    // for the first frame.
+    showPanel(id) {
+      // The sidebar before the panels, for the same reason showTab writes
+      // the address first: the button just clicked has the focus, and
+      // changing a focused element's tabindex makes the browser work out on
+      // the spot whether it can still hold it -- with the panels already
+      // swapped, that was a layout of the incoming panel inside the click
+      // (80 ms on Purchase Orders; lab, 2026-11-14).
+      //
       // aria-selected and roving tabindex, not just the visual class
       // (A11Y-001). The markup ships aria-selected="true" on the Dashboard
       // button and nothing ever changed it, so a screen reader announced
@@ -2970,12 +3016,36 @@ const App = {
         btn.setAttribute('tabindex', selected ? '0' : '-1');
       });
 
-      this.current = id;
-      this.syncHash(id, !!(opts && opts.replace));
-      try { localStorage.setItem(this.LAST_TAB_KEY, id); } catch (e) { /* storage inaccessible */ }
+      $$('.tab-content').forEach(tab => {
+        tab.style.display = tab.id === id ? 'block' : 'none';
+      });
+    },
 
-      if (typeof App.Dashboard !== 'undefined') App.Dashboard.stopAutoRefresh();
+    // Resolves once the browser has drawn what is on the page now: the next
+    // animation frame, and then the task after it, by which time that frame
+    // has been laid out and painted.
+    //
+    // A tab in the background runs no animation frames until it is shown,
+    // and nothing here may wait for that, so a hidden page does not wait at
+    // all. The one-second timer is only for a frame that never comes for
+    // some other reason. It used to be 100 ms, counted from the click: at an
+    // office PC's speed the click's own work took longer than that, so the
+    // timer was already due when the click finished and ran ahead of the
+    // frame -- the tab was filled before it was drawn after all, and a
+    // Purchase Orders click took twice as long as before (lab, 2026-11-15).
+    afterPaint() {
+      return new Promise(resolve => {
+        const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+        if (hidden || typeof requestAnimationFrame !== 'function') {
+          setTimeout(resolve, 0);
+          return;
+        }
+        requestAnimationFrame(() => setTimeout(resolve, 0));
+        setTimeout(resolve, 1000);
+      });
+    },
 
+    _loadTab(id) {
       // Only the tab being switched to fetches its data -- each module loads
       // lazily right here, on its own visit, rather than every module eagerly
       // fetching on every page load regardless of which tab is shown (see
@@ -3206,7 +3276,7 @@ function bindGlobalEvents() {
     if (!btn) return;
     switch (btn.dataset.action) {
       case 'show-tab':
-        App.Navigation.showTab(btn.dataset.tab);
+        App.Navigation.showTab(btn.dataset.tab, { paintFirst: true });
         break;
       // Dashboard delegates. These replace inline onclick handlers that
       // interpolated an id straight into a JS string literal
@@ -3342,6 +3412,14 @@ function bindGlobalEvents() {
 // never in Script_Core.html).
 document.addEventListener('DOMContentLoaded', async () => {
   const container = document.getElementById('app-container');
+  // The panel the page is about to open on, in place before the page is
+  // shown. The page now appears whole rather than through a fade (see the
+  // rule beside #app-container in index.html), and the fade was what hid
+  // the Dashboard's panel during the frame before Init switched to the tab
+  // last open. Init's showTab below still does the rest: the address, the
+  // remembered tab and the tab's own load.
+  const opening = App.Navigation.resolveInitialTab();
+  if (opening) App.Navigation.showPanel(opening);
   if (container) container.classList.add('loaded');
 
   // Before anything that can fail: a Google-only account has a limited
@@ -3490,14 +3568,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // One frame for the browser to paint the page it has just been allowed to
   // show (`loaded`, above) before Init's start-up work, which otherwise ran
   // first: the dashboard's first paint -- LCP -- waited for all of it.
-  // Measured Oct 2026: LCP 1,788 -> 1,364 ms. Capped at 100 ms, because a
-  // tab opened in the background runs no animation frames until it is
-  // shown, and Init must not wait for that.
-  await new Promise(resolve => {
-    const go = () => setTimeout(resolve, 0);
-    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(go);
-    setTimeout(resolve, 100);
-  });
+  // Measured Oct 2026: LCP 1,788 -> 1,364 ms. A page opened in the
+  // background gets no frames and does not wait (see afterPaint).
+  await App.Navigation.afterPaint();
   await App.Init(App.Navigation.resolveInitialTab(), { replace: true });
 
   // Register the shell service worker (Phase 5: PWA installability).

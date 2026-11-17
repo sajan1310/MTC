@@ -284,3 +284,149 @@ def test_a_custom_role_shows_money_as_its_grant_says(client_as, level, money, en
 def test_prices_alone_is_not_a_page(client_as):
     html = _desktop(client_as(None, {"financials": "editor"}))
     assert "No pages have been assigned to your account yet" in html
+
+
+# -- The first screen's figures, asked for before the page has been read ---
+#
+# The Dashboard (desktop) and Home (phone, tablet) send the request for their
+# figures inline, early in the page, as the same POST api.js sends, so it no
+# longer waits for the scripts that used to send it; api.js takes the answer
+# (static/erp/tests/first_screen_requests.test.js covers how). Only an account
+# that will be shown those figures may be handed a page that asks for them.
+
+
+def _head(html: str) -> str:
+    return html.split("</head>", 1)[0]
+
+
+def _phone(client) -> str:
+    response = client.get("/erp/mobile")
+    assert response.status_code == 200
+    return response.get_data(as_text=True)
+
+
+def _early_methods(html: str) -> list[str]:
+    """The methods a page sends for before its scripts load, in order."""
+    match = re.search(
+        r"<script>(?:(?!</script>).)*?__erpEarlyCalls(?:(?!</script>).)*?</script>",
+        html,
+        re.S,
+    )
+    if not match:
+        return []
+    listed = re.search(r"\[([^\]]*)\]\.forEach", match.group(0))
+    return re.findall(r"'(\w+)'", listed.group(1)) if listed else []
+
+
+def _early_at(html: str) -> int:
+    return html.index("window.__erpEarlyCalls = ")
+
+
+@pytest.mark.parametrize("role", ["admin", "super_admin"])
+def test_an_admins_page_asks_for_its_figures_before_its_scripts(client_as, role):
+    client = client_as(role)
+
+    desktop = _desktop(client)
+    assert _early_methods(desktop) == ["getDashboardData"]
+    # In the <head>, after the stylesheets: the desktop page shows nothing
+    # until all of its scripts have run.
+    assert _early_at(desktop) < desktop.index("</head>")
+    assert desktop.rindex('rel="stylesheet"', 0, _early_at(desktop)) > 0
+    assert _early_at(desktop) < desktop.index("/static/erp/api.js")
+
+    phone = _phone(client)
+    assert _early_methods(phone) == ["getMobileDashboard", "getDashboardData"]
+    # Straight after the top bar: in the <head> the browser drew a frame or
+    # two before any of the page existed, and the top bar came a frame later.
+    assert phone.index("</header>") < _early_at(phone)
+    assert _early_at(phone) < phone.index('<main id="mapp-content"')
+    assert _early_at(phone) < phone.index("/static/erp/api.js")
+
+
+def test_an_account_without_the_figures_asks_for_none(client_as):
+    """A `user` has the Dashboard page but not its figures: the server
+    would refuse the request, on every load."""
+    client = client_as("user")
+
+    assert _early_methods(_desktop(client)) == []
+    assert _early_methods(_phone(client)) == []
+
+
+def test_a_custom_role_asks_for_none(client_as):
+    """No Dashboard in its sidebar, so nothing would ever use the answer."""
+    client = client_as(None, {"stockTab": "viewer", "financials": "viewer"})
+
+    assert _early_methods(_desktop(client)) == []
+    assert _early_methods(_phone(client)) == []
+
+
+@pytest.mark.parametrize("role", ["admin", "user"])
+def test_api_js_is_loaded_once_where_it_always_was(client_as, role):
+    """Twice would define Api twice. In the <head> it held the phone's first
+    paint back by 50-150 ms, which is why the early request does not need it."""
+    client = client_as(role)
+
+    for html, followed_by in (
+        (_desktop(client), "/static/erp/print-templates.js"),
+        (_phone(client), "/static/erp/offline-cache.js"),
+    ):
+        tags = re.findall(r'<script src="/static/erp/api\.js[^"]*"', html)
+        assert len(tags) == 1
+        assert tags[0] not in _head(html)
+        assert html.index(tags[0]) < html.index(followed_by)
+        # After the token it sends with every request.
+        assert html.index('name="csrf-token"') < html.index(tags[0])
+
+
+# -- The faces that draw "₹" -------------------------------------------------
+#
+# The rupee sign is in the latin-ext font files, which the browser fetches
+# only when the first amount is laid out, and then lays the page out again in
+# them. The desktop page fetches them while it is still hidden, for an account
+# shown amounts (it took 50-200 ms of blocking off start-up). On the phone and
+# tablet that made start-up longer for no gain once the app was usable (lab,
+# 2026-11-17), so that page leaves them to load when first needed.
+
+
+def _rupee_faces(html: str) -> list[str]:
+    match = re.search(
+        r"<script>(?:(?!</script>).)*?document\.fonts\.load(?:(?!</script>).)*?</script>",
+        html,
+        re.S,
+    )
+    return re.findall(r"'(\d00 1em \w+)'", match.group(0)) if match else []
+
+
+def _families(faces: list[str]) -> set[str]:
+    return {face.rsplit(" ", 1)[1] for face in faces}
+
+
+def test_a_desktop_shown_amounts_fetches_the_rupee_faces(client_as):
+    client = client_as("admin")
+
+    assert _families(_rupee_faces(_desktop(client))) == {"Inter", "Outfit"}
+    assert _rupee_faces(_phone(client)) == []
+
+
+def test_an_account_shown_no_amounts_does_not(client_as):
+    client = client_as("user")
+
+    assert _rupee_faces(_desktop(client)) == []
+    assert _rupee_faces(_phone(client)) == []
+
+
+def test_a_custom_role_granted_amounts_does(client_as):
+    client = client_as(None, {"billLedger": "editor", "financials": "viewer"})
+
+    assert _families(_rupee_faces(_desktop(client))) == {"Inter", "Outfit"}
+    assert _rupee_faces(_phone(client)) == []
+
+
+def test_no_page_preloads_them(client_as):
+    """A font preload in the <head> held the tablet's first paint back by up
+    to 300 ms; the phone page preloads no fonts at all."""
+    client = client_as("admin")
+
+    desktop, phone = _desktop(client), _phone(client)
+    assert "latin-ext" not in "".join(re.findall(r'<link rel="preload"[^>]*>', desktop))
+    assert 'rel="preload"' not in _head(phone)

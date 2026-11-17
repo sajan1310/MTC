@@ -68,6 +68,70 @@ const Api = (() => {
   function _invalidateCache() {
     _cache.clear();
     _inflight.clear();
+    // A request the page sent early (below) is a read like any other, and
+    // after a write it may be out of date.
+    const early = _earlyCalls();
+    if (early) Object.keys(early).forEach(method => { delete early[method]; });
+  }
+
+  // ── Requests the page sent before this file had loaded ─────────────────
+  // The first screen's figures are the slowest thing a page waits for, and
+  // the request for them used to go out only once the page and its scripts
+  // had been read and run: about a second in on an office PC or a budget
+  // phone (lab, 2026-11-14). The page now sends it itself, early -- from the
+  // end of the <head> in templates/erp/index.html, straight after the top
+  // bar in mobile.html -- as the same POST _request sends, and leaves it in
+  // window.__erpEarlyCalls[method] = { at, response, doneAt }.
+  //
+  // The first Api.call for that method, with no arguments, takes it instead
+  // of sending another, on the read cache's own terms: still in flight, or
+  // answered within CACHE_TTL_MS. Only a plain JSON answer is used as it
+  // stands. Anything else -- an expired session, an error page, no
+  // connection -- is asked again through _request, which knows what to do
+  // with each, so a page whose early request failed behaves exactly as one
+  // that never sent it. And it is never waited for past REQUEST_TIMEOUT_MS
+  // from when it was sent, the most _request itself would wait.
+  //
+  // Not loaded in a page (mobile-sw.js imports this file): there are none.
+  function _earlyCalls() {
+    return (typeof window !== 'undefined' && window.__erpEarlyCalls) || null;
+  }
+
+  function _takeEarly(method, args) {
+    if (args && args.length) return null;
+    const early = _earlyCalls();
+    const call = early && early[method];
+    if (!call || !call.response || typeof call.response.then !== 'function') return null;
+    delete early[method]; // a response can be read once
+    if (call.doneAt && Date.now() - call.doneAt >= CACHE_TTL_MS) return null;
+    return call;
+  }
+
+  const TOO_LATE = {};
+
+  function _fromEarly(call, method, args) {
+    const askAgain = () => _request(method, args, null);
+    const sentAt = Number(call.at) || Date.now();
+    const left = Math.max(0, REQUEST_TIMEOUT_MS - (Date.now() - sentAt));
+    let timer = null;
+    const tooLate = new Promise(resolve => { timer = setTimeout(() => resolve(TOO_LATE), left); });
+    return Promise.race([call.response.then(res => res, () => null), tooLate]).then(res => {
+      clearTimeout(timer);
+      if (res === TOO_LATE) throw _timeoutError();
+      if (!res) return askAgain();
+      const type = res.headers?.get?.('content-type') || '';
+      if (!res.ok || !type.includes('json')) return askAgain();
+      return res.json().catch(askAgain);
+    });
+  }
+
+  function _timeoutError() {
+    const err = new Error(
+      `The server did not respond within ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s. It may still be working — check before retrying.`
+    );
+    err.isNetworkError = true;
+    err.isTimeout = true;
+    return err;
   }
 
   // Let the dashboard (and any other listener) know that server state
@@ -89,7 +153,8 @@ const Api = (() => {
     const pending = _inflight.get(key);
     if (pending) return pending;
 
-    const p = _request(method, args, null).then(
+    const early = _takeEarly(method, args);
+    const p = (early ? _fromEarly(early, method, args) : _request(method, args, null)).then(
       value => {
         // Only cache a SUCCESSFUL envelope (API-001).
         //
@@ -212,14 +277,10 @@ const Api = (() => {
       // CORS, a dropped connection before any response arrived, or our own
       // abort above. This is the ONLY case that means "still offline, retry
       // later"; see isNetworkError below.
-      const aborted = networkErr && networkErr.name === 'AbortError';
-      const err = new Error(
-        aborted
-          ? `The server did not respond within ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s. It may still be working — check before retrying.`
-          : (networkErr && networkErr.message) || 'Network request failed.'
-      );
+      if (networkErr && networkErr.name === 'AbortError') throw _timeoutError();
+      const err = new Error((networkErr && networkErr.message) || 'Network request failed.');
       err.isNetworkError = true;
-      err.isTimeout = !!aborted;
+      err.isTimeout = false;
       throw err;
     } finally {
       if (timer) clearTimeout(timer);

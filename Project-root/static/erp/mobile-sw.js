@@ -255,7 +255,14 @@
 // v108: "Now producing" and the allocation grid read a lot's colours the way
 // the Warehouse Pool credits them: a Black rim stays on a Red-Black frame,
 // in a lot of one frame colour or several. mobile.js carries it.
-const CACHE_NAME = 'erp-mobile-shell-v108';
+// v109: Home keeps the room its figures and dashboard took last time, so
+// "Recent activity" no longer jumps down a tablet's screen when they arrive,
+// and asks for both together; a search box waits for a longer pause on a
+// device where redrawing its list is slow, so typing is not held up by it;
+// Api.call takes the answers to the requests the page sent before its
+// scripts loaded. mobile.js and api.js carry it. (The page itself, never
+// cached, sends Home's two requests straight after its top bar.)
+const CACHE_NAME = 'erp-mobile-shell-v109';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

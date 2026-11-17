@@ -575,7 +575,14 @@
 // Produce moves the mudguard and rim rows that follow it, and their
 // Warehouse Pool lines, as on a new lot and on the phone. production.js is
 // precached.
-const CACHE_NAME = 'erp-shell-v120';
+// v121: a click on the sidebar shows the tab at once and fills it straight
+// after, instead of holding the screen until it was filled; the Stock tab no
+// longer lays out every Low Stock tile to show nine; Api.call takes the
+// answer to a request the page sent before its scripts loaded. core.js,
+// stock.js, styles.css and api.js are precached. (The page itself, which is
+// never cached, now sends the Dashboard's request from its <head> and shows
+// without a fade.)
+const CACHE_NAME = 'erp-shell-v121';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

@@ -443,6 +443,22 @@ MApp.Util = {
     };
   },
 
+  // Resolves once the browser has drawn what is on the page now: the task
+  // after the next animation frame. A page in the background gets no
+  // frames, so it does not wait; the one-second timer covers a frame that
+  // never comes for any other reason.
+  afterPaint() {
+    return new Promise(resolve => {
+      const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+      if (hidden || typeof requestAnimationFrame !== 'function') {
+        setTimeout(resolve, 0);
+        return;
+      }
+      requestAnimationFrame(() => setTimeout(resolve, 0));
+      setTimeout(resolve, 1000);
+    });
+  },
+
   // Renders `count` skeleton cards into a container while a load() is in flight.
   renderSkeleton(container, count) {
     if (!container) return;
@@ -1299,6 +1315,46 @@ MApp.Paging.init();
 MApp.SearchBox = {
   DEBOUNCE_MS: 120,
 
+  // ── Waiting longer where the redraw is slow ─────────────────────────
+  // A list is redrawn once typing has paused for DEBOUNCE_MS. Where the
+  // redraw itself takes longer than that -- fifty lot cards on a budget
+  // phone or tablet: 400-550 ms (lab, 4x CPU, 2026-11-14) -- it started in
+  // the gap after every letter and the next letter then waited for it to
+  // finish: letters appeared in the box up to 0.7 s after they were typed.
+  //
+  // So the pause a box waits for is the time its own last redraw took on
+  // this device, when that is longer, and never more than MAX_DEBOUNCE_MS.
+  // A device that redraws inside 120 ms behaves exactly as it did.
+  MAX_DEBOUNCE_MS: 350,
+  _cost: {},
+
+  waitFor(inputId) {
+    const cost = Number(this._cost[inputId]) || 0;
+    return Math.min(this.MAX_DEBOUNCE_MS, Math.max(this.DEBOUNCE_MS, Math.round(cost)));
+  },
+
+  _now() {
+    return (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : Date.now();
+  },
+
+  // Runs one redraw of this box's list and notes how long it took. A search
+  // is timed here; a list also draws itself through this when it first
+  // loads -- the same fifty cards -- so the box already knows what a redraw
+  // costs on this device when the first letter is typed.
+  timed(inputId, redraw) {
+    const started = this._now();
+    redraw();
+    this._timeRedraw(inputId, started);
+  },
+
+  // To the end of the frame the redraw appears in, not only the end of the
+  // handler: laying the cards out and painting them is most of the time.
+  _timeRedraw(inputId, started) {
+    const done = () => { this._cost[inputId] = this._now() - started; };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(done, 0));
+    else done();
+  },
+
   // Idempotent: sheets live permanently in the DOM and their open() runs
   // again on every visit, so attach() must be safe to call repeatedly.
   attach(inputId, onQuery) {
@@ -1361,10 +1417,14 @@ MApp.SearchBox = {
       }
     }
 
-    const debounced = MApp.Util.debounce(value => this._fire(inputId, value), this.DEBOUNCE_MS);
+    // What was in the box when the key was pressed, after a pause as long
+    // as this box needs (waitFor).
+    let pending = null;
     input.addEventListener('input', () => {
       this._syncClear(input);
-      debounced(input.value);
+      const value = input.value;
+      clearTimeout(pending);
+      pending = setTimeout(() => this._fire(inputId, value), this.waitFor(inputId));
     });
     // Enter should apply what is typed now, not wait out the debounce.
     input.addEventListener('keydown', e => {
@@ -1382,7 +1442,8 @@ MApp.SearchBox = {
 
   _fire(inputId, value) {
     const handler = this._handlers[inputId];
-    if (handler) handler(value);
+    if (!handler) return;
+    this.timed(inputId, () => handler(value));
   },
 
   _syncClear(input) {
@@ -1623,6 +1684,8 @@ MApp.Shell = {
   showTab(tab, opts) {
     if (!this.allowed(tab)) return;
     const changed = tab !== this.current;
+    // The screen the app opens on, as opposed to one switched to.
+    const opening = this.current === null;
     this.current = tab;
     this.syncHash(tab, !!(opts && opts.replace));
     try { localStorage.setItem(this.LAST_TAB_KEY, tab); } catch (e) { /* storage inaccessible */ }
@@ -1644,8 +1707,16 @@ MApp.Shell = {
       MApp.Access.apply(content);
       content.scrollTop = 0;
       if (typeof MApp.PullToRefresh !== 'undefined') MApp.PullToRefresh.attach(content);
-      void content.offsetWidth; // force reflow so the enter animation replays every switch
-      content.classList.add('mapp-screen-enter');
+      // A screen switched to fades in. The one the app opens on appears
+      // whole: a fade's first frame is drawn at opacity 0, which the
+      // browser does not count as the screen appearing, so the greeting on
+      // screen at about a second was counted (Largest Contentful Paint) only
+      // when something repainted it, at 2.2-2.4 s (lab, phone, 2026-11-15).
+      // It also spares start-up the layout the replay below forces.
+      if (!opening) {
+        void content.offsetWidth; // force reflow so the enter animation replays every switch
+        content.classList.add('mapp-screen-enter');
+      }
     }
 
     if (changed) MApp.Haptics.light();
@@ -3548,6 +3619,11 @@ MApp.Home = {
     const statsEl = document.getElementById('home-stats');
     const activityEl = document.getElementById('home-activity');
 
+    // The figures and the dashboard keep the room they took last time, so
+    // what is below them does not jump when they fill in (see _holdHeight).
+    this._holdHeight('home-stats');
+    this._holdHeight('home-dashboard', '100vh');
+
     // The last figures this phone was given, on screen while the server
     // answers. Home used to stay skeletons until it did -- and on a cold
     // morning (2026-11-06) the server took 66 and 117 s and then failed, so
@@ -3556,6 +3632,16 @@ MApp.Home = {
     // never wait for the stored ones.
     const gen = (this._mountGen = (this._mountGen || 0) + 1);
     const lastShown = this._paintLastFigures(gen);
+
+    // The full dashboard is asked for together with the small figures, not
+    // after them. It is drawn after them, as before -- the order on screen
+    // is unchanged -- but the two waits now overlap instead of adding up:
+    // the dashboard's numbers arrived a whole request later than they had
+    // to (0.7 s + 1.0 s in the lab, 2026-11-14). The empty catch only keeps
+    // a failure quiet if nothing below gets as far as awaiting it;
+    // _loadFullData still sees the failure and says so.
+    const fullRequest = MApp.Api.call('getDashboardData');
+    fullRequest.catch(() => {});
 
     try {
       const res = await MApp.Api.callCached('getMobileDashboard');
@@ -3580,7 +3666,15 @@ MApp.Home = {
       // Offline it simply never arrives, and _markFullBlocksUnavailable
       // says so in place of the dashboard rather than leaving skeletons
       // pulsing at somebody forever.
-      await this._loadFullData();
+      //
+      // In a frame of its own, once the figures above are on screen. When
+      // both answers are already in hand -- the read cache on a quick return
+      // to Home, the page's own early requests at start-up -- the dashboard
+      // (5,800 px of it on a phone) was otherwise laid out in the same frame
+      // as the tap or the start-up: a tap on Home took 190-210 ms and the
+      // tablet's start-up frame 370-600 ms (lab, 2026-11-17).
+      await MApp.Util.afterPaint();
+      await this._loadFullData(fullRequest);
     } catch (err) {
       await this._liveFiguresFailed(gen, lastShown, err && err.message, statsEl, activityEl);
     }
@@ -3616,6 +3710,9 @@ MApp.Home = {
     const shown = await Promise.race([lastShown, new Promise(r => setTimeout(() => r(false), 1000))]);
     this._doneGen = gen;
     if (gen !== this._mountGen) return; // a newer visit to Home owns the screen
+    // Nothing more is coming to fill the room that was being held.
+    this._releaseHeight('home-stats', false);
+    this._releaseHeight('home-dashboard', false);
     if (!shown) {
       MApp.Util.renderError(statsEl, message, () => this.mount());
       if (activityEl) activityEl.innerHTML = '';
@@ -3657,20 +3754,89 @@ MApp.Home = {
   // Fills in the blocks that were rendered as placeholders. Failing here
   // is not failing the screen: the cheap tiles and the activity list are
   // already up, and offline this request simply will not arrive.
-  async _loadFullData() {
+  //
+  // `request` is the one mount() already sent; the Retry on a failed
+  // dashboard calls this with nothing and sends its own.
+  async _loadFullData(request) {
     try {
-      const res = await MApp.Api.call('getDashboardData');
+      const res = await (request || MApp.Api.call('getDashboardData'));
       if (!res || !res.success) { this._markFullBlocksUnavailable(); return; }
       this._full = res.data || {};
       const merged = { ...MApp.State.lastDashboard, ...this._full };
       this.renderBlocks(merged);
+      // The chosen figures are complete now, charts included.
+      this._releaseHeight('home-stats');
       MApp.Dashboard.render(merged);
     } catch (err) {
       this._markFullBlocksUnavailable();
     }
   },
 
+  // ── Keeping the page still while it fills ──────────────────────────
+  // The dashboard is drawn into the middle of this screen a moment after
+  // the screen itself, and it is long. On a phone what it pushed down was
+  // already off the bottom; on a tablet "Recent activity" sat in plain
+  // view under two placeholder cards and was thrown off the screen when
+  // the dashboard arrived -- a layout shift of 0.33, where anything over
+  // 0.25 is rated poor (lab, 800x1280, 2026-11-14).
+  //
+  // So a block that fills in late is held open at the height it had the
+  // last time it was drawn on a screen this wide, and what is below it
+  // starts where it will end up. The very first time there is no height
+  // to go by: the dashboard is then held to one screenful, which keeps
+  // everything after it below the fold until it has arrived.
+  HEIGHTS_KEY: 'maharaja-erp-mobile-home-heights',
+
+  _heights() {
+    try { return JSON.parse(localStorage.getItem(this.HEIGHTS_KEY)) || {}; } catch { return {}; }
+  },
+
+  // Which screen, and which way up it is held: the heights differ. Read
+  // from `screen`, not from the window -- asking a phone's window for its
+  // size makes it lay the page out on the spot, in the middle of the tap
+  // that opened Home.
+  _heightKey(id) { return `${id}@${screen.width}x${screen.height}`; },
+
+  // `firstTime` is what to hold the block to before any height is known.
+  _holdHeight(id, firstTime) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const known = Number(this._heights()[this._heightKey(id)]) || 0;
+    const hold = known > 0 ? `${Math.round(known)}px` : (firstTime || '');
+    if (hold) el.style.minHeight = hold;
+  },
+
+  // The block has what it is going to have. `remember` is false when that
+  // is an error or nothing at all, which says nothing about its real size.
+  _releaseHeight(id, remember = true) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.style.minHeight = '';
+    if (!remember) return;
+    // Measured once the frame that shows it has been laid out and drawn --
+    // the task after the animation frame -- when reading a height costs
+    // nothing. Asked for here, the browser would lay the page out on the
+    // spot, and then again for the frame; asked for inside the animation
+    // frame, it lays it out there, inside a script, which then counts as a
+    // long task where the same work in the frame does not.
+    const measure = () => {
+      if (!el.isConnected) return;
+      const height = Math.round(el.getBoundingClientRect().height);
+      if (!(height > 0)) return;
+      const heights = this._heights();
+      const key = this._heightKey(id);
+      if (heights[key] === height) return;
+      heights[key] = height;
+      try { localStorage.setItem(this.HEIGHTS_KEY, JSON.stringify(heights)); } catch { /* storage inaccessible */ }
+    };
+    const afterTheFrame = () => setTimeout(measure, 0);
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(afterTheFrame);
+    else afterTheFrame();
+  },
+
   _markFullBlocksUnavailable() {
+    this._releaseHeight('home-stats', false);
+    this._releaseHeight('home-dashboard', false);
     document.querySelectorAll('[data-block-pending]').forEach(el => {
       const val = el.querySelector('.mb-stat-tile-value');
       if (val) val.textContent = '—';
@@ -4203,7 +4369,7 @@ MApp.Stock = {
       this._applyFilters();
 
       const restoreScroll = MApp.Util.keepScroll(listEl);
-      this.render();
+      MApp.SearchBox.timed('stock-search', () => this.render());
       restoreScroll();
     } catch (err) {
       if (stale()) return;
@@ -6174,7 +6340,7 @@ MApp.Production = {
       MApp.SearchBox.attach('production-search', term => this.onSearch(term));
 
       const restoreScroll = MApp.Util.keepScroll(listEl);
-      this.render();
+      MApp.SearchBox.timed('production-search', () => this.render());
       restoreScroll();
     } catch (err) {
       if (stale()) return;
@@ -18750,6 +18916,10 @@ MApp.Dashboard = {
             <span class="mb-card-number">${money(c.balanceDue)}</span>
           </div>
         </div>`, 'Nothing outstanding.')}`;
+
+    // Drawn: Home stops holding the room for it, and remembers how much
+    // it took for the next visit (MApp.Home._holdHeight).
+    MApp.Home._releaseHeight(this.CONTAINER_ID);
   }
 };
 
