@@ -35,27 +35,82 @@ def _credentials(scopes: list[str]):
     )
 
 
+# The resources a client is asked for on every call, in the order they nest:
+# sheets.spreadsheets().values() and drive.files().
+_REUSED_RESOURCES = ("spreadsheets", "values", "files")
+
+
+def reuse_resources(service):
+    """Make `service.spreadsheets()`, its `.values()` and `service.files()`
+    hand back one object each, built once, instead of a new one per call.
+
+    google-api-python-client builds a resource from the discovery document
+    every time it is asked for one: every method of it, each with its
+    documentation pretty-printed from the request and response schemas.
+    For Sheets that is 19 MB a time (measured, 2.126.0), held together by
+    reference cycles, so only the cycle collector can free it -- and every
+    helper below asks for `client.spreadsheets()` afresh. A backup makes
+    about 320 such calls.
+
+    Up to Python 3.13 the collector kept pace and a run cost the worker a few
+    hundred MB. Python 3.14's incremental collector paces itself by object
+    count, and this garbage is a few hundred objects holding megabytes of
+    text: on the server (3.14.4) it freed none of it -- 18.8 MB a call, the
+    same as with the collector switched off -- so each run left about 3 GB in
+    the gunicorn worker that ran it, on a 2.6 GB machine, until the next
+    restart (2026-11-08 to 2026-11-14: every afternoon of 20-60 s replies).
+
+    A resource is only a factory for requests and carries no state between
+    them, so sharing it changes nothing a caller can see. Built once, a call
+    costs 0.06 MB.
+    """
+
+    def _pin(owner, name):
+        make = getattr(owner, name, None)
+        if not callable(make):
+            return None
+        resource = make()
+        setattr(owner, name, lambda: resource)
+        return resource
+
+    for name in _REUSED_RESOURCES:
+        resource = _pin(service, name)
+        if resource is not None:
+            for child in _REUSED_RESOURCES:
+                _pin(resource, child)
+    return service
+
+
 def sheets_read_client():
     from googleapiclient.discovery import build
 
-    return build(
-        "sheets", "v4", credentials=_credentials(READ_SCOPES), cache_discovery=False
+    return reuse_resources(
+        build(
+            "sheets", "v4", credentials=_credentials(READ_SCOPES), cache_discovery=False
+        )
     )
 
 
 def sheets_write_client():
     from googleapiclient.discovery import build
 
-    return build(
-        "sheets", "v4", credentials=_credentials(WRITE_SCOPES), cache_discovery=False
+    return reuse_resources(
+        build(
+            "sheets",
+            "v4",
+            credentials=_credentials(WRITE_SCOPES),
+            cache_discovery=False,
+        )
     )
 
 
 def drive_client():
     from googleapiclient.discovery import build
 
-    return build(
-        "drive", "v3", credentials=_credentials(WRITE_SCOPES), cache_discovery=False
+    return reuse_resources(
+        build(
+            "drive", "v3", credentials=_credentials(WRITE_SCOPES), cache_discovery=False
+        )
     )
 
 

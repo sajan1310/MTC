@@ -515,3 +515,103 @@ def test_a_request_google_refuses_is_not_retried(monkeypatch):
         sheets_client.with_retry(call)
 
     assert len(calls) == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# One resource per client, not one per call (no network: the client is built
+# from the discovery document the library ships, and nothing is executed)
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _offline_client(api, version):
+    from google.auth.credentials import AnonymousCredentials
+    from googleapiclient.discovery import build
+
+    return build(
+        api, version, credentials=AnonymousCredentials(), cache_discovery=False
+    )
+
+
+def _a_write(client):
+    """The request write_values builds for one chunk, never sent."""
+    return (
+        client.spreadsheets()
+        .values()
+        .update(
+            spreadsheetId="sheet-id",
+            range="'items'!A1",
+            valueInputOption="RAW",
+            body={"values": [["a", 1], ["b", 2]]},
+        )
+    )
+
+
+def test_a_client_hands_back_the_same_resource_every_time():
+    sheets = sheets_client.reuse_resources(_offline_client("sheets", "v4"))
+    drive = sheets_client.reuse_resources(_offline_client("drive", "v3"))
+
+    assert sheets.spreadsheets() is sheets.spreadsheets()
+    assert sheets.spreadsheets().values() is sheets.spreadsheets().values()
+    assert drive.files() is drive.files()
+
+
+def test_a_reused_resource_builds_the_same_request():
+    """Sharing the resource must change nothing Google is sent."""
+    plain = _a_write(_offline_client("sheets", "v4"))
+    reused = _a_write(sheets_client.reuse_resources(_offline_client("sheets", "v4")))
+
+    assert reused.uri == plain.uri
+    assert reused.method == plain.method == "PUT"
+    assert reused.body == plain.body
+
+    plain_meta = (
+        _offline_client("sheets", "v4")
+        .spreadsheets()
+        .get(spreadsheetId="sheet-id", fields="sheets.properties")
+    )
+    reused_meta = (
+        sheets_client.reuse_resources(_offline_client("sheets", "v4"))
+        .spreadsheets()
+        .get(spreadsheetId="sheet-id", fields="sheets.properties")
+    )
+    assert reused_meta.uri == plain_meta.uri
+
+
+def test_a_backup_call_leaves_no_garbage_for_the_collector():
+    """2026-11-08 to 2026-11-14: every backup left about 3 GB in the web
+    worker that ran it. Each `client.spreadsheets()` builds the whole resource
+    again -- 19 MB held in reference cycles, some 300 objects -- and Python
+    3.14's collector freed none of it across a run's ~320 calls.
+
+    Counted with the collector off, so the answer does not depend on which
+    collector the interpreter has: what is left for it is what would pile up.
+    """
+    import gc
+
+    client = sheets_client.reuse_resources(_offline_client("sheets", "v4"))
+    _a_write(client)
+    gc.collect()
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        for _ in range(40):
+            _a_write(client)
+        left_for_the_collector = gc.collect()
+    finally:
+        if was_enabled:
+            gc.enable()
+
+    # Unshared, the same 40 calls leave about 12,000 objects.
+    assert left_for_the_collector < 400
+
+
+def test_a_stand_in_client_is_left_as_it_is():
+    """Tests and the dry run pass their own stand-ins; anything without these
+    resources is handed back untouched."""
+
+    class Bare:
+        pass
+
+    bare = Bare()
+    assert sheets_client.reuse_resources(bare) is bare
+    assert not hasattr(bare, "spreadsheets")
