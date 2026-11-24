@@ -41,12 +41,14 @@ from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 # config.py runs load_dotenv(override=True) the moment `app` is imported, and
 # again on every reload, so on a developer's machine the process environment
 # carries whatever .env does: a service-account key, and the ID of the
-# spreadsheet production mirrors into. A test that reaches
-# backup_service.perform_full_backup() without clearing them does a real
+# spreadsheet production mirrored into. While a backup still exported to
+# Google Sheets (until 2026-11-24), a test that reached
+# backup_service.perform_full_backup() without clearing them did a real
 # export -- of the developer's local database, into production's spreadsheet.
 # One did, on every local run of this suite from 2026-09-17 to 2026-09-30,
 # twenty times, and nothing ever failed: CI has no .env, so there the same
-# call is skipped.
+# call is skipped. The key still opens the remaining Google helpers
+# (scripts/migration/sheets_client.py), so the guard stays.
 LIVE_GOOGLE_SETTINGS = (
     "GOOGLE_APPLICATION_CREDENTIALS",
     "BACKUP_SPREADSHEET_ID",

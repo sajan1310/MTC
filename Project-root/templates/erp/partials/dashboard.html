@@ -48,8 +48,8 @@
       {% if current_user.is_admin %}
       <!-- triggerBackup is admin-gated server-side (backup_service.py) --
            hidden here to match, not as the actual enforcement. -->
-      <button id="dashboardBackupBtn" class="btn btn-sm btn-outline-primary fw-500 shadow-sm" onclick="App.Dashboard.triggerBackup()" title="Create Database Backup & Upload to Google Sheets">
-        <i class="bi bi-cloud-arrow-up me-1"></i> Backup to Sheets
+      <button id="dashboardBackupBtn" class="btn btn-sm btn-outline-primary fw-500 shadow-sm" onclick="App.Dashboard.triggerBackup()" title="Take and check a database snapshot now. The laptop copies the snapshots each day.">
+        <i class="bi bi-database-check me-1"></i> Back up now
       </button>
       <!-- Audit RPCs are admin-gated server-side (audit_service.py). -->
       <button id="dashboardAuditBtn" class="btn btn-sm btn-outline-dark fw-500 shadow-sm" onclick="App.Dashboard.openAudit()" title="Check everything and list what went wrong, most important first">
@@ -459,7 +459,7 @@
     <div class="modal-content shadow-lg border-0">
       <div class="modal-header bg-primary text-white border-0 py-3">
         <h5 class="modal-title fw-bold d-flex align-items-center" id="backupProgressModalTitle">
-          <i class="bi bi-cloud-arrow-up-fill me-2 fs-4"></i> Database & Google Sheets Backup
+          <i class="bi bi-database-check me-2 fs-4"></i> Database Backup
         </h5>
         <button type="button" class="btn-close btn-close-white" id="backupModalCloseBtn" data-bs-dismiss="modal" aria-label="Close" style="display: none;"></button>
       </div>
@@ -471,7 +471,7 @@
               <span class="visually-hidden">Backing up...</span>
             </div>
             <h6 id="backupProgressStep" class="fw-semibold text-dark mb-1">Initiating Database Backup...</h6>
-            <p id="backupProgressSubtext" class="small text-muted mb-0">Exporting PostgreSQL tables and syncing to Google Sheets...</p>
+            <p id="backupProgressSubtext" class="small text-muted mb-0">Taking a snapshot of the database and checking it...</p>
           </div>
 
           <div class="progress mb-3" style="height: 12px; border-radius: 6px; background-color: var(--bg-muted);">
@@ -484,7 +484,7 @@
           </div>
         </div>
 
-        <!-- Result View (Success / Partial / Error) -->
+        <!-- Result View (Success / Error) -->
         <div id="backupResultState" style="display: none;">
           <div class="text-center mb-3">
             <div id="backupResultIcon" class="mb-2">
@@ -511,9 +511,6 @@
         </div>
       </div>
       <div class="modal-footer bg-light border-0 py-2">
-        <a id="backupOpenSheetBtn" href="#" target="_blank" class="btn btn-success fw-bold shadow-sm" style="display: none;">
-          <i class="bi bi-file-earmark-spreadsheet me-1"></i> Open Google Sheet
-        </a>
         <button id="backupModalDoneBtn" type="button" class="btn btn-secondary fw-500" data-bs-dismiss="modal" style="display: none;">Close</button>
       </div>
     </div>

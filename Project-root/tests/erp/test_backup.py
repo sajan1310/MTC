@@ -4,7 +4,6 @@ import os
 import unittest
 from unittest.mock import MagicMock, patch
 
-import database
 from app.erp.services import backup_service
 
 
@@ -38,11 +37,7 @@ class TestBackupService(unittest.TestCase):
                     "timestamp": None,
                     "status": "NEVER",
                     "message": "No backup has been executed yet.",
-                    "spreadsheet_id": None,
-                    "spreadsheet_url": None,
                     "local_file": None,
-                    "mirror_status": None,
-                    "mirror_message": None,
                     "nightly_scheduler_active": False,
                 }
             )
@@ -52,34 +47,26 @@ class TestBackupService(unittest.TestCase):
         self.assertTrue(os.path.exists(backup_dir))
         self.assertTrue(backup_dir.endswith("backups"))
 
-    def test_perform_full_backup_local_only(self):
-        """A real pg_dump against the test database, with the Sheets exports
-        skipped: PARTIAL, and a file pg_restore has confirmed it can read.
+    def test_perform_full_backup_takes_a_verified_snapshot(self):
+        """A real pg_dump against the test database: SUCCESS, and a file
+        pg_restore has confirmed it can read.
 
         Rewritten for DATA-001. The previous version mocked database.get_conn
         and fed the hand-rolled INSERT writer a MagicMock cursor -- so it
         asserted that a file appeared, which is the exact property that was
-        never evidence of a backup. It also did
-        ``patch.dict(os.environ, {}, clear=True)``, which wipes PATH; with the
-        real implementation that means pg_dump cannot be found, and the run
-        correctly reports FAILED. Only GOOGLE_APPLICATION_CREDENTIALS needs
-        clearing to exercise "local snapshot only".
+        never evidence of a backup. The snapshot is the whole backup since the
+        Google Sheets export was retired (2026-11-24), so it alone decides
+        SUCCESS; nothing about Google is configured, tried or reported.
         """
-        env = {k: v for k, v in os.environ.items()}
-        env.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
-        env.pop("GAS_MIRROR_SPREADSHEET_ID", None)
-        env.pop("BACKUP_SPREADSHEET_ID", None)
-
         # Explicit config, not the ambient one. A plain unittest.TestCase has
         # no Flask app context, so db_backup._resolve_config() would fall back
         # to config.Config -- whose DATABASE_URL config.py's load_dotenv()
         # repopulates from .env, i.e. the PRODUCTION database. pg_dump is
         # read-only so nothing would be corrupted, but the test would be slow
         # and would drop a copy of live business data into backups/.
-        with patch.dict(os.environ, env, clear=True):
-            res = backup_service.perform_full_backup(config=_test_db_config())
+        res = backup_service.perform_full_backup(config=_test_db_config())
 
-        self.assertEqual(res["status"], "PARTIAL")
+        self.assertEqual(res["status"], "SUCCESS")
         self.assertIsNotNone(res["timestamp"])
         self.assertIsNotNone(res["local_file"])
         self.assertTrue(os.path.exists(res["local_file"]))
@@ -91,9 +78,9 @@ class TestBackupService(unittest.TestCase):
         self.assertEqual(len(res["snapshot_sha256"]), 64)
         self.assertEqual(res["consecutive_failures"], 0)
         self.assertIn("Verified DB snapshot created", res["message"])
-        self.assertIn(
-            "GOOGLE_APPLICATION_CREDENTIALS is not configured", res["message"]
-        )
+        self.assertNotIn("Google", res["message"])
+        for gone in ("spreadsheet_url", "mirror_status"):
+            self.assertNotIn(gone, res)
 
         for path in (res["local_file"], res["local_file"] + ".sha256"):
             try:
@@ -118,7 +105,7 @@ class TestBackupService(unittest.TestCase):
         # PATH is ABSENT from the environment, and on Linux that is
         # ":/bin:/usr/bin". CI installs postgresql-client, so clear=True
         # alone left /usr/bin/pg_dump perfectly findable: the snapshot
-        # succeeded and the run reported PARTIAL, not FAILED. It passed on
+        # succeeded and the run did not report FAILED. It passed on
         # Windows only because os.defpath there is ".;C:\bin".
         # An empty string takes the bpo-35755 path, which does not fall
         # back, so the tool is unfindable on every platform.
@@ -139,11 +126,11 @@ class TestBackupService(unittest.TestCase):
     ):
         """triggerBackup starts the work; it must not wait for it.
 
-        This is the fix for the dashboard's "The server did not respond
-        within 45s" error. A full run is ~2 minutes of Google Sheets round
-        trips, past both static/erp/api.js's 45s abort and gunicorn's
-        --timeout 120, so the request can only ever start the job and hand
-        back an id to poll on.
+        This was the fix for the dashboard's "The server did not respond
+        within 45s" error, when a run took ~2 minutes of Google Sheets round
+        trips. A snapshot alone is quicker, but its time grows with the
+        database, so the request still only starts the job and hands back an
+        id to poll on.
         """
         res = backup_service.rpc_trigger_backup()
 
@@ -198,7 +185,7 @@ class TestBackupService(unittest.TestCase):
             # stand-in for every way the dump can fail. Empty, not
             # removed: shutil.which() falls back to os.defpath when
             # PATH is absent, and on Linux that finds /usr/bin/pg_dump,
-            # so the dump succeeded in CI and the run reported PARTIAL.
+            # so the dump succeeded in CI and the run did not fail.
             with patch.dict(os.environ, {"PATH": ""}, clear=True):
                 backup_service._execute_backup_run(cur, "run-1")
 
@@ -226,15 +213,14 @@ class TestBackupService(unittest.TestCase):
             with patch.object(backup_service, "perform_full_backup") as mock_perform:
 
                 def _run(config=None, on_phase=None):
-                    for phase in ("snapshot", "sheets", "mirror"):
-                        on_phase(phase)
+                    on_phase("snapshot")
                     return {"status": "SUCCESS", "message": "ok"}
 
                 mock_perform.side_effect = _run
                 backup_service._execute_backup_run(cur, "run-2")
 
         phases = [d["phase"] for d in writes]
-        self.assertEqual(phases, ["snapshot", "snapshot", "sheets", "mirror", "done"])
+        self.assertEqual(phases, ["snapshot", "snapshot", "done"])
         # Monotonic: a bar that goes backwards reads as a restart.
         percents = [d["percent"] for d in writes]
         self.assertEqual(percents, sorted(percents))
@@ -264,151 +250,3 @@ class TestBackupService(unittest.TestCase):
         self.assertTrue(res["success"])
         self.assertIn("status", res["data"])
         self.assertIn("nightly_scheduler_active", res["data"])
-
-
-# Tables that legitimately have no backup_db_to_sheets.TABLES entry -- keep
-# in sync with the exclusion comment above that list.
-_KNOWN_EXCLUDED_FROM_BACKUP = {
-    "erp.migrations_applied",
-    "erp.bom_access_tokens",
-    "erp.rpc_mutations",  # replay-idempotency cache, not business data
-    "erp.dispatch_legacy",  # only exists on some databases, see comment
-    # The activity log (AUDIT-001). Excluded from the SHEETS mirror
-    # specifically, not from backups: db_backup.py's pg_dump snapshot takes
-    # the whole database with no --schema filter, so the audit trail is
-    # captured there -- which is the right place for it. This path re-uploads
-    # every listed table in full each night, and a row-per-mutation table with
-    # a 90-day window would dominate the spreadsheet's cell budget while
-    # telling a business-data restore nothing.
-    "erp.activity_log",
-    # The Audit report's runs and the user's review decisions (migration
-    # 052). Same reasoning: the pg_dump snapshot has them, which is where a
-    # run is re-read from when its findings are handed to Claude Code. A
-    # run's findings are one JSONB value of ~180 KB on live data, past the
-    # 50,000 characters a Sheets cell holds, and neither table is business
-    # data a restore from the spreadsheet would need.
-    "erp.audit_runs",
-    "erp.audit_finding_reviews",
-}
-
-
-def test_backup_tables_list_covers_every_erp_table(app):
-    """Regression test for the 2026-08-09 gap where erp.dispatch_plan_lines
-    and erp.app_settings existed in the schema but were never added to
-    backup_db_to_sheets.TABLES, so their data silently never made it into
-    nightly backups (no error -- the table was just absent from the sheet).
-    """
-    backup_mod = backup_service._migration_module()
-
-    with app.app_context():
-        with database.get_conn() as (_conn, cur):
-            cur.execute(
-                "SELECT table_name FROM information_schema.tables "
-                "WHERE table_schema = 'erp' AND table_type = 'BASE TABLE'"
-            )
-            actual = {f"erp.{row[0]}" for row in cur.fetchall()}
-
-    listed = set(backup_mod.TABLES)
-    missing = actual - listed - _KNOWN_EXCLUDED_FROM_BACKUP
-
-    assert not missing, (
-        f"erp table(s) missing from backup_db_to_sheets.TABLES: {sorted(missing)}. "
-        "Add them there (or to _KNOWN_EXCLUDED_FROM_BACKUP here with a reason) "
-        "so nightly backups don't silently skip their data."
-    )
-
-
-def test_no_backup_tab_lands_in_one_of_the_apps_sheets():
-    """Regression test for 2026-10-25. On the production server the backup
-    and the GAS mirror share one spreadsheet, and _ensure_sheet_tab finds tabs
-    ignoring case -- so erp.vendors, erp.contractors, erp.clients, erp.stock
-    and erp.production were written into the Apps Script app's own Vendors,
-    Contractors, Clients, Stock and Production sheets, and every run replaced
-    their heading rows with database column names.
-    """
-    import yaml
-
-    backup_mod = backup_service._migration_module()
-    mapping_path = os.path.join(
-        os.path.dirname(backup_mod.__file__), "gas_sheet_mapping.yaml"
-    )
-    with open(mapping_path, encoding="utf-8") as f:
-        app_sheets = {s["sheet_name"].lower() for s in yaml.safe_load(f)["sheets"]}
-
-    tabs = [backup_mod.tab_name_for(t).lower() for t in backup_mod.TABLES]
-    clashes = sorted(set(tabs) & app_sheets)
-    assert not clashes, f"backup tab(s) named like the app's sheets: {clashes}"
-    assert len(set(tabs)) == len(tabs), "two tables would share one tab"
-
-
-def test_a_value_too_long_for_a_sheets_cell_is_noted_not_sent():
-    """Sheets refuses a cell over 50,000 characters, and the 400 ended the
-    whole backup at that table. An item photo from a phone is a data: URL --
-    24,000-73,000 characters measured on 800px photographs -- so the first
-    detailed one would have stopped every table after erp.items from reaching
-    the spreadsheet."""
-    backup_mod = backup_service._migration_module()
-    limit = backup_mod.SHEETS_CELL_LIMIT
-    photo = "data:image/jpeg;base64," + "A" * 73_000
-
-    cur = MagicMock()
-    cur.fetchall.side_effect = [
-        [("id",)],  # _get_pk_columns
-        [(1, "Hub Axle", photo), (2, "Spoke", "x" * limit)],
-    ]
-    cur.description = [("id",), ("item_name",), ("image",)]
-
-    columns, rows = backup_mod.fetch_table_rows(cur, "erp.items")
-
-    assert columns == ["id", "item_name", "image"]
-    assert rows[0][:2] == [1, "Hub Axle"]
-    assert len(rows[0][2]) <= limit
-    assert f"{len(photo):,} characters" in rows[0][2]
-    # Exactly at the limit still fits, and goes as it is.
-    assert rows[1] == [2, "Spoke", "x" * limit]
-
-
-def test_only_a_clashing_table_gets_the_prefix():
-    backup_mod = backup_service._migration_module()
-    assert backup_mod.tab_name_for("erp.vendors") == "db_vendors"
-    assert backup_mod.tab_name_for("erp.production") == "db_production"
-    # The other tables keep the tabs they have always had in the spreadsheet.
-    assert backup_mod.tab_name_for("erp.items") == "items"
-    assert backup_mod.tab_name_for("erp.lot_inspections") == "lot_inspections"
-
-
-def test_restored_headings_fit_the_mirrors_columns():
-    """restore_gas_sheet_headings.py puts back the five heading rows the old
-    backup overwrote. Each must be exactly as wide as the mirror writes that
-    sheet, or the headings sit over the wrong columns."""
-    import importlib.util
-
-    import yaml
-
-    folder = os.path.dirname(backup_service._migration_module().__file__)
-    spec = importlib.util.spec_from_file_location(
-        "restore_gas_sheet_headings",
-        os.path.join(folder, "restore_gas_sheet_headings.py"),
-    )
-    restore = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(restore)
-    with open(os.path.join(folder, "gas_sheet_mapping.yaml"), encoding="utf-8") as f:
-        widths = {
-            s["sheet_name"]: max(c.get("col", 0) for c in s["columns"])
-            for s in yaml.safe_load(f)["sheets"]
-            if s.get("columns")
-        }
-
-    assert set(restore.HEADINGS) == {
-        "Vendors",
-        "Contractors",
-        "Clients",
-        "Stock",
-        "Production",
-    }
-    for sheet, heading in restore.HEADINGS.items():
-        assert len(heading) == widths[sheet], sheet
-
-
-if __name__ == "__main__":
-    unittest.main()

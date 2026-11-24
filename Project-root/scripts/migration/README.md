@@ -1,10 +1,16 @@
-# Sheets ↔ Postgres migration & nightly backup
+# Sheets → Postgres migration
 
 Closes the one open gap flagged in `verification-report.md` item 6: there was no
 script that bulk-imports the Apps Script spreadsheet's historical rows into the
-`erp` Postgres schema. This directory adds that importer, plus a nightly
-job that goes the other direction (Postgres → dated Sheets backup) now that
-Postgres is the canonical store.
+`erp` Postgres schema. This directory adds that importer.
+
+It also held the nightly export the other way (Postgres → a Google
+spreadsheet, `backup_db_to_sheets.py`) and the mirror into the Apps Script
+app's own sheets (`mirror_db_to_gas_sheets.py`). Both were retired on
+2026-11-24: everything runs on the server, nothing read either copy, and a
+spreadsheet cannot be restored from. The backup is the server's verified
+pg_dump snapshot, and the copy that leaves the building is the laptop's
+(`scripts/pull-backups-to-laptop.ps1` in the repository root).
 
 **Status: scaffold, not yet run against real data.** `mapping.yaml` is built
 from `app/erp/config_maps.py` and the 20 `migrations/erp/*.sql` files (the
@@ -39,10 +45,9 @@ before trusting anything past a dry-run.**
 | File | Purpose |
 |---|---|
 | `mapping.yaml` | Sheet → table column mapping, one entry per Apps Script tab. Edit this, not the Python, when the mapping needs a fix. |
-| `sheets_client.py` | Google Sheets/Drive API auth + fetch/write helpers, shared by both scripts. |
+| `sheets_client.py` | Google Sheets/Drive API auth + fetch helpers. |
 | `transforms.py` | Cell-string → Python value coercion (dates, currency-safe numbers, booleans, JSON). |
 | `migrate_sheets_to_pg.py` | Sheets → Postgres. Dry-run by default. |
-| `backup_db_to_sheets.py` | Postgres → dated Sheets backup. Meant to run nightly via cron/Cloud Scheduler. |
 
 ## Setup
 
@@ -56,9 +61,6 @@ export DATABASE_URL=postgresql://user:pass@localhost:5432/erp_dev   # LOCAL/DEV 
 The service account needs:
 - Sheets API + Drive API enabled on its GCP project.
 - The source spreadsheet(s) shared with it (**Viewer** is enough for migration).
-- A Drive folder shared with it as **Editor** if you want nightly backups
-  filed into a specific folder (`DRIVE_FOLDER_ID`) instead of its own My
-  Drive root.
 
 Fill in `default_spreadsheet_id` (or per-sheet `spreadsheet_id`) in
 `mapping.yaml`. Any sheet left without one is skipped with a warning, not a
@@ -147,48 +149,6 @@ declaring the load clean.
   it) before trusting `erp.warehouse_pool`'s numbers.
 - **`ANALYZE`** the `erp` schema afterward for the query planner.
 - **Restart the app / clear any caches** so it picks up the new data.
-
-## Nightly backup (Postgres → Sheets)
-
-```bash
-python backup_db_to_sheets.py --database-url "$DATABASE_URL" \
-    --drive-folder-id "$DRIVE_FOLDER_ID"
-```
-
-Creates `MTC-backup-YYYY-MM-DD`, one tab per `erp.*` table (including
-materialized/cache tables like `erp.warehouse_pool` — a backup should
-capture what Postgres actually has, unlike the migration importer which
-deliberately skips computed data on the way *in*). Read-only against
-Postgres; never writes back.
-
-**Retention**: if `--drive-folder-id`/`DRIVE_FOLDER_ID` is set, deletes
-backup spreadsheets older than `--retention-days` (default 90) from that
-folder after each run. Skipped (not defaulted to "delete everywhere") if no
-folder is set, since there'd be no safe way to scope the deletion query to
-"backups this job created" vs. anything else in Drive.
-
-### Scheduling — cron
-
-```cron
-# /etc/cron.d/mtc-backup — nightly at 02:00 server time
-0 2 * * * mtc  cd /srv/mtc/Project-root/scripts/migration && \
-  DATABASE_URL=postgresql://... GOOGLE_APPLICATION_CREDENTIALS=/srv/secrets/sa.json DRIVE_FOLDER_ID=... \
-  /srv/mtc/venv/bin/python backup_db_to_sheets.py >> /var/log/mtc/backup.log 2>&1
-```
-
-### Scheduling — Google Cloud Scheduler + Cloud Run
-
-1. Containerize this directory (or add it to the existing `Dockerfile` as an
-   alternate entrypoint) and deploy as a Cloud Run **Job** (not a Service —
-   this isn't HTTP-triggered).
-2. Grant the Cloud Run job's service account the Sheets/Drive scopes
-   directly (no key file needed inside GCP — use Application Default
-   Credentials instead of `GOOGLE_APPLICATION_CREDENTIALS` pointing at a
-   checked-in key).
-3. Create a Cloud Scheduler job targeting `2 * * *` (02:00 daily) that
-   triggers the Cloud Run job execution via its HTTP trigger URL, with
-   `DATABASE_URL`/`DRIVE_FOLDER_ID` set as the job's environment variables
-   (secrets via Secret Manager, not plaintext env).
 
 ## Rollback
 

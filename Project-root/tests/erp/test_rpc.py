@@ -207,8 +207,8 @@ def test_replayed_mutation_id_does_not_re_execute(erp_client):
 
 def test_trigger_backup_is_admin_only(erp_client):
     """Asserts only the 403 -- deliberately does not call this as an admin
-    here, since a real triggerBackup attempts an actual backup/Sheets
-    upload; that path is covered by test_backup.py's mocked tests."""
+    here, since a real triggerBackup takes an actual snapshot; that path is
+    covered by test_backup.py's tests."""
     resp = erp_client.post(
         "/api/erp/rpc/triggerBackup",
         json={"args": []},

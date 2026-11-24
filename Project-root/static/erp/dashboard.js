@@ -294,10 +294,10 @@ App.Dashboard = {
     closeHeaderBtn.style.display = 'block';
   },
 
-  // How long to keep polling before giving up on a run we started. A backup
-  // is ~2 minutes of Google Sheets round trips; ten gives generous room for
-  // a slow link and the API's own retry backoff without leaving the modal
-  // spinning indefinitely if the worker running it was recycled mid-job.
+  // How long to keep polling before giving up on a run we started. A
+  // snapshot takes seconds to a minute; ten minutes is room for a large
+  // database or a busy server without leaving the modal spinning
+  // indefinitely if the worker running it was recycled mid-job.
   BACKUP_POLL_TIMEOUT_MS: 10 * 60 * 1000,
   BACKUP_POLL_INTERVAL_MS: 3000,
 
@@ -388,7 +388,6 @@ App.Dashboard = {
     const detailTime = document.getElementById('backupDetailTime');
     const detailFile = document.getElementById('backupDetailFile');
     
-    const openSheetBtn = document.getElementById('backupOpenSheetBtn');
     const doneBtn = document.getElementById('backupModalDoneBtn');
     const closeHeaderBtn = document.getElementById('backupModalCloseBtn');
     const triggerBtn = document.getElementById('dashboardBackupBtn');
@@ -396,7 +395,6 @@ App.Dashboard = {
     // Reset Modal to initial progress state
     progressState.style.display = 'block';
     resultState.style.display = 'none';
-    openSheetBtn.style.display = 'none';
     doneBtn.style.display = 'none';
     closeHeaderBtn.style.display = 'none';
     
@@ -410,7 +408,7 @@ App.Dashboard = {
     // on it. The step line above carries the phase, from the server.
     if (progressSubtext) {
       progressSubtext.textContent =
-        'This usually takes a couple of minutes. The backup continues on the ' +
+        'This usually takes under a minute. The backup continues on the ' +
         'server even if you close this dialog.';
     }
     if (percentText) percentText.textContent = '20%';
@@ -426,11 +424,10 @@ App.Dashboard = {
     };
 
     try {
-      // triggerBackup only STARTS the run -- a full backup is ~2 minutes of
-      // Google Sheets round trips, far past both Api's 45s abort and
-      // gunicorn's 120s worker timeout, so it cannot be awaited inline. The
-      // server publishes progress to a record every worker shares; we poll
-      // it. See backup_service.rpc_trigger_backup.
+      // triggerBackup only STARTS the run, so a slow snapshot can never
+      // meet Api's 45s abort or gunicorn's 120s worker timeout. The server
+      // publishes progress to a record every worker shares; we poll it. See
+      // backup_service.rpc_trigger_backup.
       const started = await Api.mutate('triggerBackup');
       const runId = (started && started.data) ? started.data.run_id : null;
 
@@ -448,18 +445,15 @@ App.Dashboard = {
         resultTitle.textContent = 'Backup Completed Successfully!';
         resultTitle.className = 'fw-bold text-success mb-1';
         detailStatus.className = 'fw-bold text-success';
-        resultMessage.textContent = data.message || 'Database snapshot created and synced to Google Sheets.';
-        
-        if (data.spreadsheet_url) {
-          openSheetBtn.href = data.spreadsheet_url;
-          openSheetBtn.style.display = 'inline-block';
-        }
+        resultMessage.textContent = data.message || 'Database snapshot created and checked.';
       } else if (statusStr === 'PARTIAL') {
+        // A run from before the Google Sheets export was retired
+        // (2026-11-24): its snapshot was saved, its Sheets copy was not.
         resultIcon.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-warning" style="font-size: 3rem;"></i>';
         resultTitle.textContent = 'Local Snapshot Backup Created';
         resultTitle.className = 'fw-bold text-warning mb-1';
         detailStatus.className = 'fw-bold text-warning';
-        resultMessage.textContent = data.message || 'Local database snapshot was saved. Google Sheets sync was skipped or requires credentials.';
+        resultMessage.textContent = data.message || 'Local database snapshot was saved.';
       } else {
         resultIcon.innerHTML = '<i class="bi bi-x-circle-fill text-danger" style="font-size: 3rem;"></i>';
         resultTitle.textContent = 'Backup Failed';

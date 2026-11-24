@@ -2,10 +2,9 @@
  * Regression tests for the manual backup trigger's poll loop.
  *
  * The bug these exist to prevent coming back: triggerBackup used to run the
- * whole backup inside the RPC and await it. A full run is ~2 minutes of
- * Google Sheets round trips (four API calls per table across 46 tables, plus
- * 28 mirrored sheets), while api.js aborts any RPC after 45s and gunicorn
- * kills the worker at 120s. So the dashboard showed "Backup Error -- the
+ * whole backup inside the RPC and await it. A full run was then ~2 minutes of
+ * Google Sheets round trips (an export retired on 2026-11-24), while api.js
+ * aborts any RPC after 45s and gunicorn kills the worker at 120s. So the dashboard showed "Backup Error -- the
  * server did not respond within 45s" on every single click, on runs that
  * were in fact still working and, for the local snapshot, had already
  * succeeded. The request now only STARTS the run; this loop is what turns
@@ -119,13 +118,13 @@ describe('App.Dashboard._pollBackupUntilDone', () => {
     // admin holds the advisory lock, our thread exits without publishing --
     // so waiting for our own id would time out while a real backup runs.
     stubStatusSequence([
-      { run_id: 'theirs', run_state: 'RUNNING', run_percent: 75, run_phase_label: 'Mirroring...' },
-      { run_id: 'theirs', run_state: 'PARTIAL', status: 'PARTIAL', message: 'Snapshot ok, Sheets skipped' },
+      { run_id: 'theirs', run_state: 'RUNNING', run_percent: 10, run_phase_label: 'Snapshot...' },
+      { run_id: 'theirs', run_state: 'SUCCESS', status: 'SUCCESS', message: 'Their snapshot' },
     ]);
 
     const data = await App.Dashboard._pollBackupUntilDone('mine', jest.fn());
 
-    expect(data.status).toBe('PARTIAL');
+    expect(data.message).toBe('Their snapshot');
   });
 
   test('a failed poll does not abandon the run', async () => {

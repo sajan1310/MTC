@@ -590,7 +590,10 @@
 // combination in a Process's breakdown shows its own, or a camera -- and an
 // inspection checklist row shows the photo of the colour it draws on.
 // stock.js, inspection.js and styles.css are precached.
-const CACHE_NAME = 'erp-shell-v123';
+// v124: the Dashboard's backup button is "Back up now": a checked database
+// snapshot, with no Google Sheets export and no "Open Google Sheet" button
+// after it. dashboard.js is precached.
+const CACHE_NAME = 'erp-shell-v124';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
