@@ -17725,15 +17725,16 @@ MApp.Inspection = {
   },
 
   _photoTitle(item) {
-    return [item.itemName, item.size].filter(Boolean).join(' · ');
+    return [item.itemName, item.size, item.photoColor].filter(Boolean).join(' · ');
   },
 
   // The item's photo, small, beside its box: a tap shows it full screen,
   // with "Change photo" under it. An item with none shows a camera to add
-  // one. A Warehouse Pool row's photo is its pool item's (photoSource
-  // "pool": every colour of it, the one the Warehouse Pool shows); any
-  // other row's is its Items Master item's. A row neither knows keeps an
-  // empty slot so the names stay in line.
+  // one. A Warehouse Pool row's photo is its pool item's in the colour of
+  // the bucket it draws on (photoSource "pool", photoColor; the one the
+  // Warehouse Pool shows on that bucket); any other row's is its Items
+  // Master item's. A row neither knows keeps an empty slot so the names
+  // stay in line.
   _photoHtml(item, e) {
     if (!this._withPhotos) return '';
     const title = e(this._photoTitle(item));
@@ -17791,13 +17792,14 @@ MApp.Inspection = {
         return;
       }
       // The photo is the item's: every row of the same item shows it -- of
-      // the same size for an Items Master item, of any size or colour for a
-      // pool item.
+      // the same size for an Items Master item, of the same pool colour (any
+      // size) for a pool item.
       const pool = res.data.photoSource === 'pool';
-      const same = i => String(i.itemName).toLowerCase() === String(res.data.itemName).toLowerCase()
+      const lower = s => String(s || '').trim().toLowerCase();
+      const same = i => lower(i.itemName) === lower(res.data.itemName)
         && (pool
-          ? i.photoSource === 'pool'
-          : i.photoSource !== 'pool' && String(i.size || '').toLowerCase() === String(res.data.size || '').toLowerCase());
+          ? i.photoSource === 'pool' && lower(i.photoColor) === lower(res.data.photoColor)
+          : i.photoSource !== 'pool' && lower(i.size) === lower(res.data.size));
       d.items.filter(same).forEach(i => {
         i.photoUrl = res.data.photoUrl;
         if (this.data === d) this._repaintRow(i);
@@ -19365,9 +19367,9 @@ MApp.Pool = {
   filtered: [],
   searchTerm: '',
   filter: 'all',
-  // {item name, lower-cased: photo address} (getPoolItemPhotos): one photo
-  // per pool item, every colour of it -- the one its inspection checklist
-  // rows show.
+  // {"item\ncolour", lower-cased: photo address} (getPoolItemPhotos): one
+  // photo per pool item and colour, '' for no colour -- the one inspection
+  // checklist rows drawing on that bucket show.
   photos: {},
 
   // producedQty === 0 with real consumption and a colour: the debit side
@@ -19451,7 +19453,7 @@ MApp.Pool = {
         MApp.Util.loadFailed(listEl, res && res.message, () => this.load(), keep);
         return;
       }
-      this.photos = (photosRes && photosRes.success && photosRes.data) || {};
+      this.photos = this._photoMap(photosRes && photosRes.success ? photosRes.data : null);
       this.rows = res.data || [];
       this.entries = MApp.Search.index(this.rows, this.SEARCH);
       this._applyFilters();
@@ -19596,17 +19598,35 @@ MApp.Pool = {
     });
   },
 
-  // ── The pool item's photo ──────────────────────────────────────────
-  // One per item, whatever the colour, so every bucket of an item shows
-  // the same one. A tap shows it full screen with "Change photo"; an item
-  // with none shows a camera to add one.
+  // ── The bucket's photo ─────────────────────────────────────────────
+  // One per item and colour (migration 060): a Red-White frame and a Black
+  // one each have their own, and product tags share their colour's. A tap
+  // shows it full screen with "Change photo"; a colour with none shows a
+  // camera to add one, never another colour's photo.
+  _photoKey(name, color) {
+    return `${String(name || '').trim().toLowerCase()}\n${String(color || '').trim().toLowerCase()}`;
+  },
+
+  // getPoolItemPhotos' [{outputItemName, color, photoUrl}] as a lookup.
+  _photoMap(list) {
+    const map = {};
+    (Array.isArray(list) ? list : []).forEach(p => {
+      if (p && p.outputItemName && p.photoUrl) map[this._photoKey(p.outputItemName, p.color)] = p.photoUrl;
+    });
+    return map;
+  },
+
   _photoUrl(row) {
-    return this.photos[String(row.outputItemName || '').trim().toLowerCase()] || '';
+    return this.photos[this._photoKey(row.outputItemName, row.color)] || '';
+  },
+
+  _photoLabel(row) {
+    return [row.outputItemName, row.color].map(s => String(s || '').trim()).filter(Boolean).join(' · ');
   },
 
   _photoHtml(row, i) {
     if (!row.outputItemName) return '';
-    const name = MApp.Util.escapeHtml(row.outputItemName);
+    const name = MApp.Util.escapeHtml(this._photoLabel(row));
     const url = this._photoUrl(row);
     if (url) {
       return `<button type="button" class="mb-item-thumb" data-pool-photo="${i}" aria-label="View photo of ${name}">
@@ -19624,11 +19644,12 @@ MApp.Pool = {
       this.choosePhoto(row);
       return;
     }
-    MApp.PhotoViewer.open(url, row.outputItemName, { onChange: () => this.choosePhoto(row) });
+    MApp.PhotoViewer.open(url, this._photoLabel(row), { onChange: () => this.choosePhoto(row) });
   },
 
-  // Take a photo or pick one, shrink it, and put it on the pool item
-  // (setPoolItemPhoto) -- the same photo its inspection rows show.
+  // Take a photo or pick one, shrink it, and put it on the bucket's colour
+  // of the pool item (setPoolItemPhoto) -- the same photo the inspection
+  // rows drawing on it show.
   async choosePhoto(row) {
     const picked = await MApp.Picker.open({
       title: this._photoUrl(row) ? 'Change photo' : 'Add photo',
@@ -19649,12 +19670,12 @@ MApp.Pool = {
       return;
     }
     try {
-      const res = await MApp.Api.mutate('setPoolItemPhoto', row.outputItemName, dataUrl);
+      const res = await MApp.Api.mutate('setPoolItemPhoto', row.outputItemName, dataUrl, row.color || '');
       if (!res || !res.success) {
         MApp.Toast.error((res && res.message) || 'The photo was not saved.');
         return;
       }
-      this.photos[String(res.data.outputItemName).trim().toLowerCase()] = res.data.photoUrl;
+      this.photos[this._photoKey(res.data.outputItemName, res.data.color)] = res.data.photoUrl;
       const listEl = document.getElementById('pool-list');
       const restoreScroll = listEl ? MApp.Util.keepScroll(listEl) : () => {};
       this.render();

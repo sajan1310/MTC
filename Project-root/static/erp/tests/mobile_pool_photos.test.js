@@ -1,11 +1,14 @@
 /**
- * A pool item's photo on the phone/tablet Warehouse Pool (asked 2026-11-02).
+ * A pool item's photos on the phone/tablet Warehouse Pool (asked 2026-11-02;
+ * one per colour since 2026-11-24, migration 060).
  *
- * One photo per pool item (getPoolItemPhotos, by Output Item Name), every
- * colour of it: the same one its inspection checklist rows show. Each bucket
- * card shows it beside the name, and a tap shows it full screen with
- * "Change photo"; an item with none shows a camera that takes or picks one
- * and saves it (setPoolItemPhoto).
+ * One photo per pool item and colour (getPoolItemPhotos, a list of
+ * {outputItemName, color, photoUrl}): a Red frame and a Blue one each have
+ * their own, the one the inspection checklist rows drawing on that bucket
+ * show. Each bucket card shows its colour's photo beside the name, and a
+ * tap shows it full screen with "Change photo"; a colour with none shows a
+ * camera -- never another colour's photo -- that takes or picks one and
+ * saves it on that colour (setPoolItemPhoto).
  */
 
 'use strict';
@@ -33,10 +36,15 @@ function sheet(id) {
 
 const ROWS = [
   { rowIdx: 1, outputItemName: 'Painted Frame 26', processId: 'P1', productTag: '', color: 'Red', producedQty: 10, consumedQty: 0, availableQty: 10 },
-  { rowIdx: 2, outputItemName: 'Painted Frame 26', processId: 'P1', productTag: '', color: 'Blue', producedQty: 5, consumedQty: 0, availableQty: 5 },
-  { rowIdx: 3, outputItemName: 'Fitted Rim 20', processId: 'P2', productTag: '', color: '', producedQty: 8, consumedQty: 0, availableQty: 8 }
+  { rowIdx: 2, outputItemName: 'Painted Frame 26', processId: 'P1', productTag: 'Ladies', color: 'red', producedQty: 4, consumedQty: 0, availableQty: 4 },
+  { rowIdx: 3, outputItemName: 'Painted Frame 26', processId: 'P1', productTag: '', color: 'Blue', producedQty: 5, consumedQty: 0, availableQty: 5 },
+  { rowIdx: 4, outputItemName: 'Fitted Rim 20', processId: 'P2', productTag: '', color: '', producedQty: 8, consumedQty: 0, availableQty: 8 }
 ];
-const PHOTOS = { 'painted frame 26': '/erp/pool-photo/4?v=70' };
+const PHOTOS = [
+  { outputItemName: 'Painted Frame 26', color: 'Red', photoUrl: '/erp/pool-photo/4?v=70' },
+  // The item's no-colour photo: only the bucket with no colour shows it.
+  { outputItemName: 'Painted Frame 26', color: '', photoUrl: '/erp/pool-photo/8?v=75' }
+];
 
 function mount(photosReply) {
   jest.resetModules();
@@ -61,17 +69,22 @@ function mount(photosReply) {
 }
 
 const cards = () => [...document.querySelectorAll('#pool-list .mb-card')];
-const cardOf = (name, color) => cards().find(c => c.textContent.includes(name) && c.textContent.includes(color));
+const cardOf = (name, sub) => cards().find(c => c.textContent.includes(name)
+  && c.querySelectorAll('.mb-card-sub')[0].textContent.trim() === sub);
 
-describe('the pool item photo on each bucket', () => {
-  test('every bucket of an item shows its one photo; an item with none shows a camera', async () => {
+describe('the photo on each bucket', () => {
+  test('each colour shows its own photo, product tags share it, and a colour with none shows a camera', async () => {
     mount(async () => ({ success: true, data: PHOTOS }));
     await MApp.Pool.load();
-    ['Red', 'Blue'].forEach(color => {
-      const img = cardOf('Painted Frame 26', color).querySelector('.mb-item-thumb img');
+    ['Red', 'red · Ladies'].forEach(sub => {
+      const img = cardOf('Painted Frame 26', sub).querySelector('.mb-item-thumb img');
       expect(img.getAttribute('src')).toBe('/erp/pool-photo/4?v=70');
       expect(img.getAttribute('loading')).toBe('lazy');
     });
+    const blue = cardOf('Painted Frame 26', 'Blue');
+    expect(blue.querySelector('.mb-item-thumb img')).toBeNull();
+    expect(blue.querySelector('.mb-item-thumb-add').getAttribute('aria-label'))
+      .toBe('Add a photo of Painted Frame 26 · Blue');
     expect(cardOf('Fitted Rim 20', 'No colour').querySelector('.mb-item-thumb-add').getAttribute('aria-label'))
       .toBe('Add a photo of Fitted Rim 20');
   });
@@ -79,24 +92,24 @@ describe('the pool item photo on each bucket', () => {
   test('the buckets still come up when the photos cannot be had', async () => {
     mount(async () => { throw new Error('offline'); });
     await MApp.Pool.load();
-    expect(cards()).toHaveLength(3);
+    expect(cards()).toHaveLength(4);
     expect(document.querySelector('#pool-list .mb-item-thumb img')).toBeNull();
-    expect(document.querySelectorAll('#pool-list .mb-item-thumb-add')).toHaveLength(3);
+    expect(document.querySelectorAll('#pool-list .mb-item-thumb-add')).toHaveLength(4);
   });
 
-  test('a tap shows the photo full screen with Change photo', async () => {
+  test('a tap shows the photo full screen, named with its colour, with Change photo', async () => {
     mount(async () => ({ success: true, data: PHOTOS }));
     await MApp.Pool.load();
-    cardOf('Painted Frame 26', 'Blue').querySelector('.mb-item-thumb').click();
+    cardOf('Painted Frame 26', 'Red').querySelector('.mb-item-thumb').click();
     expect(document.getElementById('sheet-photo-viewer').classList.contains('open')).toBe(true);
     expect(document.getElementById('photo-viewer-img').getAttribute('src')).toBe('/erp/pool-photo/4?v=70');
-    expect(document.getElementById('photo-viewer-title').textContent).toBe('Painted Frame 26');
+    expect(document.getElementById('photo-viewer-title').textContent).toBe('Painted Frame 26 · Red');
     expect(document.getElementById('photo-viewer-footer').hidden).toBe(false);
   });
 });
 
 describe('adding or changing it', () => {
-  test('the camera asks Take photo or gallery, saves the photo on the pool item, and shows it', async () => {
+  test('the camera asks Take photo or gallery, saves the photo on that colour, and shows it there only', async () => {
     mount(async () => ({ success: true, data: PHOTOS }));
     await MApp.Pool.load();
     MApp.Picker.open = jest.fn(async () => ({ value: 'camera' }));
@@ -104,20 +117,38 @@ describe('adding or changing it', () => {
     MApp.Util.pickImageFile = jest.fn(async () => file);
     MApp.Util.resizeImageToBase64 = jest.fn(async () => 'data:image/jpeg;base64,NEW');
     MApp.Api.mutate = jest.fn(async () => ({
-      success: true, message: 'Photo saved for Fitted Rim 20.',
-      data: { outputItemName: 'Fitted Rim 20', photoUrl: '/erp/pool-photo/5?v=71' }
+      success: true, message: 'Photo saved for Painted Frame 26 · Blue.',
+      data: { outputItemName: 'Painted Frame 26', color: 'Blue', photoUrl: '/erp/pool-photo/5?v=71' }
     }));
 
-    cardOf('Fitted Rim 20', 'No colour').querySelector('.mb-item-thumb-add').click();
+    cardOf('Painted Frame 26', 'Blue').querySelector('.mb-item-thumb-add').click();
     await new Promise(resolve => setTimeout(resolve, 0));
 
     expect(MApp.Picker.open.mock.calls[0][0].title).toBe('Add photo');
     expect(MApp.Picker.open.mock.calls[0][0].items.map(i => i.label)).toEqual(['Take photo', 'Choose from gallery']);
     expect(MApp.Util.pickImageFile).toHaveBeenCalledWith(true);
     expect(MApp.Util.resizeImageToBase64).toHaveBeenCalledWith(file, 800);
-    expect(MApp.Api.mutate).toHaveBeenCalledWith('setPoolItemPhoto', 'Fitted Rim 20', 'data:image/jpeg;base64,NEW');
-    expect(cardOf('Fitted Rim 20', 'No colour').querySelector('.mb-item-thumb img').getAttribute('src'))
+    expect(MApp.Api.mutate).toHaveBeenCalledWith('setPoolItemPhoto', 'Painted Frame 26', 'data:image/jpeg;base64,NEW', 'Blue');
+    expect(cardOf('Painted Frame 26', 'Blue').querySelector('.mb-item-thumb img').getAttribute('src'))
       .toBe('/erp/pool-photo/5?v=71');
+    expect(cardOf('Painted Frame 26', 'Red').querySelector('.mb-item-thumb img').getAttribute('src'))
+      .toBe('/erp/pool-photo/4?v=70');
+  });
+
+  test('a bucket with no colour saves the item\'s no-colour photo', async () => {
+    mount(async () => ({ success: true, data: PHOTOS }));
+    await MApp.Pool.load();
+    MApp.Picker.open = jest.fn(async () => ({ value: 'gallery' }));
+    MApp.Util.pickImageFile = jest.fn(async () => new File(['x'], 'p.jpg', { type: 'image/jpeg' }));
+    MApp.Util.resizeImageToBase64 = jest.fn(async () => 'data:image/jpeg;base64,NEW');
+    MApp.Api.mutate = jest.fn(async () => ({
+      success: true, message: 'Photo saved for Fitted Rim 20.',
+      data: { outputItemName: 'Fitted Rim 20', color: '', photoUrl: '/erp/pool-photo/7?v=73' }
+    }));
+    await MApp.Pool.choosePhoto(ROWS[3]);
+    expect(MApp.Api.mutate).toHaveBeenCalledWith('setPoolItemPhoto', 'Fitted Rim 20', 'data:image/jpeg;base64,NEW', '');
+    expect(cardOf('Fitted Rim 20', 'No colour').querySelector('.mb-item-thumb img').getAttribute('src'))
+      .toBe('/erp/pool-photo/7?v=73');
   });
 
   test('Change photo in the viewer starts the same choice', async () => {

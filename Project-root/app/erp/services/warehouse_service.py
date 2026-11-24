@@ -3308,14 +3308,19 @@ def get_pool_available_qty(output_item_name):
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# Pool item photos (migration 058)
+# Pool item photos (migrations 058, 060)
 # ─────────────────────────────────────────────────────────────────────────
 #
-# One photo per pool item -- a Process's Output Item Name -- for every colour
-# and product tag of it. Seen and set on the Warehouse Pool screens and on an
+# One photo per pool item -- a Process's Output Item Name -- and colour: a
+# Red-White frame and a Black one each have their own. The colour is the
+# bucket's, as the bucket spells it; product tags share it; '' is the item's
+# photo with no colour. Seen and set on the Warehouse Pool screens and on an
 # inspection checklist (inspection_service.attach_photos), and served by its
 # own address like an Items Master photo (items_service), at
 # /erp/pool-photo/<id>?v=<row_version>, so it loads only when shown.
+#
+# A colour with no photo of its own shows none: another colour's photo, or
+# the no-colour one, would show the inspector the wrong colour.
 
 
 def pool_photo_url(photo_id, row_version) -> str:
@@ -3328,21 +3333,37 @@ def _name_keys(names) -> list:
     return sorted({str(n or "").strip().lower() for n in names} - {""})
 
 
-def pool_photo_urls(cur, names=None) -> dict:
-    """{item name, lower-cased: photo address} for the pool items that have a
-    photo -- every one, or only those among `names`."""
-    sql = (
-        "SELECT id, lower(output_item_name) AS n, row_version FROM erp.pool_item_photos"
+def pool_photo_key(output_item_name, color="") -> tuple:
+    """How a pool photo is looked up: (name, colour), each trimmed and
+    lower-cased, '' for no colour."""
+    return (
+        str(output_item_name or "").strip().lower(),
+        str(color or "").strip().lower(),
     )
+
+
+def _pool_photo_rows(cur, names=None) -> list:
+    sql = "SELECT id, output_item_name, color, row_version FROM erp.pool_item_photos"
     params: tuple = ()
     if names is not None:
         keys = _name_keys(names)
         if not keys:
-            return {}
+            return []
         sql += " WHERE lower(output_item_name) = ANY(%s)"
         params = (keys,)
-    cur.execute(sql, params)
-    return {r["n"]: pool_photo_url(r["id"], r["row_version"]) for r in cur.fetchall()}
+    cur.execute(sql + " ORDER BY lower(output_item_name), lower(color)", params)
+    return cur.fetchall()
+
+
+def pool_photo_urls(cur, names=None) -> dict:
+    """{pool_photo_key: photo address} for every photo of the pool items
+    that have one -- all of them, or only those named in `names`."""
+    return {
+        pool_photo_key(r["output_item_name"], r["color"]): pool_photo_url(
+            r["id"], r["row_version"]
+        )
+        for r in _pool_photo_rows(cur, names)
+    }
 
 
 def pool_item_names(cur, names) -> dict:
@@ -3370,27 +3391,43 @@ def pool_item_names(cur, names) -> dict:
     return found
 
 
-def save_pool_photo(cur, output_item_name, image) -> dict:
-    """Puts `image` on the pool item `output_item_name`, in place of any photo
-    it had: {"outputItemName", "photoUrl"}. The caller has checked that the
-    name is a pool item and that the user may do this."""
+def pool_photo_label(output_item_name, color="") -> str:
+    """A photo's name: "Painted Frame · Red-White", or the name alone for no
+    colour."""
+    return " · ".join(
+        part
+        for part in (str(output_item_name or "").strip(), str(color or "").strip())
+        if part
+    )
+
+
+def save_pool_photo(cur, output_item_name, image, color="") -> dict:
+    """Puts `image` on the pool item `output_item_name` in `color` ('' for
+    no colour), in place of any photo that colour had; the item's other
+    colours keep theirs. Returns {"outputItemName", "color", "photoUrl"}. The
+    caller has checked that the name is a pool item and that the user may
+    do this."""
     image = items_service.check_servable_photo(image)
     name = str(output_item_name or "").strip()
     if not name:
         raise ValueError("Output Item Name is required.")
+    color = str(color or "").strip()
+    if len(color) > 255:
+        raise ValueError("That colour name is too long for a photo.")
     cur.execute(
         """
-        INSERT INTO erp.pool_item_photos (output_item_name, image, updated_by)
-        VALUES (%s, %s, %s)
-        ON CONFLICT (lower(output_item_name))
+        INSERT INTO erp.pool_item_photos (output_item_name, color, image, updated_by)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (lower(output_item_name), lower(color))
         DO UPDATE SET image = EXCLUDED.image, updated_by = EXCLUDED.updated_by
-        RETURNING id, output_item_name, row_version
+        RETURNING id, output_item_name, color, row_version
         """,
-        (name, image, get_current_user_id()),
+        (name, color, image, get_current_user_id()),
     )
     row = cur.fetchone()
     return {
         "outputItemName": row["output_item_name"],
+        "color": row["color"],
         "photoUrl": pool_photo_url(row["id"], row["row_version"]),
     }
 
@@ -3417,22 +3454,39 @@ def get_pool_photo(photo_id: int):
 
 @rpc_method("getPoolItemPhotos")
 def get_pool_item_photos():
-    """{item name, lower-cased: photo address} for every pool item with a
-    photo. The Warehouse Pool screens look a row up by its Output Item Name;
-    a Process with no bucket yet still finds its photo."""
+    """Every pool photo, as [{outputItemName, color, photoUrl}], color ''
+    for an item's no-colour photo. The Warehouse Pool screens look a bucket
+    up by its Output Item Name and colour; a Process with no bucket yet
+    still finds its photos.
+
+    A list rather than the {name: address} map migration 058 sent, so a
+    screen still running the older script finds no photo under a name, and
+    shows a camera, instead of taking a colour map for an address."""
     with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
         _conn,
         cur,
     ):
-        return build_response(True, pool_photo_urls(cur))
+        return build_response(
+            True,
+            [
+                {
+                    "outputItemName": r["output_item_name"],
+                    "color": r["color"],
+                    "photoUrl": pool_photo_url(r["id"], r["row_version"]),
+                }
+                for r in _pool_photo_rows(cur)
+            ],
+        )
 
 
 @rpc_method("setPoolItemPhoto", mutation=True)
 @database.transactional
-def set_pool_item_photo(conn, cur, output_item_name, image):
-    """Adds or changes a pool item's photo from the Warehouse Pool screens.
-    It is the item's photo everywhere: every colour of it, and every
-    inspection checklist row that uses it."""
+def set_pool_item_photo(conn, cur, output_item_name, image, color=""):
+    """Adds or changes the photo of one colour of a pool item ('' for the
+    item with no colour) from the Warehouse Pool screens. It is that
+    colour's photo everywhere: every product tag of it, and every
+    inspection checklist row that draws on it. The item's other colours
+    keep theirs."""
     name = pool_item_names(cur, [output_item_name]).get(
         str(output_item_name or "").strip().lower()
     )
@@ -3441,5 +3495,6 @@ def set_pool_item_photo(conn, cur, output_item_name, image):
             f"{str(output_item_name or '').strip() or 'That item'} is not an "
             "Output Item of any Process, so it is not a Warehouse Pool item."
         )
-    saved = save_pool_photo(cur, name, image)
-    return build_response(True, saved, f"Photo saved for {saved['outputItemName']}.")
+    saved = save_pool_photo(cur, name, image, color)
+    label = pool_photo_label(saved["outputItemName"], saved["color"])
+    return build_response(True, saved, f"Photo saved for {label}.")

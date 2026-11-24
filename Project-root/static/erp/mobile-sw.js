@@ -265,7 +265,10 @@
 // v110: every item on an inspection checklist takes a remark, written from
 // the speech-bubble button at the end of its row, for the admin reviewing
 // the lot. mobile.js and mobile_styles.css carry it.
-const CACHE_NAME = 'erp-mobile-shell-v110';
+// v111: each colour of a Warehouse Pool item has its own photo: every
+// bucket card shows its colour's, or a camera, and an inspection checklist
+// row shows the photo of the colour it draws on. mobile.js carries it.
+const CACHE_NAME = 'erp-mobile-shell-v111';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

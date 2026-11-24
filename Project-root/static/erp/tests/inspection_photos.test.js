@@ -2,7 +2,8 @@
  * Item photos on the desktop inspection checklist (asked 2026-10-29).
  *
  * A Photo column shows each item's photo -- its Items Master item's, or for
- * a Warehouse Pool row its pool item's (2026-11-02) -- and a click shows it
+ * a Warehouse Pool row its pool item's in its bucket's colour (2026-11-02,
+ * 2026-11-24) -- and a click shows it
  * large (App.PhotoViewer, core.js) with "Change photo"; an item without one
  * offers "Add photo". The viewer lives inside the open dialog, so
  * Bootstrap's focus trap does not pull focus out of it, and Escape closes
@@ -140,18 +141,24 @@ describe('adding or changing a photo', () => {
     expect(App.Utils.showToast).toHaveBeenCalledWith('Photo saved for BAG-KIT---WHITE 20 inch.');
   });
 
-  test('a pool photo shows on every pool row of the item, any size or colour, and on no Items Master row', async () => {
-    const frameRed = item('frame#red', 'Fitted Frame 14 inch Crysta', { size: '14 inch', color: 'Red', photoSource: 'pool', canSetPhoto: true });
+  test('a pool photo shows on every pool row of the item in that colour, any size, and on no other colour or Items Master row', async () => {
+    const frameRed = item('frame#red', 'Fitted Frame 14 inch Crysta', { size: '', color: 'Red', photoSource: 'pool', photoColor: 'Red', canSetPhoto: true });
+    const frameRed14 = item('frame#red14', 'Fitted Frame 14 inch Crysta', { size: '14 inch', color: 'red', photoSource: 'pool', photoColor: 'red', canSetPhoto: true });
+    const frameBlue = item('frame#blue', 'Fitted Frame 14 inch Crysta', { size: '', color: 'Blue', photoSource: 'pool', photoColor: 'Blue', canSetPhoto: true });
     const sameNameItem = item('frame-item', 'Fitted Frame 14 inch Crysta', { size: '', photoSource: 'stock', canSetPhoto: true });
-    await open([FRAME, frameRed, sameNameItem], (method, rowIdx, key) => ({
-      success: true, message: 'Photo saved for Fitted Frame 14 inch Crysta, every colour of it.',
-      data: { key, itemName: 'Fitted Frame 14 inch Crysta', size: '', photoSource: 'pool', photoUrl: '/erp/pool-photo/3?v=9' }
+    await open([frameRed, frameRed14, frameBlue, FRAME, sameNameItem], (method, rowIdx, key) => ({
+      success: true, message: 'Photo saved for Fitted Frame 14 inch Crysta · Red.',
+      data: { key, itemName: 'Fitted Frame 14 inch Crysta', size: '', photoSource: 'pool', photoColor: 'Red', photoUrl: '/erp/pool-photo/3?v=9' }
     }));
-    await App.Inspection.savePhoto('frame', 'data:image/jpeg;base64,NEW');
-    ['frame', 'frame#red'].forEach(key => {
+    await App.Inspection.savePhoto('frame#red', 'data:image/jpeg;base64,NEW');
+    ['frame#red', 'frame#red14'].forEach(key => {
       expect(rowOf(key).querySelector('img.insp-photo-thumb').getAttribute('src')).toBe('/erp/pool-photo/3?v=9');
     });
-    expect(rowOf('frame-item').querySelector('img')).toBeNull();
+    // Blue, the no-colour row and the Items Master item keep what they had.
+    ['frame#blue', 'frame', 'frame-item'].forEach(key => {
+      expect(rowOf(key).querySelector('img')).toBeNull();
+    });
+    expect(App.Utils.showToast).toHaveBeenCalledWith('Photo saved for Fitted Frame 14 inch Crysta · Red.');
   });
 
   test('a refusal is said and nothing changes', async () => {

@@ -329,10 +329,25 @@ def _row_source(comp, in_items, in_pool) -> str:
     return ""
 
 
-def _photo_targets(cur, lot, items) -> list[tuple[str, dict | None]]:
-    """Each row's photo owner, as (source, Items Master row): ("pool",
-    None) for a Warehouse Pool item, ("stock", the matching Items Master row
-    or None) for an Items Master item, ("", None) for a row neither knows.
+def _pool_row_color(comp, item) -> str:
+    """The Warehouse Pool bucket colour a pool row draws on, "" when it
+    draws on every colour (COMMON) or names none: its recorded component's
+    bucket (production_service._pool_bucket_color), else the saved sheet
+    row's own colour. The stock on hand it shows is that bucket's, and so is
+    its photo (migration 060)."""
+    bucket = (
+        production_service._pool_bucket_color(comp)
+        if comp is not None
+        else _text(item.get("color"))
+    )
+    return bucket if production_service._is_color_scoped(bucket) else ""
+
+
+def _photo_targets(cur, lot, items) -> list[tuple[str, dict | str | None]]:
+    """Each row's photo owner, as (source, Items Master row or pool colour):
+    ("pool", its bucket colour) for a Warehouse Pool item, ("stock", the
+    matching Items Master row or None) for an Items Master item, ("", None)
+    for a row neither knows.
 
     The Items Master match is exact, name and size: a rim photographed in
     16 inch must not stand in for the 20 inch rim the row asks for, because
@@ -359,7 +374,10 @@ def _photo_targets(cur, lot, items) -> list[tuple[str, dict | None]]:
     for item, comp in zip(items, comps):
         key = _photo_key(item)
         source = _row_source(comp, key in found, key[0] in in_pool)
-        targets.append((source, found.get(key) if source == "stock" else None))
+        if source == "pool":
+            targets.append((source, _pool_row_color(comp, item)))
+        else:
+            targets.append((source, found.get(key) if source == "stock" else None))
     return targets
 
 
@@ -369,16 +387,21 @@ def attach_photos(cur, lot, items) -> None:
       photoUrl     its address, "" when there is none yet. Only the address
                    is sent; the photo itself loads when shown.
       photoSource  "pool" for a Warehouse Pool item (a painted frame, a
-                   fitted rim): one photo per item name, every colour of it,
-                   the one the Warehouse Pool screens show. "stock" for an
-                   Items Master item: that item's photo, by name and size.
-                   "" for a row neither knows.
+                   fitted rim): the photo of the item in the colour of the
+                   bucket the row draws on, the one the Warehouse Pool
+                   screens show on that bucket. "stock" for an Items Master
+                   item: that item's photo, by name and size. "" for a row
+                   neither knows.
+      photoColor   a pool row's bucket colour, "" for none or every colour
+                   (COMMON); "" on any other row.
       canSetPhoto  whether the inspector can add or change it: every pool
                    row, and every row with an Items Master item.
 
     A pool row used to get none of this, and showed a camera only when its
     name and size happened to match an Items Master item (the owner,
-    2026-11-02: it must be there uniformly)."""
+    2026-11-02: it must be there uniformly). Then one photo served every
+    colour of a pool item, until each colour got its own (the owner,
+    2026-11-24, migration 060)."""
     targets = _photo_targets(cur, lot, items)
     pool_urls = warehouse_service.pool_photo_urls(
         cur,
@@ -390,9 +413,12 @@ def attach_photos(cur, lot, items) -> None:
     )
     for item, (source, match) in zip(items, targets):
         item["photoSource"] = source
+        item["photoColor"] = match if source == "pool" else ""
         if source == "pool":
             item["canSetPhoto"] = True
-            item["photoUrl"] = pool_urls.get(_photo_key(item)[0], "")
+            item["photoUrl"] = pool_urls.get(
+                warehouse_service.pool_photo_key(item.get("itemName"), match), ""
+            )
             continue
         item["canSetPhoto"] = match is not None
         item["photoUrl"] = (
@@ -454,12 +480,7 @@ def attach_stock(cur, lot, items) -> None:
         need = float(item.get("qty") or 0)
         unit = _text(item.get("unit"))
         if is_pool:
-            bucket = (
-                production_service._pool_bucket_color(comp)
-                if comp is not None
-                else _text(item.get("color"))
-            )
-            color = bucket if production_service._is_color_scoped(bucket) else ""
+            color = _pool_row_color(comp, item)
             qty = production_service._pool_available_qty(pool.get(name), color)
             info = items_service.lookup_item_unit_info(
                 unit_maps["items"], item.get("itemName"), ""
@@ -1048,8 +1069,10 @@ def set_inspection_item_photo(conn, cur, row_idx, item_key, image):
             "That item is no longer on this lot's Production Sheet. Reload the checklist."
         )
     image = items_service.check_servable_photo(image)
-    if _photo_targets(cur, lot, [row])[0][0] == "pool":
-        saved = warehouse_service.save_pool_photo(cur, row["itemName"], image)
+    source, target = _photo_targets(cur, lot, [row])[0]
+    if source == "pool":
+        saved = warehouse_service.save_pool_photo(cur, row["itemName"], image, target)
+        label = warehouse_service.pool_photo_label(row["itemName"], saved["color"])
         return build_response(
             True,
             {
@@ -1057,9 +1080,10 @@ def set_inspection_item_photo(conn, cur, row_idx, item_key, image):
                 "itemName": row["itemName"],
                 "size": row["size"],
                 "photoSource": "pool",
+                "photoColor": saved["color"],
                 "photoUrl": saved["photoUrl"],
             },
-            f"Photo saved for {row['itemName']}, every colour of it.",
+            f"Photo saved for {label}.",
         )
     cur.execute(
         "SELECT id, item_name FROM erp.items WHERE deleted_at IS NULL "
