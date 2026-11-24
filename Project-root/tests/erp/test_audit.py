@@ -834,6 +834,65 @@ def test_every_item_is_rebuilt_from_its_entries_and_must_match_the_stock_page(
     assert "counted 60" in f["detail"]
 
 
+def test_a_lot_clicked_completed_on_its_own_date_after_a_count_is_rebuilt_as_stock_reads_it(
+    erp_admin_client,
+):
+    """The owner's rule of 2026-11-08 (stock_service._LOT_STOCK_MOMENT_SQL):
+    a lot marked Completed on or before its own date takes effect at that
+    click. Logged in the morning, counted at noon, clicked Completed in the
+    evening: the count still had its parts on the shelf, so they come off
+    after it. Stock read it so; the audit's own rebuild still judged the lot
+    by its date, which put it inside the count -- 19 items reported as code
+    bugs on the 2026-11-23 backup."""
+    client = erp_admin_client
+    item = _item(client)
+    _proc, proc_id = _process(client)
+    _bill(client, [{"name": item, "qty": 100, "price": 5, "unit": "Pcs"}])
+    lot_number = _lot_with(
+        client,
+        proc_id,
+        7,
+        [{"itemName": item, "qty": 7, "sourceType": "ITEM"}],
+        status="Pending",
+    )
+    with database.get_conn() as (_conn, cur):
+        # Logged earlier today, as the real lots were.
+        cur.execute(
+            "UPDATE erp.production SET production_date = CURRENT_DATE, "
+            "created_at = date_trunc('day', NOW()) + interval '1 minute' "
+            "WHERE lot_number = %s",
+            (lot_number,),
+        )
+        cur.execute(
+            "SELECT id FROM erp.production WHERE lot_number = %s", (lot_number,)
+        )
+        lot_id = cur.fetchone()[0]
+    _ok(
+        _rpc(
+            client,
+            "adjustStockManually",
+            [item, "", 100, "physical recount"],
+            mutation=True,
+        )
+    )
+    _ok(
+        _rpc(
+            client,
+            "updateProductionStatus",
+            [lot_id, 7, "Completed"],
+            mutation=True,
+        )
+    )
+
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
+        on_hand = stock_service.current_stock_of(cur, [(item, "")])
+    assert on_hand[f"{item.lower()}|"] == 93
+    assert _findings("stock_statement_mismatch", item) == []
+
+
 def test_a_run_says_what_it_checked(erp_admin_client):
     item = _item(erp_admin_client)
     _bill(erp_admin_client, [{"name": item, "qty": 2, "price": 5, "unit": "Pcs"}])
