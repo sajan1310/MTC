@@ -5204,8 +5204,9 @@
   overflow-wrap: anywhere;
 }
 
-/* A pool item's photo on the Warehouse Pool (stock.js _poolPhotoHtml):
-   the same thumbnail beside the Process, or a camera where there is none. */
+/* A pool item's photo on the Warehouse Pool (stock.js _poolPhotoHtml): each
+   colour's own beside it in the breakdown, or a camera where it has none;
+   one of them beside the Process, or an empty slot. */
 .pool-photo-btn {
   flex: none;
   width: 40px;
@@ -5231,6 +5232,12 @@
   background: transparent;
   color: var(--bs-secondary-color);
   cursor: pointer;
+}
+
+.pool-photo-btn.pool-photo-none {
+  border-color: transparent;
+  background: transparent;
+  cursor: default;
 }
 
 /* App.PhotoViewer (core.js): a photo filling the window, over the dialog

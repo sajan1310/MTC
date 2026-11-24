@@ -247,12 +247,13 @@ def _rename_pool_output_item_name_everywhere(cur, old_name: str, new_name: str) 
             cur, table, "item_name", old, new, extra_where=" AND source_type = 'POOL'"
         )
 
-    # The pool item's photo (migration 058). One photo per name, so where the
-    # new name already has its own, that one stays and the old name's goes.
+    # The pool item's photos (migrations 058, 060), one per colour. Where the
+    # new name already has a photo of a colour, that one stays and the old
+    # name's of that colour goes; the old name's other colours carry over.
     cur.execute(
-        "DELETE FROM erp.pool_item_photos WHERE lower(output_item_name) = lower(%s) "
-        "AND EXISTS (SELECT 1 FROM erp.pool_item_photos "
-        "WHERE lower(output_item_name) = lower(%s))",
+        "DELETE FROM erp.pool_item_photos AS o WHERE lower(o.output_item_name) = lower(%s) "
+        "AND EXISTS (SELECT 1 FROM erp.pool_item_photos AS n "
+        "WHERE lower(n.output_item_name) = lower(%s) AND lower(n.color) = lower(o.color))",
         (old, new),
     )
     rename_utils.rename_in_column(

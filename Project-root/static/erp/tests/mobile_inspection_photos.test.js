@@ -2,7 +2,8 @@
  * Item photos on the phone/tablet inspection checklist (asked 2026-10-29).
  *
  * Each row shows its item's photo beside the box -- its Items Master item's,
- * or for a Warehouse Pool row its pool item's (2026-11-02); a tap shows it
+ * or for a Warehouse Pool row its pool item's in its bucket's colour
+ * (2026-11-02, 2026-11-24); a tap shows it
  * full screen with "Change photo", and a row whose item has no photo shows a
  * camera to add one. The row is the box's label, so a tap on the photo must
  * never tick the item. A sheet with nothing to photograph looks as before.
@@ -160,19 +161,24 @@ describe('adding or changing a photo', () => {
     });
   });
 
-  test('a pool photo shows on every pool row of the item, any size or colour, and on no Items Master row', async () => {
-    const frameRed = item('frame#red', 'Fitted Frame 14 inch Crysta', { size: '14 inch', color: 'Red', photoSource: 'pool', canSetPhoto: true });
+  test('a pool photo shows on every pool row of the item in that colour, any size, and on no other colour or Items Master row', async () => {
+    const frameRed = item('frame#red', 'Fitted Frame 14 inch Crysta', { size: '', color: 'Red', photoSource: 'pool', photoColor: 'Red', canSetPhoto: true });
+    const frameRed14 = item('frame#red14', 'Fitted Frame 14 inch Crysta', { size: '14 inch', color: 'red', photoSource: 'pool', photoColor: 'red', canSetPhoto: true });
+    const frameBlue = item('frame#blue', 'Fitted Frame 14 inch Crysta', { size: '', color: 'Blue', photoSource: 'pool', photoColor: 'Blue', canSetPhoto: true });
     const sameNameItem = item('frame-item', 'Fitted Frame 14 inch Crysta', { size: '', photoSource: 'stock', canSetPhoto: true });
-    await open([FRAME, frameRed, sameNameItem]);
+    await open([frameRed, frameRed14, frameBlue, FRAME, sameNameItem]);
     MApp.Api.mutate = jest.fn(async () => ({
-      success: true, message: 'Photo saved for Fitted Frame 14 inch Crysta, every colour of it.',
-      data: { key: 'frame', itemName: 'Fitted Frame 14 inch Crysta', size: '', photoSource: 'pool', photoUrl: '/erp/pool-photo/3?v=9' }
+      success: true, message: 'Photo saved for Fitted Frame 14 inch Crysta · Red.',
+      data: { key: 'frame#red', itemName: 'Fitted Frame 14 inch Crysta', size: '', photoSource: 'pool', photoColor: 'Red', photoUrl: '/erp/pool-photo/3?v=9' }
     }));
-    await MApp.Inspection.savePhoto('frame', 'data:image/jpeg;base64,NEW');
-    ['frame', 'frame#red'].forEach(key => {
+    await MApp.Inspection.savePhoto('frame#red', 'data:image/jpeg;base64,NEW');
+    ['frame#red', 'frame#red14'].forEach(key => {
       expect(rowOf(key).querySelector('.mb-insp-photo img').getAttribute('src')).toBe('/erp/pool-photo/3?v=9');
     });
-    expect(rowOf('frame-item').querySelector('.mb-insp-photo img')).toBeNull();
+    // Blue, the no-colour row and the Items Master item keep what they had.
+    ['frame#blue', 'frame', 'frame-item'].forEach(key => {
+      expect(rowOf(key).querySelector('.mb-insp-photo img')).toBeNull();
+    });
   });
 
   test('Change photo in the viewer starts the same choice', async () => {

@@ -586,7 +586,11 @@
 // wrong with it, or what should change -- for the admin reviewing the lot,
 // and the dialog before clearing shows each item's remark. inspection.js
 // and styles.css are precached.
-const CACHE_NAME = 'erp-shell-v122';
+// v123: each colour of a Warehouse Pool item has its own photo -- every
+// combination in a Process's breakdown shows its own, or a camera -- and an
+// inspection checklist row shows the photo of the colour it draws on.
+// stock.js, inspection.js and styles.css are precached.
+const CACHE_NAME = 'erp-shell-v123';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

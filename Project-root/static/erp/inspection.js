@@ -347,17 +347,18 @@ App.Inspection = {
   // ── Item photos ───────────────────────────────────────────────────────
   // Each row shows its item's photo (photoUrl, loaded only when the row is
   // shown); a click shows it large, with "Change photo". An item with none
-  // offers "Add photo". A Warehouse Pool row's photo is its pool item's
-  // (photoSource "pool": one per item name, every colour of it, the one the
-  // Warehouse Pool shows), so every pool row offers one; any other row's is
-  // its Items Master item's. The column appears when any row has either.
+  // offers "Add photo". A Warehouse Pool row's photo is its pool item's in
+  // the colour of the bucket it draws on (photoSource "pool", photoColor;
+  // the one the Warehouse Pool shows on that bucket), so every pool row
+  // offers one; any other row's is its Items Master item's. The column
+  // appears when any row has either.
   _withPhotos() {
     const d = this._current;
     return !!(d && d.items.some(i => i.photoUrl || i.canSetPhoto));
   },
 
   _photoTitle(item) {
-    return [item.itemName, item.size].filter(Boolean).join(' · ');
+    return [item.itemName, item.size, item.photoColor].filter(Boolean).join(' · ');
   },
 
   _photoCell(item) {
@@ -415,13 +416,15 @@ App.Inspection = {
       return;
     }
     // The photo is the item's: every row of the same item shows it -- of
-    // the same size for an Items Master item, of any size or colour for a
-    // pool item.
-    const lower = s => String(s || '').toLowerCase();
+    // the same size for an Items Master item, of the same pool colour (any
+    // size) for a pool item.
+    const lower = s => String(s || '').trim().toLowerCase();
     const pool = res.data.photoSource === 'pool';
     d.items
       .filter(i => lower(i.itemName) === lower(res.data.itemName)
-        && (pool ? i.photoSource === 'pool' : i.photoSource !== 'pool' && lower(i.size) === lower(res.data.size)))
+        && (pool
+          ? i.photoSource === 'pool' && lower(i.photoColor) === lower(res.data.photoColor)
+          : i.photoSource !== 'pool' && lower(i.size) === lower(res.data.size)))
       .forEach(i => {
         i.photoUrl = res.data.photoUrl;
         if (this._current === d) this._repaintRow(i);

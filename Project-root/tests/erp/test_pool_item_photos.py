@@ -1,11 +1,15 @@
-"""A photo for each Warehouse Pool item (asked 2026-11-02).
+"""A photo for each Warehouse Pool item and colour (asked 2026-11-02 and
+2026-11-24).
 
 The inspection checklist offered a camera on a pool row (a painted frame, a
 fitted rim) only when its name and size happened to match an Items Master
 item. Now every pool row offers one, and the photo belongs to the pool item
-(erp.pool_item_photos, migration 058): one per Output Item Name, every colour
-of it, the same photo on every lot's checklist and on the Warehouse Pool
-screens, served at /erp/pool-photo/<id>.
+(erp.pool_item_photos, migration 058) in one colour (migration 060: "every
+processed item is supposed to have different image for its different color
+combinations"): the colour of the bucket the row draws on, the same photo on
+every lot's checklist and on that bucket in the Warehouse Pool screens,
+served at /erp/pool-photo/<id>. A colour with none shows none -- never
+another colour's.
 """
 
 from __future__ import annotations
@@ -96,11 +100,24 @@ def _photo_rows(app, name) -> list:
             cur,
         ):
             cur.execute(
-                "SELECT id, output_item_name, image, row_version FROM erp.pool_item_photos "
-                "WHERE lower(output_item_name) = lower(%s)",
+                "SELECT id, output_item_name, color, image, row_version "
+                "FROM erp.pool_item_photos WHERE lower(output_item_name) = lower(%s) "
+                "ORDER BY lower(color)",
                 (name,),
             )
             return [dict(r) for r in cur.fetchall()]
+
+
+def _listed(client) -> dict:
+    """getPoolItemPhotos as {(name, colour): address}."""
+    return {
+        (p["outputItemName"], p["color"]): p["photoUrl"]
+        for p in _ok(_rpc(client, "getPoolItemPhotos"))["data"]
+    }
+
+
+def _url(stored) -> str:
+    return f"/erp/pool-photo/{stored['id']}?v={stored['row_version']}"
 
 
 def _frame():
@@ -157,9 +174,10 @@ def test_every_pool_row_can_take_a_photo_with_no_items_master_item(erp_app, erp_
         assert row["photoSource"] == "pool"
         assert row["canSetPhoto"] is True
         assert row["photoUrl"] == ""
+    assert {r["photoColor"] for r in rows} == {"Red", "Blue"}
 
 
-def test_a_pool_photo_from_one_row_shows_on_every_colour_and_every_lot(
+def test_a_pool_photo_from_one_row_shows_on_that_colour_in_every_lot_only(
     erp_app, erp_client
 ):
     frame = _frame()
@@ -167,7 +185,13 @@ def test_a_pool_photo_from_one_row_shows_on_every_colour_and_every_lot(
         erp_app,
         [_component(frame, color_group="Red"), _component(frame, color_group="Blue")],
     )
-    other_lot = _lot(erp_app, [_component(frame, "20 inch", color_group="Black")])
+    other_lot = _lot(
+        erp_app,
+        [
+            _component(frame, "20 inch", color_group="red"),
+            _component(frame, "20 inch", color_group="Black"),
+        ],
+    )
     red = next(r for r in _rows(erp_client, lot_id) if r["color"] == "Red")
 
     body = _ok(
@@ -179,15 +203,21 @@ def test_a_pool_photo_from_one_row_shows_on_every_colour_and_every_lot(
         )
     )
     [stored] = _photo_rows(erp_app, frame)
-    url = f"/erp/pool-photo/{stored['id']}?v={stored['row_version']}"
+    url = _url(stored)
     assert stored["image"] == JPEG_URL
+    assert stored["color"] == "Red"
     assert body["data"]["photoSource"] == "pool"
+    assert body["data"]["photoColor"] == "Red"
     assert body["data"]["photoUrl"] == url
-    assert body["message"] == f"Photo saved for {frame}, every colour of it."
+    assert body["message"] == f"Photo saved for {frame} · Red."
 
-    assert {r["photoUrl"] for r in _rows(erp_client, lot_id)} == {url}
-    # Another lot, another colour and a size: the same pool item.
-    assert [r["photoUrl"] for r in _rows(erp_client, other_lot)] == [url]
+    by_color = {r["color"]: r["photoUrl"] for r in _rows(erp_client, lot_id)}
+    assert by_color == {"Red": url, "Blue": ""}
+    # Another lot and a size: the Red photo on its red row, none on Black.
+    by_color = {r["color"]: r["photoUrl"] for r in _rows(erp_client, other_lot)}
+    assert by_color == {"red": url, "Black": ""}
+    # The Warehouse Pool lists it under its colour.
+    assert _listed(erp_client).get((frame, "Red")) == url
 
     served = erp_client.get(url)
     assert served.status_code == 200
@@ -300,26 +330,114 @@ def test_a_row_neither_ledger_knows_is_still_refused(erp_app, erp_client):
 # ── The Warehouse Pool screens ──────────────────────────────────────────
 
 
-def test_the_warehouse_pool_adds_lists_and_replaces_a_pool_photo(erp_app, erp_client):
+def test_the_warehouse_pool_adds_lists_and_replaces_a_colours_photo(
+    erp_app, erp_client
+):
     frame = _frame()
     _save_process(erp_client, frame)
 
     first = _ok(
-        _rpc(erp_client, "setPoolItemPhoto", [frame.upper(), PNG_URL], mutation=True)
+        _rpc(
+            erp_client,
+            "setPoolItemPhoto",
+            [frame.upper(), PNG_URL, " Red-White "],
+            mutation=True,
+        )
     )
     assert first["data"]["outputItemName"] == frame  # as the pool spells it
-    assert first["message"] == f"Photo saved for {frame}."
-    listed = _ok(_rpc(erp_client, "getPoolItemPhotos"))["data"]
-    assert listed[frame.lower()] == first["data"]["photoUrl"]
+    assert first["data"]["color"] == "Red-White"
+    assert first["message"] == f"Photo saved for {frame} · Red-White."
+    assert _listed(erp_client)[(frame, "Red-White")] == first["data"]["photoUrl"]
 
-    second = _ok(_rpc(erp_client, "setPoolItemPhoto", [frame, JPEG_URL], mutation=True))
+    # The same colour, spelt another way, is replaced in place.
+    second = _ok(
+        _rpc(
+            erp_client,
+            "setPoolItemPhoto",
+            [frame, JPEG_URL, "red-white"],
+            mutation=True,
+        )
+    )
     assert second["data"]["photoUrl"] != first["data"]["photoUrl"]
-    assert len(_photo_rows(erp_app, frame)) == 1
+    assert [r["color"] for r in _photo_rows(erp_app, frame)] == ["Red-White"]
     assert erp_client.get(second["data"]["photoUrl"]).mimetype == "image/jpeg"
 
-    # The checklist shows the photo the Warehouse Pool set.
-    lot_id = _lot(erp_app, [_component(frame, color_group="Red")])
-    assert _rows(erp_client, lot_id)[0]["photoUrl"] == second["data"]["photoUrl"]
+    # Another colour is a photo of its own; the first keeps its.
+    black = _ok(
+        _rpc(erp_client, "setPoolItemPhoto", [frame, PNG_URL, "Black"], mutation=True)
+    )
+    listed = _listed(erp_client)
+    assert listed[(frame, "Red-White")] == second["data"]["photoUrl"]
+    assert listed[(frame, "Black")] == black["data"]["photoUrl"]
+
+    # The checklist shows each colour's photo on the rows drawing on it.
+    lot_id = _lot(
+        erp_app,
+        [
+            _component(frame, color_group="Red-White"),
+            _component(frame, color_group="Black"),
+            _component(frame, color_group="Blue"),
+        ],
+    )
+    by_color = {r["color"]: r["photoUrl"] for r in _rows(erp_client, lot_id)}
+    assert by_color == {
+        "Red-White": second["data"]["photoUrl"],
+        "Black": black["data"]["photoUrl"],
+        "Blue": "",
+    }
+
+
+def test_no_colour_is_the_items_own_photo_shown_only_for_no_colour(erp_app, erp_client):
+    """Two arguments, as migration 058's screens send them, set the item's
+    photo with no colour: the one a COMMON row (every colour) shows. It is
+    not shown for a colour that has none of its own."""
+    frame = _frame()
+    _save_process(erp_client, frame)
+    body = _ok(_rpc(erp_client, "setPoolItemPhoto", [frame, PNG_URL], mutation=True))
+    assert body["data"]["color"] == ""
+    assert body["message"] == f"Photo saved for {frame}."
+
+    lot_id = _lot(
+        erp_app,
+        [_component(frame, color_group="COMMON"), _component(frame, color_group="Red")],
+    )
+    rows = _rows(erp_client, lot_id)
+    common = next(r for r in rows if r["photoColor"] == "")
+    red = next(r for r in rows if r["photoColor"] == "Red")
+    assert common["photoUrl"] == body["data"]["photoUrl"]
+    assert red["photoUrl"] == ""
+
+
+def test_a_row_drawing_on_another_colours_bucket_shows_that_colours_photo(
+    erp_app, erp_client
+):
+    """A Blue mudguard fitted to a Purple-Wine lot: its colorGroup is the
+    lot's colour, its poolColor the bucket it comes out of. The photo is the
+    bucket's, as the stock on hand beside it is."""
+    frame = _frame()
+    _save_process(erp_client, frame)
+    blue = _ok(
+        _rpc(erp_client, "setPoolItemPhoto", [frame, JPEG_URL, "Blue"], mutation=True)
+    )["data"]["photoUrl"]
+    lot_id = _lot(
+        erp_app,
+        [dict(_component(frame, color_group="Purple-Wine"), poolColor="Blue")],
+    )
+    [row] = _rows(erp_client, lot_id)
+    assert row["photoColor"] == "Blue"
+    assert row["photoUrl"] == blue
+
+    # A new photo from that row goes on the Blue bucket, not on Purple-Wine.
+    _ok(
+        _rpc(
+            erp_client,
+            "setInspectionItemPhoto",
+            [lot_id, row["key"], PNG_URL],
+            mutation=True,
+        )
+    )
+    [stored] = _photo_rows(erp_app, frame)
+    assert (stored["color"], stored["image"]) == ("Blue", PNG_URL)
 
 
 def test_a_bucket_with_no_process_is_still_a_pool_item(erp_app, erp_client):
@@ -353,9 +471,13 @@ def test_the_warehouse_pool_refuses_what_is_not_a_pool_item_or_a_photo(
     _save_process(erp_client, frame)
     for image in ("", "not a photo", "data:image/svg+xml;base64,PHN2Zz4="):
         bad = _rpc(
-            erp_client, "setPoolItemPhoto", [frame, image], mutation=True
+            erp_client, "setPoolItemPhoto", [frame, image, "Red"], mutation=True
         ).get_json()
         assert bad["success"] is False, image
+    too_long = _rpc(
+        erp_client, "setPoolItemPhoto", [frame, PNG_URL, "R" * 256], mutation=True
+    ).get_json()
+    assert too_long["success"] is False
     assert _photo_rows(erp_app, frame) == []
 
 
@@ -403,19 +525,23 @@ def test_an_inspector_sets_pool_photos_from_the_checklist_only(erp_app, role_cli
 # ── A renamed Output Item keeps its photo ───────────────────────────────
 
 
-def test_renaming_the_output_item_carries_its_photo(erp_client):
+def test_renaming_the_output_item_carries_its_photos(erp_client):
     old, new = _frame(), _frame()
     payload, process_id = _save_process(erp_client, old)
-    url = _ok(_rpc(erp_client, "setPoolItemPhoto", [old, PNG_URL], mutation=True))[
+    plain = _ok(_rpc(erp_client, "setPoolItemPhoto", [old, PNG_URL], mutation=True))[
         "data"
     ]["photoUrl"]
+    red = _ok(
+        _rpc(erp_client, "setPoolItemPhoto", [old, JPEG_URL, "Red"], mutation=True)
+    )["data"]["photoUrl"]
 
     edit = dict(payload, processId=process_id, outputItemName=new)
     _ok(_rpc(erp_client, "saveProcess", [edit], mutation=True))
 
-    listed = _ok(_rpc(erp_client, "getPoolItemPhotos"))["data"]
-    assert old.lower() not in listed
-    assert listed[new.lower()].split("?")[0] == url.split("?")[0]
+    listed = _listed(erp_client)
+    assert not [key for key in listed if key[0] == old]
+    assert listed[(new, "")].split("?")[0] == plain.split("?")[0]
+    assert listed[(new, "Red")].split("?")[0] == red.split("?")[0]
 
 
 def test_renaming_onto_a_name_with_its_own_photo_keeps_that_one(erp_app, erp_client):
@@ -431,12 +557,52 @@ def test_renaming_onto_a_name_with_its_own_photo_keeps_that_one(erp_app, erp_cli
                 "VALUES (%s, 'PRC-RETIRED', 2, 0, 2, '')",
                 (new,),
             )
-    _ok(_rpc(erp_client, "setPoolItemPhoto", [old, PNG_URL], mutation=True))
-    _ok(_rpc(erp_client, "setPoolItemPhoto", [new, JPEG_URL], mutation=True))
+    _ok(_rpc(erp_client, "setPoolItemPhoto", [old, PNG_URL, "Red"], mutation=True))
+    _ok(_rpc(erp_client, "setPoolItemPhoto", [old, PNG_URL, "Blue"], mutation=True))
+    _ok(_rpc(erp_client, "setPoolItemPhoto", [new, JPEG_URL, "red"], mutation=True))
 
     edit = dict(payload, processId=process_id, outputItemName=new)
     _ok(_rpc(erp_client, "saveProcess", [edit], mutation=True))
 
     assert _photo_rows(erp_app, old) == []
-    [kept] = _photo_rows(erp_app, new)
-    assert kept["image"] == JPEG_URL
+    # Red: the new name's own stays. Blue: the old name's carries over.
+    kept = {r["color"].lower(): r["image"] for r in _photo_rows(erp_app, new)}
+    assert kept == {"red": JPEG_URL, "blue": PNG_URL}
+
+
+# ── A renamed colour keeps its photo ────────────────────────────────────
+
+
+def test_renaming_a_colour_carries_its_photo(erp_client):
+    """Color Master renames every bucket of the colour, alone or inside a
+    combination; each bucket's photo goes with it."""
+    frame = _frame()
+    _save_process(erp_client, frame)
+    old = f"Shade {uuid.uuid4().hex[:6]}"
+    new = f"Shade {uuid.uuid4().hex[:6]}"
+    _ok(_rpc(erp_client, "saveColor", [{"name": old}], mutation=True))
+    alone = _ok(
+        _rpc(erp_client, "setPoolItemPhoto", [frame, PNG_URL, old], mutation=True)
+    )["data"]["photoUrl"]
+    combo = _ok(
+        _rpc(
+            erp_client,
+            "setPoolItemPhoto",
+            [frame, JPEG_URL, f"{old} / Black"],
+            mutation=True,
+        )
+    )["data"]["photoUrl"]
+
+    _ok(
+        _rpc(
+            erp_client,
+            "saveColor",
+            [{"name": new, "originalName": old}],
+            mutation=True,
+        )
+    )
+
+    listed = _listed(erp_client)
+    assert listed[(frame, new)].split("?")[0] == alone.split("?")[0]
+    assert listed[(frame, f"{new} / Black")].split("?")[0] == combo.split("?")[0]
+    assert (frame, old) not in listed

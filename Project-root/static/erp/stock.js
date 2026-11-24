@@ -951,7 +951,7 @@ App.Stock = {
       }
       App.State.globalWarehousePool = Array.isArray(poolRes.data) ? poolRes.data : [];
       App.State.warehousePoolColorsByProcess = colorsRes?.success ? (colorsRes.data || {}) : {};
-      App.State.poolItemPhotos = photosRes?.success ? (photosRes.data || {}) : {};
+      App.State.poolItemPhotos = this._poolPhotoMap(photosRes?.success ? photosRes.data : null);
       App.State.selectedWarehousePool = [];
       this.renderWarehousePoolTable();
     } catch (err) {
@@ -1224,7 +1224,7 @@ App.Stock = {
         : '<span class="badge bg-warning text-dark ms-2">No Output Item configured</span>';
       const statusBadge = p.active ? '' : ' <span class="badge bg-danger ms-2">Inactive</span>';
       const tierCells = tierValues.map(v => `<td class="align-middle fw-semibold text-secondary bg-light">${escapeHtml(v)}</td>`).join('');
-      const processCell = `<td class="align-middle fw-bold"><div class="d-flex align-items-center gap-2">${this._poolPhotoHtml(p.outputItemName)}<span>${escapeHtml(p.processName)}${outputBadge}${statusBadge}</span></div></td>`;
+      const processCell = `<td class="align-middle fw-bold"><div class="d-flex align-items-center gap-2">${this._poolProcessPhotoHtml(p, entry.leafRows)}<span>${escapeHtml(p.processName)}${outputBadge}${statusBadge}</span></div></td>`;
 
       // Sub-group buckets are listed as their own combination but are not
       // units -- 'Kit Bag 24"' is recorded per color on units the primary
@@ -1267,42 +1267,85 @@ App.Stock = {
     this.updateWarehousePoolBulkButtons();
   },
 
-  // ── A pool item's photo ──────────────────────────────────────────────
-  // One per Output Item (getPoolItemPhotos), every colour of it -- the one
-  // its inspection checklist rows show. A click shows it large, with
-  // "Change photo"; an item with none offers a camera. Inside the Process
-  // row, so a click here must not open the breakdown as well.
-  _poolPhotoUrl(name) {
-    return (App.State.poolItemPhotos || {})[String(name || '').trim().toLowerCase()] || '';
+  // ── A pool item's photos ─────────────────────────────────────────────
+  // One per Output Item and colour (getPoolItemPhotos; migration 060): a
+  // Red-White frame and a Black one each have their own, and product tags
+  // share their colour's. Each combination in the breakdown shows its own
+  // -- the one inspection checklist rows drawing on that bucket show -- and
+  // a colour with none offers a camera, never another colour's photo. A
+  // click shows it large, with "Change photo".
+  _poolPhotoKey(name, color) {
+    return `${String(name || '').trim().toLowerCase()}\n${String(color || '').trim().toLowerCase()}`;
   },
 
-  _poolPhotoHtml(name) {
+  // getPoolItemPhotos' [{outputItemName, color, photoUrl}] as a lookup.
+  _poolPhotoMap(list) {
+    const map = {};
+    (Array.isArray(list) ? list : []).forEach(p => {
+      if (p && p.outputItemName && p.photoUrl) map[this._poolPhotoKey(p.outputItemName, p.color)] = p.photoUrl;
+    });
+    return map;
+  },
+
+  _poolPhotoUrl(name, color) {
+    return (App.State.poolItemPhotos || {})[this._poolPhotoKey(name, color)] || '';
+  },
+
+  _poolPhotoLabel(name, color) {
+    return [name, color].map(s => String(s || '').trim()).filter(Boolean).join(' · ');
+  },
+
+  // A combination's photo, or a camera to add one. Inside a row with its
+  // own click, so a click here must not reach the row.
+  _poolPhotoHtml(name, color) {
     if (!name) return '';
-    const enc = encodeURIComponent(name).replace(/'/g, '%27');
-    const label = escapeHtml(name);
-    const url = this._poolPhotoUrl(name);
+    const args = `'${this._poolPhotoArg(name)}', '${this._poolPhotoArg(color)}'`;
+    const label = escapeHtml(this._poolPhotoLabel(name, color));
+    const url = this._poolPhotoUrl(name, color);
     if (url) {
-      return `<button type="button" class="pool-photo-btn" onclick="event.stopPropagation(); App.Stock.viewPoolPhoto('${enc}')" aria-label="View photo of ${label}" title="View photo">
+      return `<button type="button" class="pool-photo-btn" onclick="event.stopPropagation(); App.Stock.viewPoolPhoto(${args})" aria-label="View photo of ${label}" title="View photo">
         <img src="${escapeHtml(url)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">
       </button>`;
     }
-    return `<button type="button" class="pool-photo-btn pool-photo-add" onclick="event.stopPropagation(); App.Stock.choosePoolPhoto('${enc}')" aria-label="Add a photo of ${label}" title="Add photo"><i class="bi bi-camera"></i></button>`;
+    return `<button type="button" class="pool-photo-btn pool-photo-add" onclick="event.stopPropagation(); App.Stock.choosePoolPhoto(${args})" aria-label="Add a photo of ${label}" title="Add photo"><i class="bi bi-camera"></i></button>`;
   },
 
-  viewPoolPhoto(encName) {
+  // A name or colour inside a quoted onclick argument: a colour can carry
+  // quotes ('Kit Bag 24"'), a name an apostrophe.
+  _poolPhotoArg(value) {
+    return encodeURIComponent(String(value || '')).replace(/'/g, '%27');
+  },
+
+  // The Process row stands for every colour, so it shows one of them to
+  // know the item by: the item's no-colour photo, else the first
+  // combination listed that has one. Adding a photo is per colour, in the
+  // breakdown; with none to show, an empty slot keeps the names in line.
+  _poolProcessPhotoHtml(process, leafRows) {
+    const name = process.outputItemName;
+    if (!name) return '';
+    const candidates = [{ name, color: '' }]
+      .concat((leafRows || []).map(r => ({ name: r.outputItemName || name, color: r.color || '' })));
+    const shown = candidates.find(c => this._poolPhotoUrl(c.name, c.color));
+    if (!shown) return '<span class="pool-photo-btn pool-photo-none" aria-hidden="true"></span>';
+    return this._poolPhotoHtml(shown.name, shown.color);
+  },
+
+  viewPoolPhoto(encName, encColor) {
     const name = decodeURIComponent(encName || '');
-    const url = this._poolPhotoUrl(name);
+    const color = decodeURIComponent(encColor || '');
+    const url = this._poolPhotoUrl(name, color);
     if (!url) {
-      this.choosePoolPhoto(encName);
+      this.choosePoolPhoto(encName, encColor);
       return;
     }
-    App.PhotoViewer.open(url, name, { onChange: () => this.choosePoolPhoto(encName) });
+    App.PhotoViewer.open(url, this._poolPhotoLabel(name, color), { onChange: () => this.choosePoolPhoto(encName, encColor) });
   },
 
-  // Pick a photo, shrink it as the phone does, and put it on the pool item
-  // (setPoolItemPhoto).
-  choosePoolPhoto(encName) {
+  // Pick a photo, shrink it as the phone does, and put it on that colour of
+  // the pool item (setPoolItemPhoto).
+  choosePoolPhoto(encName, encColor) {
     const name = decodeURIComponent(encName || '');
+    const color = decodeURIComponent(encColor || '');
     if (!name) return;
     const input = document.createElement('input');
     input.type = 'file';
@@ -1313,7 +1356,7 @@ App.Stock = {
       input.remove();
       if (!file) return;
       try {
-        await this.savePoolPhoto(name, await App.Utils.resizeImageFile(file, 800));
+        await this.savePoolPhoto(name, color, await App.Utils.resizeImageFile(file, 800));
       } catch (err) {
         App.Utils.showToast((err && err.message) || 'Could not read that photo.', true);
       }
@@ -1323,14 +1366,14 @@ App.Stock = {
     input.click();
   },
 
-  async savePoolPhoto(name, dataUrl) {
-    const res = await Api.mutate('setPoolItemPhoto', name, dataUrl);
+  async savePoolPhoto(name, color, dataUrl) {
+    const res = await Api.mutate('setPoolItemPhoto', name, dataUrl, color || '');
     if (!res || !res.success) {
       App.Utils.showToast((res && res.message) || 'The photo was not saved.', true);
       return;
     }
     App.State.poolItemPhotos = App.State.poolItemPhotos || {};
-    App.State.poolItemPhotos[String(res.data.outputItemName).trim().toLowerCase()] = res.data.photoUrl;
+    App.State.poolItemPhotos[this._poolPhotoKey(res.data.outputItemName, res.data.color)] = res.data.photoUrl;
     this.renderWarehousePoolTable();
     const processId = App.State.warehousePoolModalProcessId;
     const process = processId && (App.State.globalProcesses || []).find(p => p.processId === processId);
@@ -1428,10 +1471,8 @@ App.Stock = {
       const outputBadge = process.outputItemName
         ? ` <span class="badge bg-secondary ms-2">${escapeHtml(process.outputItemName)}</span>`
         : '';
-      const photo = this._poolPhotoHtml(process.outputItemName);
-      titleEl.innerHTML = photo
-        ? `<span class="d-inline-flex align-items-center gap-2">${photo}<span>Warehouse Pool: ${escapeHtml(process.processName)}${outputBadge}</span></span>`
-        : `<i class="bi bi-boxes me-2"></i>Warehouse Pool: ${escapeHtml(process.processName)}${outputBadge}`;
+      // Each combination below shows its own colour's photo.
+      titleEl.innerHTML = `<i class="bi bi-boxes me-2"></i>Warehouse Pool: ${escapeHtml(process.processName)}${outputBadge}`;
     }
 
     const colCount = showItemName ? 8 : 7;
@@ -1681,7 +1722,7 @@ App.Stock = {
     <td>${r.productTag ? `<span class="badge bg-dark">${escapeHtml(r.productTag)}</span>` : '<span class="text-muted">—</span>'}</td>
     <td class="text-center" data-pool-field="produced">${App.Production.formatQty(r.producedQty)}</td>
     <td class="text-center">${App.Production.formatQty(r.consumedQty)}</td>
-    <td>${r.color ? `<span class="badge bg-info text-dark">${escapeHtml(r.color)}</span>${subGroupMarker}` : '<span class="text-muted">—</span>'}</td>
+    <td><div class="d-flex align-items-center gap-2">${this._poolPhotoHtml(r.outputItemName || process.outputItemName, r.color)}<span>${r.color ? `<span class="badge bg-info text-dark">${escapeHtml(r.color)}</span>${subGroupMarker}` : '<span class="text-muted">—</span>'}</span></div></td>
     <td class="text-center fw-bold">${availableCell}${negativeWarning}${unattributedWarning}</td>
     <td class="text-center d-flex gap-1 justify-content-center">
       <button type="button" class="btn btn-outline-info btn-sm" title="View Ledger"

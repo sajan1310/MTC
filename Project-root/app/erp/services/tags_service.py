@@ -437,6 +437,10 @@ def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
         old,
         new,
     )
+    # A pool item's photo of a colour (migration 060) follows its bucket.
+    _rename_color_token_in_keyed_rows(
+        cur, "erp.pool_item_photos", ("output_item_name",), old, new
+    )
 
     # Warehouse Pool bucket colors are always DERIVED (rebuilt from scratch
     # by _recalculate_warehouse_pool) from the sheets just renamed above --
