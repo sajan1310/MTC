@@ -268,7 +268,9 @@
 // v111: each colour of a Warehouse Pool item has its own photo: every
 // bucket card shows its colour's, or a camera, and an inspection checklist
 // row shows the photo of the colour it draws on. mobile.js carries it.
-const CACHE_NAME = 'erp-mobile-shell-v111';
+// v112: the backup card on the status sheet no longer has a "Mirror" line;
+// the Apps Script mirror is retired. mobile.js carries it.
+const CACHE_NAME = 'erp-mobile-shell-v112';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so

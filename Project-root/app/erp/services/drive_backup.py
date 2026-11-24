@@ -1,10 +1,12 @@
 """Push verified snapshots to Google Drive.
 
-This is the second place a restorable copy lives. Until it existed, the
-``.dump`` files never left the server: the Google integration that was
-already here uploads a SPREADSHEET (scripts/migration/backup_db_to_sheets.py),
-which is table rows in cells -- no schema, no sequences, no constraints, no
-foreign-key ordering. You can read it. You cannot restore from it.
+This was to be the second place a restorable copy lives. When it was
+written, the ``.dump`` files never left the server: the Google integration
+then in place uploaded a SPREADSHEET (scripts/migration/backup_db_to_sheets.py,
+retired 2026-11-24), which is table rows in cells -- no schema, no sequences,
+no constraints, no foreign-key ordering. You can read it. You cannot restore
+from it. The laptop now pulls each snapshot instead
+(scripts/pull-backups-to-laptop.ps1 in the repository root).
 
 Reuses scripts/migration/sheets_client's service-account credentials, which
 already carry the full ``auth/drive`` scope, so nothing new has to be granted.

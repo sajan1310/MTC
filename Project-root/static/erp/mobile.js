@@ -19243,7 +19243,6 @@ MApp.Status = {
     : 'No backup has been verified yet.'}
           </div>
           ${failures > 0 ? `<div class="mb-card-sub" style="color:var(--mb-enamel-red-ink);">${failures} consecutive failure${failures === 1 ? '' : 's'}.</div>` : ''}
-          ${b.mirror_status ? `<div class="mb-card-sub">Mirror: ${MApp.Util.escapeHtml(String(b.mirror_status))}${b.mirror_message ? ' — ' + MApp.Util.escapeHtml(String(b.mirror_message)) : ''}</div>` : ''}
           ${b.message ? `<div class="mb-card-sub">${MApp.Util.escapeHtml(String(b.message))}</div>` : ''}
           ${running ? `<div class="mb-card-sub" style="color:var(--mb-enamel-blue-ink);">Running${b.run_phase_label ? ' — ' + MApp.Util.escapeHtml(String(b.run_phase_label)) : ''}${b.run_percent != null ? ' (' + b.run_percent + '%)' : ''}</div>` : ''}
           ${this.isAdmin() ? `<button type="button" class="mb-btn mb-btn-secondary mb-mt-2" id="status-backup-btn" ${running ? 'disabled' : ''} onclick="MApp.Status.runBackup()">${running ? 'Backup running…' : 'Run a backup now'}</button>` : ''}

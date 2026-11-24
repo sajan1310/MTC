@@ -1,20 +1,23 @@
 """Backup service for MTC ERP.
 
 Handles:
-1. Creating local PostgreSQL snapshot backups in backups/
-2. Uploading/syncing database tables to Google Sheets via scripts.migration.backup_db_to_sheets
-3. Providing RPC methods ('triggerBackup', 'getBackupStatus') for dashboard UI triggers
-4. Automated nightly scheduler daemon thread with Postgres advisory locking
+1. Creating verified PostgreSQL snapshots in backups/ (db_backup)
+2. Providing RPC methods ('triggerBackup', 'getBackupStatus') for dashboard UI triggers
+3. Automated nightly scheduler daemon thread with Postgres advisory locking
+
+The snapshot is the whole backup. Until 2026-11-24 each run also exported every
+table to a Google spreadsheet and mirrored the data into the old Apps Script
+app's sheets; the owner retired both once nothing read them. The copy that
+leaves the building is now the laptop's: it pulls each snapshot over Tailscale
+(scripts/pull-backups-to-laptop.ps1 in the repository root).
 """
 
 from __future__ import annotations
 
 import datetime
-import gc
 import json
 import logging
 import os
-import sys
 import threading
 import time
 import uuid
@@ -23,7 +26,6 @@ from typing import Any, Callable, Dict, Optional
 from flask import current_app
 
 import database
-from config import Config
 from . import db_backup
 from ..envelope import build_response
 from ..registry import rpc_method
@@ -44,11 +46,7 @@ _LAST_BACKUP_STATUS: Dict[str, Any] = {
     "timestamp": None,
     "status": "NEVER",
     "message": "No backup has been executed yet.",
-    "spreadsheet_id": None,
-    "spreadsheet_url": None,
     "local_file": None,
-    "mirror_status": None,
-    "mirror_message": None,
     "nightly_scheduler_active": False,
     # DATA-001 health fields. Defaults are deliberately the pessimistic ones:
     # before any run has happened, "is there a verified backup?" must answer
@@ -87,15 +85,9 @@ _RUN_STATE_KEY = "backup:last_run"
 # backup running forever and refuse to start another one.
 _RUN_STALE_AFTER_SECONDS = int(os.getenv("BACKUP_RUN_STALE_AFTER", "1800"))
 
-# Phase -> (label, percent) for the progress the browser renders. The
-# percentages are the share of wall-clock each phase actually takes on this
-# dataset, not even thirds: the snapshot is ~1.5s while the two Sheets
-# phases are ~90s and ~40s, so a bar that jumped to 33% on snapshot
-# completion would sit there for two minutes.
+# Phase -> (label, percent) for the progress the browser renders.
 _PHASES = {
-    "snapshot": ("Creating local database snapshot...", 5),
-    "sheets": ("Formatting & syncing to Google Sheets...", 20),
-    "mirror": ("Mirroring into the app spreadsheet...", 75),
+    "snapshot": ("Creating and checking the database snapshot...", 10),
     "done": ("Finishing up...", 100),
 }
 
@@ -215,34 +207,10 @@ def get_backup_dir() -> str:
     return backup_dir
 
 
-def _migration_module():
-    """Imports scripts/migration/backup_db_to_sheets, adding it to sys.path first."""
-    migration_dir = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "../../../scripts/migration")
-    )
-    if migration_dir not in sys.path:
-        sys.path.insert(0, migration_dir)
-    import backup_db_to_sheets  # type: ignore
-
-    return backup_db_to_sheets
-
-
-def _mirror_module():
-    """Imports scripts/migration/mirror_db_to_gas_sheets, adding it to sys.path first."""
-    migration_dir = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "../../../scripts/migration")
-    )
-    if migration_dir not in sys.path:
-        sys.path.insert(0, migration_dir)
-    import mirror_db_to_gas_sheets  # type: ignore
-
-    return mirror_db_to_gas_sheets
-
-
 def perform_full_backup(
     config=None, on_phase: Optional[Callable[[str], None]] = None
 ) -> Dict[str, Any]:
-    """Performs a verified local database snapshot plus the Google Sheets sync.
+    """Takes a verified database snapshot and prunes old ones.
 
     The local snapshot is now produced by db_backup.create_snapshot(), which
     shells out to pg_dump and then proves the result readable with pg_restore
@@ -250,8 +218,8 @@ def perform_full_backup(
     hand-rolled INSERT writer got wrong -- in short, it produced files that
     could not be restored and reported them as successful backups.
 
-    `on_phase` is called with 'snapshot' / 'sheets' / 'mirror' as each begins,
-    so the caller can publish progress somewhere the browser can poll. It is
+    `on_phase` is called with 'snapshot' as it begins, so the caller can
+    publish progress somewhere the browser can poll. It is
     advisory only: this function's contract is unchanged when it is None, and
     an exception from it is swallowed, because a broken progress sink must
     never be able to fail a backup that is otherwise succeeding.
@@ -271,7 +239,7 @@ def perform_full_backup(
 
     _phase("snapshot")
 
-    # 1. Local Postgres snapshot -- dumped AND verified, or not a backup.
+    # The Postgres snapshot -- dumped AND verified, or not a backup.
     local_success = False
     local_error = None
     local_backup_file = None
@@ -305,139 +273,14 @@ def perform_full_backup(
             logger.info("[backup_service] Pruned %d old snapshot(s)", len(pruned))
     except Exception as exc:
         local_error = str(exc)
-        # ERROR, not warning, and the run is FAILED below regardless of what
-        # the Sheets sync does. The old code set local_success = True even
-        # when individual tables had failed to export, writing the error into
-        # the output file as an SQL comment -- so a backup that captured three
-        # of fifty tables was reported green on the dashboard.
+        # ERROR, not warning, and the run is FAILED below. The old code set
+        # local_success = True even when individual tables had failed to
+        # export, writing the error into the output file as an SQL comment --
+        # so a backup that captured three of fifty tables was reported green
+        # on the dashboard.
         logger.error("[backup_service] Local snapshot FAILED: %s", exc)
 
-    # 2. Google Sheets sync via scripts/migration/backup_db_to_sheets.py
-    _phase("sheets")
-    sheets_success = False
-    spreadsheet_id = None
-    spreadsheet_url = None
-    sheets_error = None
-
-    # GOOGLE_APPLICATION_CREDENTIALS is the single source of truth here,
-    # same as scripts/migration/sheets_client.py -- no fallback path
-    # scanning, so unsetting it (e.g. to disable Sheets sync) reliably
-    # skips this branch instead of silently picking up a stray gcp-key.json.
-    creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-
-    if not creds_path or not os.path.exists(creds_path):
-        sheets_error = (
-            "GOOGLE_APPLICATION_CREDENTIALS is not configured or file not found."
-        )
-        logger.warning(
-            "[backup_service] Google Sheets backup skipped: %s", sheets_error
-        )
-
-    else:
-        try:
-            backup_db_to_sheets = _migration_module()
-
-            db_url = Config.DATABASE_URL or (
-                f"postgresql://{Config.DB_USER}:{Config.DB_PASS}@"
-                f"{Config.DB_HOST}:{os.environ.get('DB_PORT', '5432')}/{Config.DB_NAME}"
-            )
-
-            drive_folder_id = os.environ.get("DRIVE_FOLDER_ID")
-            existing_sid = os.environ.get("BACKUP_SPREADSHEET_ID") or os.environ.get(
-                "SPREADSHEET_ID"
-            )
-
-            spreadsheet_id = backup_db_to_sheets.run_backup(
-                db_url, drive_folder_id, existing_sid
-            )
-            spreadsheet_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
-            sheets_success = True
-            logger.info(
-                "[backup_service] Google Sheets backup created/updated: %s (%s)",
-                spreadsheet_id,
-                spreadsheet_url,
-            )
-
-        except Exception as exc:
-            sheets_error = str(exc)
-            logger.error("[backup_service] Google Sheets backup failed: %s", exc)
-
-    # 3. Mirror into the legacy GAS app's bound spreadsheet, in its original
-    # per-sheet layout, via scripts/migration/mirror_db_to_gas_sheets.py.
-    # Independent of step 2's dated-backup spreadsheet -- a different,
-    # fixed destination -- so it gets its own success/error tracking rather
-    # than overloading spreadsheet_id/spreadsheet_url above.
-    _phase("mirror")
-    mirror_success = False
-    mirror_error = None
-
-    gas_spreadsheet_id = os.environ.get("GAS_MIRROR_SPREADSHEET_ID") or os.environ.get(
-        "BACKUP_SPREADSHEET_ID"
-    )
-
-    if not creds_path or not os.path.exists(creds_path):
-        mirror_error = (
-            "GOOGLE_APPLICATION_CREDENTIALS is not configured or file not found."
-        )
-        logger.warning("[backup_service] GAS sheet mirror skipped: %s", mirror_error)
-    elif not gas_spreadsheet_id:
-        mirror_error = "GAS_MIRROR_SPREADSHEET_ID is not configured."
-        logger.warning("[backup_service] GAS sheet mirror skipped: %s", mirror_error)
-    else:
-        try:
-            mirror_mod = _mirror_module()
-
-            db_url = Config.DATABASE_URL or (
-                f"postgresql://{Config.DB_USER}:{Config.DB_PASS}@"
-                f"{Config.DB_HOST}:{os.environ.get('DB_PORT', '5432')}/{Config.DB_NAME}"
-            )
-
-            mapping = mirror_mod.load_mapping(
-                mirror_mod.SCRIPT_DIR / "gas_sheet_mapping.yaml"
-            )
-            results = mirror_mod.run_mirror(
-                db_url, gas_spreadsheet_id, mapping["sheets"], dry_run=False
-            )
-            failed = [r for r in results if r.status in ("error", "skipped_guard")]
-            if failed:
-                mirror_error = f"{len(failed)}/{len(results)} sheet(s) failed or were guard-skipped"
-                logger.error(
-                    "[backup_service] GAS sheet mirror partial failure: %s",
-                    mirror_error,
-                )
-            else:
-                mirror_success = True
-                logger.info(
-                    "[backup_service] GAS sheet mirror updated %d sheet(s)",
-                    len(results),
-                )
-
-        except Exception as exc:
-            mirror_error = str(exc)
-            logger.error("[backup_service] GAS sheet mirror failed: %s", exc)
-
-    # The Google clients the two steps above built are held together by
-    # reference cycles, about 19 MB each, so only the cycle collector frees
-    # them -- and this runs inside a web worker, where Python 3.14's
-    # collector left such garbage in place until the next restart (see
-    # sheets_client.reuse_resources). Once per run, now that they are done
-    # with.
-    gc.collect()
-
-    # Build final status summary.
-    #
-    # The local snapshot is the backup. The Sheets sync and the GAS mirror are
-    # convenience exports of the same data into a human-readable form -- losing
-    # one of those is an inconvenience; losing the snapshot is losing the
-    # ability to recover. So a failed snapshot is FAILED, never PARTIAL,
-    # whatever else succeeded.
-    all_succeeded = local_success and sheets_success and mirror_success
-    if not local_success:
-        status_str = "FAILED"
-    elif all_succeeded:
-        status_str = "SUCCESS"
-    else:
-        status_str = "PARTIAL"
+    status_str = "SUCCESS" if local_success else "FAILED"
 
     messages = []
     if local_success:
@@ -453,29 +296,13 @@ def perform_full_backup(
             f"DB SNAPSHOT FAILED -- no recoverable backup was produced ({local_error})"
         )
 
-    if sheets_success:
-        messages.append("Synced to Google Sheets successfully.")
-    else:
-        messages.append(f"Google Sheets upload: {sheets_error}")
-
-    if mirror_success:
-        messages.append("GAS app spreadsheet mirrored successfully.")
-    else:
-        messages.append(f"GAS sheet mirror: {mirror_error}")
-
     full_message = ". ".join(messages)
 
     result_data = {
         "timestamp": now_iso,
         "status": status_str,
         "message": full_message,
-        "spreadsheet_id": spreadsheet_id,
-        "spreadsheet_url": spreadsheet_url,
         "local_file": local_backup_file,
-        "mirror_status": "SUCCESS" if mirror_success else "FAILED",
-        "mirror_message": "GAS app spreadsheet mirrored successfully."
-        if mirror_success
-        else mirror_error,
         # Health surface (DATA-001). "A file was written" is not evidence of a
         # backup; these are. snapshot_verified is the one an operator should
         # look at, and it is only ever True when pg_restore has read the file
@@ -596,27 +423,15 @@ def _backup_worker(app, run_id: str, config=None) -> None:
 def rpc_trigger_backup() -> Dict[str, Any]:
     """Start a backup and return immediately; the client polls getBackupStatus.
 
-    This used to run the whole backup inline and return its result. It could
-    not work, and had two independent ceilings below the time the job needs:
-
-      * static/erp/api.js aborts any RPC after REQUEST_TIMEOUT_MS (45s) and
-        reports the abort as "The server did not respond within 45s" -- which
-        is what the dashboard has been showing.
-      * gunicorn runs with --timeout 120, so even without the client abort
-        the worker is killed at two minutes and nginx answers 502.
-
-    A full run on this dataset is comfortably past both. The snapshot itself
-    is ~1.5s; the cost is the Sheets work, which makes four API round trips
-    per table (tab lookup, grid resize, clear, update) across the 46 tables
-    in backup_db_to_sheets.TABLES, plus the 28 sheets of the GAS mirror, at
-    roughly half a second per round trip. That is ~2 minutes of latency-bound
-    work, and no amount of raising the two timeouts turns it into something
-    that belongs inside a request.
-
-    So the request now only starts the work. The run publishes its progress
-    and its result to erp.app_settings (see _RUN_STATE_KEY), which every
-    worker can read, and dashboard.js polls getBackupStatus until it reaches
-    a terminal state.
+    This once ran the whole backup inline and returned its result, which
+    could not work while a run took ~2 minutes of Google Sheets round trips:
+    static/erp/api.js aborts any RPC after 45s, and gunicorn kills a worker
+    at 120s. A snapshot alone takes seconds, but it is still a pg_dump and a
+    pg_restore check whose time grows with the database, and the polling
+    below costs nothing, so the request still only starts the work. The run
+    publishes its progress and its result to erp.app_settings (see
+    _RUN_STATE_KEY), which every worker can read, and dashboard.js polls
+    getBackupStatus until it reaches a terminal state.
     """
     existing = _read_run_state()
     if existing and existing.get("state") == "RUNNING":
@@ -649,7 +464,7 @@ def rpc_trigger_backup() -> Dict[str, Any]:
     return build_response(
         True,
         {"status": "STARTED", "run_id": run_id},
-        "Backup started. This takes a couple of minutes; progress is shown below.",
+        "Backup started; progress is shown below.",
     )
 
 
@@ -838,14 +653,11 @@ def _scheduler_loop(app, stop_event: threading.Event) -> None:
     """Run the nightly job inside an app context, the way _backup_worker does.
 
     Flask contexts are thread-local, so this daemon thread has none of its
-    own. That is not a cosmetic gap. The GAS sheet mirror asks
-    has_app_context() to decide whether it is embedded in a running app or
-    started from a shell; answered False, it booted create_app("testing")
-    inside the live worker, whose failing connection then cleared the
-    process-global db_pool and left that worker serving with no database
-    (2026-09-09). Pushing the context makes the mirror the no-op it was
-    written to be, and matches _backup_worker, which pushes one so
-    _resolve_config() prefers the config the app is actually running on.
+    own. Without one, db_backup._resolve_config() falls back to config.Config
+    instead of the config the app is actually running on; _backup_worker
+    pushes one for the same reason. (The context first mattered for the
+    retired GAS sheet mirror, which booted a second app inside the live
+    worker without it and left that worker with no database, 2026-09-09.)
 
     Per run rather than for the life of the thread, so `g` does not
     accumulate across nights.

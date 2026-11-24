@@ -28,7 +28,6 @@ function loadAsGlobal(relPath, exportName) {
 const HEALTHY = {
   status: 'SUCCESS', message: 'Backup completed.', snapshot_verified: true,
   consecutive_failures: 0, last_verified_at: '2026-09-05 02:00',
-  mirror_status: 'OK', mirror_message: 'Mirrored to F:',
 };
 const NOTIFICATIONS = [
   { key: 'k1', timestamp: '2026-09-05T09:00:00', action: 'Ledger recalculated', details: 'stock rebuilt' },
@@ -70,7 +69,8 @@ describe('MApp.Status backup health', () => {
 
     expect(body()).toContain('Verified');
     expect(body()).toContain('Last verified 2026-09-05 02:00');
-    expect(body()).toContain('Mirrored to F:');
+    // The retired Apps Script mirror has no line of its own any more.
+    expect(body()).not.toContain('Mirror');
   });
 
   test('a never-run backup reads as NOT verified, not as blank', async () => {

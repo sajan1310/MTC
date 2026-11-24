@@ -16,6 +16,8 @@ able to cause what they guard against.
 from __future__ import annotations
 
 import os
+import sys
+import types
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -58,14 +60,18 @@ def test_the_live_google_settings_are_gone_by_the_time_a_test_runs(
 def test_a_backup_run_inside_the_suite_stays_on_this_machine(
     a_machine_with_the_real_settings, monkeypatch
 ):
-    """The call that did it, with the two doors to Google replaced by alarms:
-    if the guard ever goes, this fails here instead of exporting anything."""
+    """The call that did it, on a machine with the real settings and with
+    every door to Google replaced by an alarm. The Sheets export and the Apps
+    Script mirror were retired on 2026-11-24, so a backup has no business
+    with Google at all: if anything in it ever reaches for the Google client
+    again, this fails here instead of exporting anything."""
 
-    def _reached_google():
-        raise AssertionError("a test reached the Google Sheets export")
+    class _Alarm(types.ModuleType):
+        def __getattr__(self, name):
+            raise AssertionError(f"a backup reached Google ({self.__name__}.{name})")
 
-    monkeypatch.setattr(backup_service, "_migration_module", _reached_google)
-    monkeypatch.setattr(backup_service, "_mirror_module", _reached_google)
+    for module in ("googleapiclient", "googleapiclient.discovery", "sheets_client"):
+        monkeypatch.setitem(sys.modules, module, _Alarm(module))
     monkeypatch.setattr(
         backup_service,
         "_LAST_BACKUP_STATUS",
@@ -84,7 +90,6 @@ def test_a_backup_run_inside_the_suite_stays_on_this_machine(
         mock_db_backup.prune_snapshots.return_value = []
         res = backup_service.perform_full_backup()
 
-    assert "reached the Google Sheets export" not in res["message"]
-    assert res["spreadsheet_id"] is None
-    # Both the export and the mirror, each skipped for want of credentials.
-    assert res["message"].count("GOOGLE_APPLICATION_CREDENTIALS is not configured") == 2
+    assert res["status"] == "SUCCESS"
+    assert "Google" not in res["message"]
+    assert "spreadsheet_id" not in res
