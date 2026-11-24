@@ -424,6 +424,52 @@ def _with_master_narration(cur, components: list) -> list:
     return components
 
 
+def _check_item_sizes(cur, components: list) -> None:
+    """Refuses a Stock line naming an Items Master item in a size Items
+    Master does not have.
+
+    Stock is kept per item and size, so such a line takes its parts off no
+    Stock row at all: the size the lot really used keeps reading too high,
+    and nothing says so. The desktop lot form wrote them until 2026-11-24 --
+    swapping a recipe row's item kept the size of the item it replaced (see
+    production.js _sizeAndUnitAfterPick) -- 11 lines on 5 lots between 17
+    and 21/11/2026, 250 parts that never came off. A name Items Master does
+    not know at all is left as it always was: there is no size to hold it
+    to, and the Audit reports it.
+    """
+    names = sorted(
+        {c["itemName"].strip().lower() for c in components if c["sourceType"] == "ITEM"}
+    )
+    if not names:
+        return
+    cur.execute(
+        "SELECT lower(btrim(item_name)) AS k, COALESCE(btrim(size), '') AS size "
+        "FROM erp.items WHERE deleted_at IS NULL AND lower(btrim(item_name)) = ANY(%s) "
+        "ORDER BY 1, 2",
+        (names,),
+    )
+    sizes: dict = {}
+    for row in cur.fetchall():
+        sizes.setdefault(row["k"], []).append(row["size"])
+    wrong: list = []
+    for c in components:
+        if c["sourceType"] != "ITEM":
+            continue
+        known = sizes.get(c["itemName"].strip().lower())
+        if not known or c["size"].strip().lower() in {s.lower() for s in known}:
+            continue
+        has = ", ".join(s or "no size" for s in known)
+        size = f'size "{c["size"]}"' if c["size"] else "no size"
+        line = f"{c['itemName']} is not in Items Master in {size} (it has {has})."
+        if line not in wrong:
+            wrong.append(line)
+    if wrong:
+        raise ValueError(
+            " ".join(wrong)
+            + " Change the size on that line to the one the lot used, then save again."
+        )
+
+
 def _consolidate_duplicate_components(components: list, in_base_unit=None) -> list:
     """Collapses more than one submitted line for the same physical
     consumption (same itemName+size+colorGroup) into one, instead of
@@ -1241,6 +1287,7 @@ def save_production(conn, cur, form_data):
                 }
             )
     clean_components = _with_master_narration(cur, clean_components)
+    _check_item_sizes(cur, clean_components)
 
     dropped_colour_warning = None
     if color_breakdown:

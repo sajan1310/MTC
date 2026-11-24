@@ -7123,6 +7123,68 @@ App.Production = {
     this._wireItemSelect2(selectEl);
   },
 
+  // The item a component picker holds and the size its row gives it, or
+  // null for an empty picker.
+  _pickedItemOf(selectEl) {
+    const opt = selectEl ? selectEl.options[selectEl.selectedIndex] : null;
+    if (!opt || !opt.value) return null;
+    return {
+      name: (opt.dataset.name || opt.textContent || '').trim(),
+      size: selectEl.closest('tr')?.querySelector('.prod-comp-size')?.value.trim() || ''
+    };
+  },
+
+  _itemHasSize(name, size) {
+    return (App.State.globalItems || []).some(it =>
+      App.Utils.sameText(it.name, name) && App.Utils.sameText(it.size || '', size || ''));
+  },
+
+  // What a pick in a component row does to the row's Size and Unit.
+  //
+  // Size: an item picked from the list IS that item in that size -- the
+  // list shows Items Master as "Name [size]", one option per size -- so the
+  // row takes the picked size, as the phone's Change does (mobile.js
+  // changeMaterial). The box used to be filled only when empty, so swapping
+  // a recipe row's item kept the size of the item it replaced:
+  // "PEDAL-BLACK---STEEL BALL-20"" was saved as size GENERAL, a pair Items
+  // Master does not have, and Stock took those pedals off no row at all
+  // (5 lots, 17-21/11/2026). A merged row shares one size box among its
+  // colour cells, so there the box changes only when the picked item does
+  // not exist in it. A name typed in full names no size: the box stays
+  // when the item has that size, and otherwise takes the item's. A Pool
+  // row (a bucket has no size) and a name Items Master does not know only
+  // fill an empty box, as before.
+  //
+  // Unit: the recipe's unit stays with the quantity while the new item is
+  // kept in the same base unit as the one it replaced, and is dropped
+  // otherwise, so the number is read in the new item's own base unit -- the
+  // phone's rule (_unitAfterChange). Carried over, 2 Gross of spokes became
+  // 2 Gross of an item kept in Pcs.
+  _sizeAndUnitAfterPick(row, selectEl, sizeInput, data, replaced) {
+    const isPoolRow = row?.querySelector('.prod-comp-source')?.value === 'POOL';
+    const name = String(data._itemName || data.text || '').trim();
+    const picked = String(data._size || '');
+    const listed = /^item:\d+$/.test(String(data.id || ''));
+    const known = !isPoolRow && !data.newTag && String(data.id || '').startsWith('item:');
+    if (sizeInput) {
+      const current = sizeInput.value.trim();
+      if (!current) {
+        sizeInput.value = picked;
+      } else if (known && !App.Utils.sameText(current, picked)) {
+        const keep = (listed && row?.dataset.merged !== 'true')
+          ? false
+          : this._itemHasSize(name, current);
+        if (!keep) sizeInput.value = picked;
+      }
+    }
+    const holder = row?.dataset.merged === 'true' ? selectEl.closest('td') : row;
+    if (isPoolRow || !replaced || !holder || !holder.dataset.unit) return;
+    const unitOf = (n, s) => String(this._resolveDisplayUnit(n, s) || '').trim().toLowerCase();
+    const before = unitOf(replaced.name, replaced.size);
+    const after = unitOf(name, sizeInput ? sizeInput.value.trim() : '');
+    if (!before || before !== after) delete holder.dataset.unit;
+  },
+
   _wireItemSelect2(selectEl) {
     if (!selectEl || !window.jQuery?.fn?.select2) return;
 
@@ -7199,6 +7261,12 @@ App.Production = {
       }
     });
 
+    // The item this picker held before a pick replaces it, read while it is
+    // still selected: the row's unit was written for that item.
+    $select.on('select2:selecting', function () {
+      selectEl._replacedItem = App.Production._pickedItemOf(selectEl);
+    });
+
     $select.on('select2:select', function (e) {
       const data = e.params.data;
       const opt = selectEl.options[selectEl.selectedIndex];
@@ -7214,7 +7282,9 @@ App.Production = {
 
       const row = selectEl.closest('tr');
       const sizeInput = row?.querySelector('.prod-comp-size');
-      if (sizeInput && !sizeInput.value) sizeInput.value = data._size || '';
+      const replaced = selectEl._replacedItem || null;
+      selectEl._replacedItem = null;
+      App.Production._sizeAndUnitAfterPick(row, selectEl, sizeInput, data, replaced);
       // Narration is shown/autofilled from Item Master for this exact
       // item+size, matching what a recipe's own component rows already
       // get -- see _refillNarrationForRow. No-ops for a Pool row (no Item

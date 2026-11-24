@@ -593,7 +593,11 @@
 // v124: the Dashboard's backup button is "Back up now": a checked database
 // snapshot, with no Google Sheets export and no "Open Google Sheet" button
 // after it. dashboard.js is precached.
-const CACHE_NAME = 'erp-shell-v124';
+// v125: changing the item on a Production lot's material line takes the
+// picked item's own size, and keeps the recipe's unit only when the new item
+// is kept in the same base unit, as the phone's Change does. production.js is
+// precached.
+const CACHE_NAME = 'erp-shell-v125';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

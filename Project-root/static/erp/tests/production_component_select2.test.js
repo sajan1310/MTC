@@ -189,6 +189,62 @@ describe('component item picker (real Select2)', () => {
     expect(picked.name).toBe('Chain Cover---WING---BLACK');
   });
 
+  // A recipe row swapped to another item used to keep the size of the item
+  // it replaced: the box was filled only when empty. "PEDAL-BLACK---STEEL
+  // BALL-20"" was saved as size GENERAL, a pair Items Master does not have,
+  // so Stock took those pedals off no row at all (5 lots, 17-21/11/2026).
+  describe('swapping the item on a recipe row', () => {
+    const ITEMS = [
+      { name: 'PEDAL-BLACK---STEEL BALL-14-16"', size: 'GENERAL', baseUnit: 'Pcs' },
+      { name: 'PEDAL-BLACK---STEEL BALL-20"', size: '20 inch', baseUnit: 'Pcs' },
+      { name: 'Tube Pipe', size: 'GENERAL', baseUnit: 'Mtr' },
+      { name: 'Rim Tape', size: '14 inch', baseUnit: 'Pcs' },
+      { name: 'Rim Tape', size: '20 inch', baseUnit: 'Pcs' },
+    ];
+    const recipeRow = (comp) => {
+      App.State.globalItems = ITEMS.map(i => ({ ...i }));
+      App.Production.addComponentRow({ sourceType: 'ITEM', qty: 60, ...comp });
+      return document.querySelector('#productionComponentsBody tr');
+    };
+    const pickListed = (row, label) => {
+      const sel = row.querySelector('.prod-comp-item-select');
+      window.jQuery(sel).select2('open');
+      const option = Array.from(document.querySelectorAll('.select2-results__option'))
+        .find(o => o.textContent === label);
+      window.jQuery(option).trigger('mouseup');
+      return sel;
+    };
+
+    test('takes the picked item\'s size, not the old one\'s', () => {
+      const row = recipeRow({ itemName: 'PEDAL-BLACK---STEEL BALL-14-16"', size: 'GENERAL' });
+      expect(row.querySelector('.prod-comp-size').value).toBe('GENERAL');
+
+      const sel = pickListed(row, 'PEDAL-BLACK---STEEL BALL-20" [20 inch]');
+
+      expect(sel.options[sel.selectedIndex].dataset.name).toBe('PEDAL-BLACK---STEEL BALL-20"');
+      expect(row.querySelector('.prod-comp-size').value).toBe('20 inch');
+    });
+
+    test('another size of the same item is that size', () => {
+      const row = recipeRow({ itemName: 'Rim Tape', size: '14 inch' });
+      pickListed(row, 'Rim Tape [20 inch]');
+      expect(row.querySelector('.prod-comp-size').value).toBe('20 inch');
+    });
+
+    test('the recipe unit stays with an item kept in the same base unit', () => {
+      const row = recipeRow({ itemName: 'PEDAL-BLACK---STEEL BALL-14-16"', size: 'GENERAL', unit: 'Pair' });
+      pickListed(row, 'PEDAL-BLACK---STEEL BALL-20" [20 inch]');
+      expect(row.dataset.unit).toBe('Pair');
+    });
+
+    test('and is dropped for an item kept in another, so the number is read in the new item\'s', () => {
+      const row = recipeRow({ itemName: 'PEDAL-BLACK---STEEL BALL-14-16"', size: 'GENERAL', unit: 'Pair' });
+      pickListed(row, 'Tube Pipe [GENERAL]');
+      expect(row.dataset.unit).toBeUndefined();
+      expect(row.querySelector('.prod-comp-size').value).toBe('GENERAL');
+    });
+  });
+
   test('a POOL bucket typed with its colour suffix resolves to the bucket', async () => {
     App.Production._poolBuckets = [{ name: 'Fitted Rim', size: '14 inch', color: 'Black' }];
     App.Production.addComponentRow(null);
