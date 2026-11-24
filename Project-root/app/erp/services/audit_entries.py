@@ -174,6 +174,33 @@ def _stock_rows(ctx) -> list:
     return rows
 
 
+def _lot_moment(lot, completed: bool):
+    """When a lot's use of an item takes effect against the item's count.
+
+    Its date, read the way a bill's is not: entered on its own date, the
+    entry time; otherwise the start of the date. A Completed lot is also read
+    with the moment it was marked Completed (the owner's rule, 2026-11-08:
+    "use user actions and date and time stamp together"): marked on or before
+    its own date, the work was still going on with its parts on the shelf,
+    so a count taken earlier that day did not see them gone, and the lot
+    takes effect at the click. Marked on a later day, the click is paperwork
+    after the work and the date stands. The received part of a lot still
+    open keeps the date.
+
+    Stock took the click on 2026-11-08 while this kept the date alone, and on
+    the 2026-11-23 backup 19 items read as integrity errors (BB-AXLE 2-C by
+    144): each a lot clicked Completed on its own date after a count taken
+    earlier that day."""
+    day = lot["production_date"]
+    clicked = lot.get("completed_at")
+    if completed and clicked is not None and day is not None and clicked.date() <= day:
+        return clicked
+    created = lot["created_at"]
+    if created is not None and created.date() == day:
+        return created
+    return lot["midnight"]
+
+
 def _lot_lines(ctx) -> list:
     """Each ITEM component a lot has used up, in base units: all of a
     Completed lot's, and the received part of one received in part."""
@@ -194,12 +221,7 @@ def _lot_lines(ctx) -> list:
         if not completed:
             shape = lot_receipts.LotShape(lot["color_breakdown"], lot["qty"])
             received = lot_receipts.received_amounts(receipts)
-        created, day = lot["created_at"], lot["production_date"]
-        moment = (
-            created
-            if created is not None and created.date() == day
-            else lot["midnight"]
-        )
+        moment = _lot_moment(lot, completed)
         for comp in components:
             if not isinstance(comp, dict) or _k(comp.get("sourceType")) == "pool":
                 continue
