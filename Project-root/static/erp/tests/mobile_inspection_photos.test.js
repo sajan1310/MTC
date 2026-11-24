@@ -89,7 +89,7 @@ describe('photos on the checklist', () => {
     await open([SEAT, BAG, FRAME, LOOSE]);
     expect(body().querySelector('.mb-insp-list').classList.contains('mb-insp-with-photos')).toBe(true);
     const img = rowOf('seat').querySelector('.mb-insp-photo img');
-    expect(img.getAttribute('src')).toBe('/erp/item-photo/12?v=40');
+    expect(img.getAttribute('src')).toBe('/erp/item-photo/12?v=40&size=thumb');
     expect(img.getAttribute('loading')).toBe('lazy');
     expect(rowOf('bag').querySelector('.mb-insp-photo-add').getAttribute('aria-label'))
       .toBe('Add a photo of BAG-KIT---WHITE · 20 inch');
@@ -144,7 +144,7 @@ describe('adding or changing a photo', () => {
     expect(MApp.Inspection._pickFile).toHaveBeenCalledWith(true);
     expect(MApp.Util.resizeImageToBase64).toHaveBeenCalledWith(file, 800);
     expect(MApp.Api.mutate).toHaveBeenCalledWith('setInspectionItemPhoto', 7, 'bag', 'data:image/jpeg;base64,NEW');
-    expect(rowOf('bag').querySelector('.mb-insp-photo img').getAttribute('src')).toBe('/erp/item-photo/13?v=2');
+    expect(rowOf('bag').querySelector('.mb-insp-photo img').getAttribute('src')).toBe('/erp/item-photo/13?v=2&size=thumb');
     expect(rowOf('bag').querySelector('.mb-insp-check').checked).toBe(false);
   });
 
@@ -157,7 +157,7 @@ describe('adding or changing a photo', () => {
     }));
     await MApp.Inspection.savePhoto('seat', 'data:image/jpeg;base64,NEW');
     ['seat', 'seat#2'].forEach(key => {
-      expect(rowOf(key).querySelector('.mb-insp-photo img').getAttribute('src')).toBe('/erp/item-photo/12?v=41');
+      expect(rowOf(key).querySelector('.mb-insp-photo img').getAttribute('src')).toBe('/erp/item-photo/12?v=41&size=thumb');
     });
   });
 
@@ -173,7 +173,7 @@ describe('adding or changing a photo', () => {
     }));
     await MApp.Inspection.savePhoto('frame#red', 'data:image/jpeg;base64,NEW');
     ['frame#red', 'frame#red14'].forEach(key => {
-      expect(rowOf(key).querySelector('.mb-insp-photo img').getAttribute('src')).toBe('/erp/pool-photo/3?v=9');
+      expect(rowOf(key).querySelector('.mb-insp-photo img').getAttribute('src')).toBe('/erp/pool-photo/3?v=9&size=thumb');
     });
     // Blue, the no-colour row and the Items Master item keep what they had.
     ['frame#blue', 'frame', 'frame-item'].forEach(key => {
@@ -197,6 +197,109 @@ describe('adding or changing a photo', () => {
     MApp.Toast.error = jest.fn();
     await MApp.Inspection.savePhoto('seat', 'data:image/jpeg;base64,BAD');
     expect(MApp.Toast.error).toHaveBeenCalledWith('Item photo is not a valid image.');
-    expect(rowOf('seat').querySelector('.mb-insp-photo img').getAttribute('src')).toBe('/erp/item-photo/12?v=40');
+    expect(rowOf('seat').querySelector('.mb-insp-photo img').getAttribute('src')).toBe('/erp/item-photo/12?v=40&size=thumb');
+  });
+});
+
+// The tablet's camera (2026-11-24: "overloads or is slow and sometimes it
+// crashes"): one photo at a time, and a way back when Android closes the
+// app to give the camera its memory.
+describe('the camera on a busy tablet', () => {
+  beforeEach(() => {
+    mount();
+    sessionStorage.clear();
+  });
+
+  const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+
+  test('a second photo is not started while one is still being shrunk and saved', async () => {
+    await open([SEAT, BAG]);
+    MApp.Picker.open = jest.fn(async () => ({ value: 'camera' }));
+    MApp.Inspection._pickFile = jest.fn(async () => new File(['x'], 'p.jpg', { type: 'image/jpeg' }));
+    let finish;
+    MApp.Util.resizeImageToBase64 = jest.fn(() => new Promise(resolve => { finish = resolve; }));
+    MApp.Api.mutate = jest.fn(async () => ({
+      success: true, message: 'Photo saved.',
+      data: { key: 'bag', itemName: 'BAG-KIT---WHITE', size: '20 inch', photoUrl: '/erp/item-photo/13?v=2' }
+    }));
+
+    const first = MApp.Inspection.choosePhoto('bag');
+    await tick();
+    const button = rowOf('bag').querySelector('[data-insp-photo]');
+    expect(button.classList.contains('is-busy')).toBe(true);
+    expect(button.disabled).toBe(true);
+
+    await MApp.Inspection.choosePhoto('seat');
+    expect(MApp.Picker.open).toHaveBeenCalledTimes(1);
+
+    finish('data:image/jpeg;base64,NEW');
+    await first;
+    expect(MApp.Api.mutate).toHaveBeenCalledTimes(1);
+    expect(MApp.Inspection._photoBusy).toBe(false);
+    expect(rowOf('bag').querySelector('.mb-insp-photo img').getAttribute('src')).toBe('/erp/item-photo/13?v=2&size=thumb');
+  });
+
+  test('a photo that cannot be read frees the camera for the next one', async () => {
+    await open([SEAT, BAG]);
+    MApp.Picker.open = jest.fn(async () => ({ value: 'gallery' }));
+    MApp.Inspection._pickFile = jest.fn(async () => new File(['x'], 'p.jpg', { type: 'image/jpeg' }));
+    MApp.Util.resizeImageToBase64 = jest.fn(async () => { throw new Error('That file is not a readable image.'); });
+    MApp.Toast.error = jest.fn();
+
+    await MApp.Inspection.choosePhoto('bag');
+
+    expect(MApp.Toast.error).toHaveBeenCalledWith('That file is not a readable image.');
+    expect(MApp.Inspection._photoBusy).toBe(false);
+    expect(rowOf('bag').querySelector('[data-insp-photo]').disabled).toBe(false);
+  });
+
+  test('while the camera is open, the lot and item are noted; coming back clears the note', async () => {
+    await open([SEAT, BAG]);
+    MApp.Picker.open = jest.fn(async () => ({ value: 'camera' }));
+    let returnFromCamera;
+    MApp.Inspection._pickFile = jest.fn(() => new Promise(resolve => { returnFromCamera = resolve; }));
+
+    const choosing = MApp.Inspection.choosePhoto('bag');
+    await tick();
+    expect(JSON.parse(sessionStorage.getItem('mapp.inspectionCamera'))).toEqual(
+      expect.objectContaining({ rowIdx: 7, item: 'BAG-KIT---WHITE' })
+    );
+
+    returnFromCamera(null); // backed out of the camera
+    await choosing;
+    expect(sessionStorage.getItem('mapp.inspectionCamera')).toBeNull();
+  });
+
+  test('when Android closed the app for the camera, it reopens on that lot and says to take the photo again', async () => {
+    sessionStorage.setItem('mapp.inspectionCamera', JSON.stringify({ rowIdx: 7, item: 'BAG-KIT---WHITE', at: Date.now() - 60000 }));
+    MApp.Inspection.open = jest.fn(async () => {});
+    MApp.Inspection.openChecklist = jest.fn(async () => {});
+    MApp.Toast.error = jest.fn();
+
+    await MApp.Inspection.resumeAfterCamera();
+
+    expect(MApp.Inspection.openChecklist).toHaveBeenCalledWith(7);
+    expect(MApp.Toast.error).toHaveBeenCalledWith(
+      'The app was closed while the camera was open, so the photo of BAG-KIT---WHITE was not saved. Take it again.'
+    );
+    expect(sessionStorage.getItem('mapp.inspectionCamera')).toBeNull();
+  });
+
+  test('a note left from long ago, or none at all, opens nothing', async () => {
+    MApp.Inspection.openChecklist = jest.fn(async () => {});
+    sessionStorage.setItem('mapp.inspectionCamera', JSON.stringify({ rowIdx: 7, item: 'X', at: Date.now() - 60 * 60 * 1000 }));
+    await MApp.Inspection.resumeAfterCamera();
+    await MApp.Inspection.resumeAfterCamera();
+    expect(MApp.Inspection.openChecklist).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem('mapp.inspectionCamera')).toBeNull();
+  });
+
+  test('backing out of the camera ends the pick, and leaves no input behind', async () => {
+    const picking = MApp.Util.pickImageFile(true);
+    const input = document.querySelector('input[type="file"][capture="environment"]');
+    expect(input).not.toBeNull();
+    input.dispatchEvent(new Event('cancel'));
+    await expect(picking).resolves.toBeNull();
+    expect(document.querySelector('input[type="file"]')).toBeNull();
   });
 });

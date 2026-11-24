@@ -332,6 +332,14 @@ MApp.Haptics = {
 // SHARED UTILITIES
 // ================================================================
 MApp.Util = {
+  // The small copy of a photo a card shows (items_service.photo_thumbnail),
+  // as App.Utils.photoThumbUrl on the desktop; the viewer opens the whole one.
+  photoThumbUrl(url) {
+    const s = String(url || '');
+    if (!/^\/erp\/(item|pool)-photo\/\d+/.test(s)) return s;
+    return `${s}${s.includes('?') ? '&' : '?'}size=thumb`;
+  },
+
   escapeHtml(str) {
     return String(str == null ? '' : str)
       .replace(/&/g, '&amp;')
@@ -621,34 +629,109 @@ MApp.Util = {
     return window.confirm(`Delete ${label}? This can't be undone.`);
   },
 
-  // Client-side downscale before an item photo goes into a base64
-  // itemImage payload (saveItem enforces a 3MB cap server-side) -- mirrors
-  // desktop's own client-side resize (items.js) so a full-resolution phone
-  // photo doesn't blow past it.
-  resizeImageToBase64(file, maxDim) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(reader.error || new Error('Could not read that file.'));
-      reader.onload = () => {
-        const img = new Image();
-        img.onerror = () => reject(new Error('That file is not a readable image.'));
-        img.onload = () => {
-          let { width, height } = img;
-          if (width > maxDim || height > maxDim) {
-            const scale = maxDim / Math.max(width, height);
-            width = Math.round(width * scale);
-            height = Math.round(height * scale);
-          }
-          const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-          canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', 0.85));
-        };
-        img.src = reader.result;
-      };
-      reader.readAsDataURL(file);
-    });
+  // A photo shrunk to at most `maxDim` px on its longest side, as the JPEG
+  // data: URL every photo RPC takes (saveItem caps it at 3,000,000
+  // characters). Desktop: App.Utils.resizeImageFile, the same steps.
+  //
+  // A camera photo is 12-50 megapixels. This used to read the whole file
+  // into a data: URL (several MB of text, twice over) and decode it at full
+  // size on the main thread -- 48 MB for 12 MP, about 190 MB for 48 MP --
+  // only to draw it at 800 px. On the inspection tablet that froze the
+  // screen for seconds, and with the camera app holding memory too it could
+  // run the tab out of it: the photo was lost and the page reloaded
+  // (2026-11-24). Now the size is read from the file's own header, the
+  // browser decodes it straight to about `maxDim` off the main thread
+  // (createImageBitmap), and nothing the size of the original is kept.
+  async resizeImageToBase64(file, maxDim) {
+    return MApp.Util._shrinkPhoto(file, maxDim, 0.85);
+  },
+
+  // Width and height from a JPEG's frame header, read from the first
+  // 256 KB without decoding anything; null when it is not a JPEG or the
+  // header lies further in. A camera's EXIF orientation is not applied:
+  // only which side is longer is needed, and _shrinkPhoto measures again.
+  async _jpegFrameSize(file) {
+    try {
+      const head = new DataView(await file.slice(0, 262144).arrayBuffer());
+      if (head.byteLength < 4 || head.getUint16(0) !== 0xFFD8) return null;
+      const frames = [0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF];
+      let i = 2;
+      while (i + 9 < head.byteLength) {
+        if (head.getUint8(i) !== 0xFF) return null;
+        const marker = head.getUint8(i + 1);
+        if (marker === 0xFF) { i += 1; continue; }
+        if (frames.includes(marker)) {
+          return { width: head.getUint16(i + 7), height: head.getUint16(i + 5) };
+        }
+        if (marker === 0x01 || (marker >= 0xD0 && marker <= 0xD8)) { i += 2; continue; }
+        i += 2 + head.getUint16(i + 2);
+      }
+    } catch { /* unreadable: decode it to find out */ }
+    return null;
+  },
+
+  async _shrinkPhoto(file, maxDim, quality) {
+    if (!file || (file.type && !String(file.type).startsWith('image/'))) {
+      throw new Error('That file is not a readable image.');
+    }
+    const frame = await MApp.Util._jpegFrameSize(file);
+    let source = null;
+    let release = () => {};
+    if (typeof createImageBitmap === 'function') {
+      const options = { imageOrientation: 'from-image', resizeQuality: 'high' };
+      // One side only: the browser keeps the proportions, and whichever way
+      // EXIF turns the picture, the canvas below fits it exactly.
+      const large = frame ? Math.max(frame.width, frame.height) > maxDim : file.size > 1048576;
+      if (large) {
+        if (!frame || frame.width >= frame.height) options.resizeWidth = maxDim;
+        else options.resizeHeight = maxDim;
+      }
+      try {
+        const bitmap = await createImageBitmap(file, options);
+        source = bitmap;
+        release = () => bitmap.close();
+      } catch {
+        source = null;
+      }
+    }
+    if (!source) {
+      // No createImageBitmap, or it refused the file: an <img> on the file
+      // itself, still never a data: URL of the original.
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.decoding = 'async';
+      try {
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+          img.src = url;
+        });
+      } catch {
+        URL.revokeObjectURL(url);
+        throw new Error('That file is not a readable image.');
+      }
+      source = img;
+      release = () => URL.revokeObjectURL(url);
+    }
+    try {
+      const width = source.naturalWidth || source.width;
+      const height = source.naturalHeight || source.height;
+      if (!width || !height) throw new Error('That file is not a readable image.');
+      const scale = Math.min(1, maxDim / Math.max(width, height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', quality);
+      // Give the canvas's memory back now rather than at the next GC.
+      canvas.width = 0;
+      canvas.height = 0;
+      return dataUrl;
+    } finally {
+      release();
+    }
   },
 
   // One photo from the camera (`camera`) or the gallery, or null. Two
@@ -663,6 +746,12 @@ MApp.Util = {
       input.hidden = true;
       input.addEventListener('change', () => {
         resolve(input.files && input.files[0] ? input.files[0] : null);
+        input.remove();
+      });
+      // Backed out of the camera or the gallery: nothing was chosen. Without
+      // this the promise waited for good and the input stayed in the page.
+      input.addEventListener('cancel', () => {
+        resolve(null);
         input.remove();
       });
       document.body.appendChild(input);
@@ -12498,7 +12587,7 @@ MApp.Items = {
     // it is assigned here rather than written into the markup above.
     listEl.querySelectorAll('img[data-photo-row]').forEach(img => {
       const item = page.rows[Number(img.dataset.photoRow)];
-      if (item && item.image) img.src = item.image;
+      if (item && item.image) img.src = MApp.Util.photoThumbUrl(item.image);
     });
 
     listEl.querySelectorAll('[data-edit-item]').forEach(btn => {
@@ -17740,7 +17829,7 @@ MApp.Inspection = {
     const title = e(this._photoTitle(item));
     if (item.photoUrl) {
       return `<button type="button" class="mb-insp-photo" data-insp-photo aria-label="View photo of ${title}">
-          <img src="${e(item.photoUrl)}" alt="" loading="lazy" decoding="async">
+          <img src="${e(MApp.Util.photoThumbUrl(item.photoUrl))}" alt="" loading="lazy" decoding="async">
         </button>`;
     }
     if (item.canSetPhoto) {
@@ -17754,7 +17843,13 @@ MApp.Inspection = {
   // Take a photo or pick one, shrink it, and put it on the row's item
   // (setInspectionItemPhoto). Two routes, as on the item form: Chrome on
   // Android 14+ offers only the gallery to a plain image input.
+  //
+  // One photo at a time: while one is being shrunk or saved, another tap
+  // does nothing and the row's camera says it is busy -- a second photo
+  // started on top of the first doubled the work on a tablet already short
+  // of memory.
   async choosePhoto(key) {
+    if (this._photoBusy) return;
     const item = this.data && this.data.items.find(i => i.key === key);
     if (!item || !item.canSetPhoto) return;
     const picked = await MApp.Picker.open({
@@ -17765,21 +17860,84 @@ MApp.Inspection = {
         { value: 'gallery', label: 'Choose from gallery' }
       ]
     });
-    if (!picked) return;
-    const file = await this._pickFile(picked.value === 'camera');
-    if (!file) return;
-    let dataUrl;
+    if (!picked || this._photoBusy) return;
+    this._rememberCamera(item);
+    let file;
     try {
-      dataUrl = await MApp.Util.resizeImageToBase64(file, 800);
-    } catch (err) {
-      MApp.Toast.error(err.message || 'Could not read that photo.');
-      return;
+      file = await this._pickFile(picked.value === 'camera');
+    } finally {
+      this._forgetCamera();
     }
-    await this.savePhoto(key, dataUrl);
+    if (!file) return;
+    this._photoBusy = true;
+    this._markPhotoBusy(key, true);
+    try {
+      let dataUrl;
+      try {
+        dataUrl = await MApp.Util.resizeImageToBase64(file, 800);
+      } catch (err) {
+        MApp.Toast.error(err.message || 'Could not read that photo.');
+        return;
+      }
+      file = null;
+      await this.savePhoto(key, dataUrl);
+    } finally {
+      this._photoBusy = false;
+      this._markPhotoBusy(key, false);
+    }
   },
 
   _pickFile(camera) {
     return MApp.Util.pickImageFile(camera);
+  },
+
+  _markPhotoBusy(key, busy) {
+    const row = [...document.querySelectorAll('[data-insp-row]')].find(r => r.dataset.inspRow === key);
+    const btn = row && row.querySelector('[data-insp-photo]');
+    if (!btn) return;
+    btn.classList.toggle('is-busy', busy);
+    btn.disabled = busy;
+    if (busy) btn.setAttribute('aria-busy', 'true');
+    else btn.removeAttribute('aria-busy');
+  },
+
+  // ── When the camera closes the app ─────────────────────────────────
+  // Android may close the browser to give the camera app its memory. The
+  // photo is lost and the page starts again from Home, the lot nowhere in
+  // sight. So the lot and the item are noted before the camera opens (this
+  // tab's sessionStorage survives the restart) and, if the app comes back
+  // without them having been cleared, it reopens that lot's checklist and
+  // says to take the photo again.
+  CAMERA_KEY: 'mapp.inspectionCamera',
+  CAMERA_RESUME_MS: 15 * 60 * 1000,
+
+  _rememberCamera(item) {
+    try {
+      sessionStorage.setItem(this.CAMERA_KEY, JSON.stringify({
+        rowIdx: this.rowIdx, item: item.itemName || '', at: Date.now()
+      }));
+    } catch { /* private mode: nothing to resume from */ }
+  },
+
+  _forgetCamera() {
+    try { sessionStorage.removeItem(this.CAMERA_KEY); } catch { /* as above */ }
+  },
+
+  async resumeAfterCamera() {
+    let pending = null;
+    try {
+      pending = JSON.parse(sessionStorage.getItem(this.CAMERA_KEY) || 'null');
+    } catch {
+      // No storage, or a note that does not parse: nothing to resume.
+    }
+    this._forgetCamera();
+    if (!pending || pending.rowIdx == null || !(Date.now() - Number(pending.at) < this.CAMERA_RESUME_MS)) return;
+    try {
+      await this.open();
+      await this.openChecklist(pending.rowIdx);
+    } finally {
+      MApp.Toast.error(`The app was closed while the camera was open, so the photo${pending.item ? ` of ${pending.item}` : ''} was not saved. Take it again.`);
+    }
   },
 
   async savePhoto(key, dataUrl) {
@@ -19629,7 +19787,7 @@ MApp.Pool = {
     const url = this._photoUrl(row);
     if (url) {
       return `<button type="button" class="mb-item-thumb" data-pool-photo="${i}" aria-label="View photo of ${name}">
-          <img src="${MApp.Util.escapeHtml(url)}" alt="" loading="lazy" decoding="async">
+          <img src="${MApp.Util.escapeHtml(MApp.Util.photoThumbUrl(url))}" alt="" loading="lazy" decoding="async">
         </button>`;
     }
     return `<button type="button" class="mb-item-thumb mb-item-thumb-add" data-pool-photo="${i}" aria-label="Add a photo of ${name}">
@@ -22058,6 +22216,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // Fire-and-forget: the logo is only needed by the time something is
   // printed, and a failure here must never delay or block the shell.
   MApp.Print.loadLogo();
+
+  // Back on the lot whose photo was being taken when Android closed the
+  // app for the camera (MApp.Inspection.resumeAfterCamera).
+  MApp.Inspection.resumeAfterCamera().catch(() => {});
 
   // Register the mobile shell's own service worker (Phase 5: PWA
   // installability). Scoped to /erp/mobile/sw.js, not /static/erp/

@@ -78,7 +78,7 @@ describe('the photo on each bucket', () => {
     await MApp.Pool.load();
     ['Red', 'red · Ladies'].forEach(sub => {
       const img = cardOf('Painted Frame 26', sub).querySelector('.mb-item-thumb img');
-      expect(img.getAttribute('src')).toBe('/erp/pool-photo/4?v=70');
+      expect(img.getAttribute('src')).toBe('/erp/pool-photo/4?v=70&size=thumb');
       expect(img.getAttribute('loading')).toBe('lazy');
     });
     const blue = cardOf('Painted Frame 26', 'Blue');
@@ -130,9 +130,9 @@ describe('adding or changing it', () => {
     expect(MApp.Util.resizeImageToBase64).toHaveBeenCalledWith(file, 800);
     expect(MApp.Api.mutate).toHaveBeenCalledWith('setPoolItemPhoto', 'Painted Frame 26', 'data:image/jpeg;base64,NEW', 'Blue');
     expect(cardOf('Painted Frame 26', 'Blue').querySelector('.mb-item-thumb img').getAttribute('src'))
-      .toBe('/erp/pool-photo/5?v=71');
+      .toBe('/erp/pool-photo/5?v=71&size=thumb');
     expect(cardOf('Painted Frame 26', 'Red').querySelector('.mb-item-thumb img').getAttribute('src'))
-      .toBe('/erp/pool-photo/4?v=70');
+      .toBe('/erp/pool-photo/4?v=70&size=thumb');
   });
 
   test('a bucket with no colour saves the item\'s no-colour photo', async () => {
@@ -148,7 +148,7 @@ describe('adding or changing it', () => {
     await MApp.Pool.choosePhoto(ROWS[3]);
     expect(MApp.Api.mutate).toHaveBeenCalledWith('setPoolItemPhoto', 'Fitted Rim 20', 'data:image/jpeg;base64,NEW', '');
     expect(cardOf('Fitted Rim 20', 'No colour').querySelector('.mb-item-thumb img').getAttribute('src'))
-      .toBe('/erp/pool-photo/7?v=73');
+      .toBe('/erp/pool-photo/7?v=73&size=thumb');
   });
 
   test('Change photo in the viewer starts the same choice', async () => {
@@ -177,6 +177,6 @@ describe('adding or changing it', () => {
     expect(MApp.Util.pickImageFile).toHaveBeenCalledWith(false);
     expect(MApp.Toast.error).toHaveBeenCalledWith('Item photo is not a valid image.');
     expect(cardOf('Painted Frame 26', 'Red').querySelector('.mb-item-thumb img').getAttribute('src'))
-      .toBe('/erp/pool-photo/4?v=70');
+      .toBe('/erp/pool-photo/4?v=70&size=thumb');
   });
 });

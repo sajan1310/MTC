@@ -3452,6 +3452,17 @@ def get_pool_photo(photo_id: int):
     return decoded[0], decoded[1], items_service.photo_version(row["row_version"])
 
 
+def get_pool_photo_version(photo_id: int):
+    """The version get_pool_photo would answer with, read without the photo
+    itself (see items_service.get_item_photo_version), or None."""
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "SELECT row_version FROM erp.pool_item_photos WHERE id = %s", (photo_id,)
+        )
+        row = cur.fetchone()
+    return None if row is None else items_service.photo_version(row[0])
+
+
 @rpc_method("getPoolItemPhotos")
 def get_pool_item_photos():
     """Every pool photo, as [{outputItemName, color, photoUrl}], color ''

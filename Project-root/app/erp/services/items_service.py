@@ -38,9 +38,12 @@ from __future__ import annotations
 
 import base64
 import bisect
+import io
 import json
 import math
 import re
+import threading
+from collections import OrderedDict
 
 import psycopg2.extras
 
@@ -1009,6 +1012,84 @@ def get_item_photo(item_id: int):
     if decoded is None:
         return None
     return decoded[0], decoded[1], photo_version(row["row_version"])
+
+
+def get_item_photo_version(item_id: int):
+    """The version get_item_photo would answer with, read without the photo
+    itself, or None when the item has none. Lets the photo route answer a
+    browser that already holds this version ("304 Not Modified") from one
+    small read instead of the whole photo."""
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "SELECT row_version FROM erp.items "
+            "WHERE id = %s AND deleted_at IS NULL AND octet_length(image) > 0",
+            (item_id,),
+        )
+        row = cur.fetchone()
+    return None if row is None else photo_version(row[0])
+
+
+# ── A list's copy of a photo ───────────────────────────────────────────────
+#
+# Lists show a photo at 32-48 px (Items, the inspection checklist, the
+# Warehouse Pool, the phone's cards), and used to download the whole photo
+# for it: 800 px on its longest side, 69 KB at the median (2026-11-23), and
+# about 1.8 MB of memory once a phone has decoded it. A list asks for
+# ?size=thumb instead and gets this: at most THUMB_PX on its longest side --
+# enough for 48 px on a 3x phone screen -- about a tenth of the bytes and a
+# twentieth of the memory. The viewer still opens the full photo.
+#
+# Made on first request and kept per worker, newest first, keyed by the
+# photo's version, so a changed photo is a new entry and the browser keeps
+# what it was sent for good. Without Pillow (it comes with WeasyPrint) the
+# full photo is sent, as before.
+THUMB_PX = 192
+_THUMB_CACHE_SIZE = 512
+_thumbs: OrderedDict = OrderedDict()
+_thumbs_lock = threading.Lock()
+
+
+def photo_thumbnail(key, mimetype: str, payload: bytes) -> tuple[str, bytes]:
+    """(mimetype, bytes) of the list's copy of a photo. `key` names the
+    photo and its version, e.g. ("item", 41, "117330")."""
+    with _thumbs_lock:
+        hit = _thumbs.get(key)
+        if hit is not None:
+            _thumbs.move_to_end(key)
+            return hit
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        return mimetype, payload
+    try:
+        with Image.open(io.BytesIO(payload)) as image:
+            # A JPEG decodes straight at 1/2-1/8 scale: most of the speed.
+            image.draft("RGB", (THUMB_PX, THUMB_PX))
+            image = ImageOps.exif_transpose(image)
+            if max(image.size) <= THUMB_PX:
+                return mimetype, payload
+            image.thumbnail((THUMB_PX, THUMB_PX), Image.Resampling.LANCZOS)
+            if image.mode in ("RGBA", "LA", "P"):
+                image = image.convert("RGBA")
+                flat = Image.new("RGB", image.size, (255, 255, 255))
+                flat.paste(image, mask=image.getchannel("A"))
+                image = flat
+            elif image.mode != "RGB":
+                image = image.convert("RGB")
+            out = io.BytesIO()
+            image.save(out, "JPEG", quality=80, optimize=True)
+    except Exception:  # noqa: BLE001 -- a photo Pillow can't read is sent whole
+        return mimetype, payload
+    small = out.getvalue()
+    if len(small) >= len(payload):
+        return mimetype, payload
+    result = ("image/jpeg", small)
+    with _thumbs_lock:
+        _thumbs[key] = result
+        _thumbs.move_to_end(key)
+        while len(_thumbs) > _THUMB_CACHE_SIZE:
+            _thumbs.popitem(last=False)
+    return result
 
 
 @rpc_method("getItemsData")

@@ -10,6 +10,7 @@ from urllib.parse import quote
 from flask import (
     Response,
     current_app,
+    g,
     jsonify,
     redirect,
     render_template,
@@ -330,7 +331,11 @@ def item_photo(item_id):
 
     if getattr(current_user, "role", None) == "pending_approval":
         return Response(status=403)
-    return _photo_response(items_service.get_item_photo(item_id))
+    return _photo_response(
+        ("item", item_id),
+        items_service.get_item_photo_version,
+        items_service.get_item_photo,
+    )
 
 
 @erp_bp.route("/erp/pool-photo/<int:photo_id>")
@@ -344,22 +349,55 @@ def pool_photo(photo_id):
 
     if getattr(current_user, "role", None) == "pending_approval":
         return Response(status=403)
-    return _photo_response(warehouse_service.get_pool_photo(photo_id))
+    return _photo_response(
+        ("pool", photo_id),
+        warehouse_service.get_pool_photo_version,
+        warehouse_service.get_pool_photo,
+    )
 
 
-def _photo_response(photo):
+def _photo_response(key, version_of, load):
+    """One photo, or with ?size=thumb the small copy lists show
+    (items_service.photo_thumbnail).
+
+    The version is read first, without the photo: a browser that already
+    holds it is answered "304 Not Modified" from that small read, and only a
+    browser that needs the bytes costs the photo's read. A response is the
+    same for every signed-in user, so it leaves the session alone
+    (app._SessionInterface): saving it added "Vary: Cookie", and the cookie
+    changing with every click kept browsers from reusing what they held."""
+    from .services import items_service
+
+    g.same_for_everyone = True
+    kind, photo_id = key
+    version = version_of(photo_id)
+    if version is None:
+        return Response(status=404)
+    thumb = request.args.get("size") == "thumb"
+
+    def headers(response, version):
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Cache-Control"] = (
+            "private, max-age=31536000, immutable"
+            if request.args.get("v") == version
+            else "private, no-cache"
+        )
+        response.set_etag(f"{version}-thumb" if thumb else version)
+        return response
+
+    if request.if_none_match.contains(f"{version}-thumb" if thumb else version):
+        return headers(Response(status=304), version)
+    photo = load(photo_id)
     if photo is None:
         return Response(status=404)
     mimetype, payload, version = photo
-    response = Response(payload, mimetype=mimetype)
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["Cache-Control"] = (
-        "private, max-age=31536000, immutable"
-        if request.args.get("v") == version
-        else "private, no-cache"
+    if thumb:
+        mimetype, payload = items_service.photo_thumbnail(
+            (kind, photo_id, version), mimetype, payload
+        )
+    return headers(Response(payload, mimetype=mimetype), version).make_conditional(
+        request
     )
-    response.set_etag(version)
-    return response.make_conditional(request)
 
 
 # ── A new token for a page whose session lapsed under it ─────────────────

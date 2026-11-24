@@ -84,7 +84,7 @@ describe('the Photo column', () => {
     await open([SEAT, BAG, FRAME, LOOSE]);
     expect(headers()).toEqual(['Ticked', 'Photo', 'Item', 'Size', 'Colour', 'Specification', 'Qty', 'Remarks']);
     const img = rowOf('seat').querySelector('img.insp-photo-thumb');
-    expect(img.getAttribute('src')).toBe('/erp/item-photo/12?v=40');
+    expect(img.getAttribute('src')).toBe('/erp/item-photo/12?v=40&size=thumb');
     expect(img.getAttribute('loading')).toBe('lazy');
     expect(rowOf('bag').querySelectorAll('td')[1].textContent.trim()).toBe('Add photo');
     expect(rowOf('frame').querySelectorAll('td')[1].textContent.trim()).toBe('Add photo');
@@ -137,7 +137,7 @@ describe('adding or changing a photo', () => {
 
     expect(App.Utils.resizeImageFile).toHaveBeenCalledWith(file, 800);
     expect(mutations).toEqual([['setInspectionItemPhoto', 7, 'bag', 'data:image/jpeg;base64,NEW']]);
-    expect(rowOf('bag').querySelector('img.insp-photo-thumb').getAttribute('src')).toBe('/erp/item-photo/13?v=2');
+    expect(rowOf('bag').querySelector('img.insp-photo-thumb').getAttribute('src')).toBe('/erp/item-photo/13?v=2&size=thumb');
     expect(App.Utils.showToast).toHaveBeenCalledWith('Photo saved for BAG-KIT---WHITE 20 inch.');
   });
 
@@ -152,7 +152,7 @@ describe('adding or changing a photo', () => {
     }));
     await App.Inspection.savePhoto('frame#red', 'data:image/jpeg;base64,NEW');
     ['frame#red', 'frame#red14'].forEach(key => {
-      expect(rowOf(key).querySelector('img.insp-photo-thumb').getAttribute('src')).toBe('/erp/pool-photo/3?v=9');
+      expect(rowOf(key).querySelector('img.insp-photo-thumb').getAttribute('src')).toBe('/erp/pool-photo/3?v=9&size=thumb');
     });
     // Blue, the no-colour row and the Items Master item keep what they had.
     ['frame#blue', 'frame', 'frame-item'].forEach(key => {
@@ -165,6 +165,6 @@ describe('adding or changing a photo', () => {
     await open([SEAT], () => ({ success: false, message: 'Item photo is not a valid image.' }));
     await App.Inspection.savePhoto('seat', 'data:image/jpeg;base64,BAD');
     expect(App.Utils.showToast).toHaveBeenCalledWith('Item photo is not a valid image.', true);
-    expect(rowOf('seat').querySelector('img.insp-photo-thumb').getAttribute('src')).toBe('/erp/item-photo/12?v=40');
+    expect(rowOf('seat').querySelector('img.insp-photo-thumb').getAttribute('src')).toBe('/erp/item-photo/12?v=40&size=thumb');
   });
 });

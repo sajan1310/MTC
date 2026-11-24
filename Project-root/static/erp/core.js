@@ -1513,29 +1513,91 @@ const App = {
     // A picked photo as a JPEG data: URL no larger than maxDim on its long
     // side -- what the phone's MApp.Util.resizeImageToBase64 does, so a photo
     // taken on either is the same size.
-    resizeImageFile(file, maxDim) {
-      return new Promise((resolve, reject) => {
-        if (!file || !String(file.type || '').startsWith('image/')) {
-          reject(new Error('Please choose an image file.'));
-          return;
+    // A photo shrunk to at most `maxDim` px on its longest side, as a JPEG
+    // data: URL. The phone's MApp.Util.resizeImageToBase64 takes the same
+    // steps; see there for why: a camera photo is no longer read into a
+    // data: URL and decoded at full size on the main thread (48-190 MB for
+    // 12-48 MP), it is decoded straight to about `maxDim` off it.
+    async resizeImageFile(file, maxDim) {
+      if (!file || !String(file.type || '').startsWith('image/')) {
+        throw new Error('Please choose an image file.');
+      }
+      const frame = await this._jpegFrameSize(file);
+      let source = null;
+      let release = () => {};
+      if (typeof createImageBitmap === 'function') {
+        const options = { imageOrientation: 'from-image', resizeQuality: 'high' };
+        const large = frame ? Math.max(frame.width, frame.height) > maxDim : file.size > 1048576;
+        if (large) {
+          if (!frame || frame.width >= frame.height) options.resizeWidth = maxDim;
+          else options.resizeHeight = maxDim;
         }
-        const reader = new FileReader();
-        reader.onerror = () => reject(reader.error || new Error('Could not read that file.'));
-        reader.onload = () => {
-          const img = new Image();
-          img.onerror = () => reject(new Error('That file is not a readable image.'));
-          img.onload = () => {
-            const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-            const canvas = document.createElement('canvas');
-            canvas.width = Math.round(img.width * scale);
-            canvas.height = Math.round(img.height * scale);
-            canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-            resolve(canvas.toDataURL('image/jpeg', 0.85));
-          };
-          img.src = reader.result;
-        };
-        reader.readAsDataURL(file);
-      });
+        try {
+          const bitmap = await createImageBitmap(file, options);
+          source = bitmap;
+          release = () => bitmap.close();
+        } catch {
+          source = null;
+        }
+      }
+      if (!source) {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.decoding = 'async';
+        try {
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+            img.src = url;
+          });
+        } catch {
+          URL.revokeObjectURL(url);
+          throw new Error('That file is not a readable image.');
+        }
+        source = img;
+        release = () => URL.revokeObjectURL(url);
+      }
+      try {
+        const width = source.naturalWidth || source.width;
+        const height = source.naturalHeight || source.height;
+        if (!width || !height) throw new Error('That file is not a readable image.');
+        const scale = Math.min(1, maxDim / Math.max(width, height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(width * scale));
+        canvas.height = Math.max(1, Math.round(height * scale));
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        canvas.width = 0;
+        canvas.height = 0;
+        return dataUrl;
+      } finally {
+        release();
+      }
+    },
+
+    // Width and height from a JPEG's frame header, read from its first
+    // 256 KB without decoding it; null when it is not a JPEG or the header
+    // lies further in (MApp.Util._jpegFrameSize on the phone).
+    async _jpegFrameSize(file) {
+      try {
+        const head = new DataView(await file.slice(0, 262144).arrayBuffer());
+        if (head.byteLength < 4 || head.getUint16(0) !== 0xFFD8) return null;
+        const frames = [0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF];
+        let i = 2;
+        while (i + 9 < head.byteLength) {
+          if (head.getUint8(i) !== 0xFF) return null;
+          const marker = head.getUint8(i + 1);
+          if (marker === 0xFF) { i += 1; continue; }
+          if (frames.includes(marker)) {
+            return { width: head.getUint16(i + 7), height: head.getUint16(i + 5) };
+          }
+          if (marker === 0x01 || (marker >= 0xD0 && marker <= 0xD8)) { i += 2; continue; }
+          i += 2 + head.getUint16(i + 2);
+        }
+      } catch { /* unreadable: decode it to find out */ }
+      return null;
     },
 
     // Placeholder for a module not yet ported this round -- keeps a Quick
@@ -1639,6 +1701,16 @@ const App = {
     },
 
     // The Items Master record for a name + size, or undefined.
+    // The small copy of a photo a list shows at 32-48 px
+    // (items_service.photo_thumbnail): about a tenth of the bytes and a
+    // twentieth of the memory of the whole photo, which the viewer still
+    // opens. Anything that is not an ERP photo address is left as it is.
+    photoThumbUrl(url) {
+      const s = String(url || '');
+      if (!/^\/erp\/(item|pool)-photo\/\d+/.test(s)) return s;
+      return `${s}${s.includes('?') ? '&' : '?'}size=thumb`;
+    },
+
     findItemRecord(name, size) {
       const k = v => String(v || '').trim().toLowerCase();
       return (App.State.globalItems || []).find(i =>
