@@ -597,7 +597,12 @@
 // picked item's own size, and keeps the recipe's unit only when the new item
 // is kept in the same base unit, as the phone's Change does. production.js is
 // precached.
-const CACHE_NAME = 'erp-shell-v125';
+// v126: lists show a 192 px copy of each photo (Items, the inspection
+// checklist, the Warehouse Pool) instead of the whole one; the viewer still
+// opens the whole photo. A photo is shrunk without decoding it at full size
+// on the main thread, and the inspection checklist takes one photo at a
+// time. core.js, items.js, inspection.js and stock.js are precached.
+const CACHE_NAME = 'erp-shell-v126';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

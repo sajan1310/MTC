@@ -3017,6 +3017,11 @@ fieldset.mb-field {
   color: var(--mb-steel);
   cursor: pointer;
 }
+/* A photo being shrunk and saved (MApp.Inspection.choosePhoto). */
+.mb-insp-photo.is-busy {
+  opacity: 0.45;
+  cursor: progress;
+}
 
 .mb-insp-name {
   display: flex;

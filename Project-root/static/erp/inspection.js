@@ -366,7 +366,7 @@ App.Inspection = {
     const title = escapeHtml(this._photoTitle(item));
     if (item.photoUrl) {
       return `<button type="button" class="btn p-0 border-0 insp-photo-btn" onclick="App.Inspection.viewPhoto(${key})" aria-label="View photo of ${title}">
-        <img src="${escapeHtml(item.photoUrl)}" alt="" class="insp-photo-thumb" loading="lazy" decoding="async" onerror="this.remove()">
+        <img src="${escapeHtml(App.Utils.photoThumbUrl(item.photoUrl))}" alt="" class="insp-photo-thumb" loading="lazy" decoding="async" onerror="this.remove()">
       </button>`;
     }
     if (item.canSetPhoto) {
@@ -385,7 +385,10 @@ App.Inspection = {
   // Pick a photo, shrink it as the phone does, and put it on the row's
   // item (setInspectionItemPhoto -- the inspector need not be able to edit
   // Items Master or the Warehouse Pool for this).
+  // One at a time: while a photo is being shrunk or saved, another pick
+  // waits for it rather than doubling the work.
   choosePhoto(key) {
+    if (this._photoBusy) return;
     const item = this._current && this._current.items.find(i => i.key === key);
     if (!item || !item.canSetPhoto) return;
     const input = document.createElement('input');
@@ -395,13 +398,17 @@ App.Inspection = {
     input.addEventListener('change', async () => {
       const file = input.files && input.files[0];
       input.remove();
-      if (!file) return;
+      if (!file || this._photoBusy) return;
+      this._photoBusy = true;
       try {
         await this.savePhoto(key, await App.Utils.resizeImageFile(file, 800));
       } catch (err) {
         App.Utils.showToast((err && err.message) || 'Could not read that photo.', true);
+      } finally {
+        this._photoBusy = false;
       }
     });
+    input.addEventListener('cancel', () => input.remove());
     // Inside the open dialog, for the same reason the viewer is.
     (document.querySelector('.modal.show') || document.body).appendChild(input);
     input.click();

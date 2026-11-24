@@ -104,7 +104,7 @@ describe('each colour in the breakdown has its own photo', () => {
     await openBreakdown('PRC-PAINT');
     expect(Api.call).toHaveBeenCalledWith('getPoolItemPhotos');
     const img = comboOf('Red').querySelector('.pool-photo-btn img');
-    expect(img.getAttribute('src')).toBe('/erp/pool-photo/4?v=70');
+    expect(img.getAttribute('src')).toBe('/erp/pool-photo/4?v=70&size=thumb');
     expect(img.getAttribute('loading')).toBe('lazy');
     const blue = comboOf('Blue');
     expect(blue.querySelector('.pool-photo-btn img')).toBeNull();
@@ -115,7 +115,7 @@ describe('each colour in the breakdown has its own photo', () => {
   test('a combination is matched whatever its case', async () => {
     await openBreakdown('PRC-FIT');
     expect(comboOf('Orange-White / Black').querySelector('.pool-photo-btn img').getAttribute('src'))
-      .toBe('/erp/pool-photo/6?v=72');
+      .toBe('/erp/pool-photo/6?v=72&size=thumb');
   });
 
   test('a click shows it large, named with its colour, with Change photo', async () => {
@@ -139,7 +139,7 @@ describe('the photo beside each Process', () => {
   test('one of its colours\' photos, or an empty slot -- no camera, and no click into the breakdown', async () => {
     await App.Stock.loadWarehousePoolData();
     const img = rowOf('Painting 26').querySelector('.pool-photo-btn img');
-    expect(img.getAttribute('src')).toBe('/erp/pool-photo/4?v=70');
+    expect(img.getAttribute('src')).toBe('/erp/pool-photo/4?v=70&size=thumb');
     const empty = rowOf('Packing 20').querySelector('.pool-photo-none');
     expect(empty.getAttribute('aria-hidden')).toBe('true');
     expect(document.querySelector('#warehousePoolTableBody .pool-photo-add')).toBeNull();
@@ -153,7 +153,7 @@ describe('the photo beside each Process', () => {
     PHOTOS.push({ outputItemName: FRAME, color: '', photoUrl: '/erp/pool-photo/9?v=80' });
     try {
       await App.Stock.loadWarehousePoolData();
-      expect(rowOf('Painting 26').querySelector('.pool-photo-btn img').getAttribute('src')).toBe('/erp/pool-photo/9?v=80');
+      expect(rowOf('Painting 26').querySelector('.pool-photo-btn img').getAttribute('src')).toBe('/erp/pool-photo/9?v=80&size=thumb');
     } finally {
       PHOTOS.pop();
     }
@@ -195,9 +195,9 @@ describe('adding or changing a colour\'s photo', () => {
 
     expect(App.Utils.resizeImageFile).toHaveBeenCalledWith(file, 800);
     expect(mutations).toEqual([['setPoolItemPhoto', FRAME, 'data:image/jpeg;base64,NEW', 'Blue "Kit" 24']]);
-    expect(comboOf('Blue').querySelector('.pool-photo-btn img').getAttribute('src')).toBe('/erp/pool-photo/5?v=71');
+    expect(comboOf('Blue').querySelector('.pool-photo-btn img').getAttribute('src')).toBe('/erp/pool-photo/5?v=71&size=thumb');
     // Red keeps its own.
-    expect(comboOf('Red').querySelector('.pool-photo-btn img').getAttribute('src')).toBe('/erp/pool-photo/4?v=70');
+    expect(comboOf('Red').querySelector('.pool-photo-btn img').getAttribute('src')).toBe('/erp/pool-photo/4?v=70&size=thumb');
     expect(App.Utils.showToast).toHaveBeenCalledWith(`Photo saved for ${FRAME} · Blue "Kit" 24.`);
   });
 
@@ -224,6 +224,6 @@ describe('adding or changing a colour\'s photo', () => {
     Api.mutate = jest.fn(async () => ({ success: false, message: 'Item photo is not a valid image.' }));
     await App.Stock.savePoolPhoto(FRAME, 'Red', 'data:image/jpeg;base64,BAD');
     expect(App.Utils.showToast).toHaveBeenCalledWith('Item photo is not a valid image.', true);
-    expect(comboOf('Red').querySelector('.pool-photo-btn img').getAttribute('src')).toBe('/erp/pool-photo/4?v=70');
+    expect(comboOf('Red').querySelector('.pool-photo-btn img').getAttribute('src')).toBe('/erp/pool-photo/4?v=70&size=thumb');
   });
 });

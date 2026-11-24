@@ -41,6 +41,7 @@ from flask import (
     url_for,
     g,
 )
+from flask.sessions import SecureCookieSessionInterface
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -58,6 +59,26 @@ mail = Mail()
 # Module-level limiter instance; configure storage and defaults via app.config
 # and call limiter.init_app(app) exactly once in create_app.
 limiter = Limiter(key_func=get_remote_address)
+
+
+class _SessionInterface(SecureCookieSessionInterface):
+    """Flask's own cookie session, except on a response marked as the same
+    for every signed-in user (`g.same_for_everyone`: the photo routes).
+
+    Saving the session there adds "Vary: Cookie" and, for a remembered login
+    (a permanent session, refreshed on every request), re-signs the cookie.
+    The cookie changes with every click, so a browser could not reuse a
+    photo it had been told to keep for a year: 657 of the 890 photo fetches
+    between 17 and 23/11/2026 were the browser checking back ("304 Not
+    Modified"), each a round trip of up to 2.7 s. A photo request changes
+    nothing in the session, and its answer is kept only in that user's own
+    browser (Cache-Control: private), so it is left out of both."""
+
+    def save_session(self, app, session, response):
+        if g.get("same_for_everyone"):
+            return
+        super().save_session(app, session, response)
+
 
 # Module-level cache for deprecation warnings to avoid unbounded growth
 # (warn once per unique path).
@@ -222,6 +243,7 @@ def _load_config(app: Flask, config_name: str) -> None:
     app.config.setdefault("RATELIMIT_STORAGE_URL", "redis://localhost:6379/0")
     app.config.setdefault("RATELIMIT_STRATEGY", "fixed-window")
     app.config.setdefault("PERMANENT_SESSION_LIFETIME", 86400)
+    app.session_interface = _SessionInterface()
 
     # Fail-fast validation in production
     missing: list[str] = []

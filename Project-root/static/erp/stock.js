@@ -1304,7 +1304,7 @@ App.Stock = {
     const url = this._poolPhotoUrl(name, color);
     if (url) {
       return `<button type="button" class="pool-photo-btn" onclick="event.stopPropagation(); App.Stock.viewPoolPhoto(${args})" aria-label="View photo of ${label}" title="View photo">
-        <img src="${escapeHtml(url)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">
+        <img src="${escapeHtml(App.Utils.photoThumbUrl(url))}" alt="" loading="lazy" decoding="async" onerror="this.remove()">
       </button>`;
     }
     return `<button type="button" class="pool-photo-btn pool-photo-add" onclick="event.stopPropagation(); App.Stock.choosePoolPhoto(${args})" aria-label="Add a photo of ${label}" title="Add photo"><i class="bi bi-camera"></i></button>`;

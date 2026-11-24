@@ -270,7 +270,13 @@
 // row shows the photo of the colour it draws on. mobile.js carries it.
 // v112: the backup card on the status sheet no longer has a "Mirror" line;
 // the Apps Script mirror is retired. mobile.js carries it.
-const CACHE_NAME = 'erp-mobile-shell-v112';
+// v113: the Items, inspection and Warehouse Pool cards show a 192 px copy of
+// each photo instead of the whole one; the viewer still opens the whole
+// photo. A camera photo is shrunk without decoding it at full size on the
+// main thread; the inspection checklist takes one photo at a time and, when
+// Android closes the app for the camera, reopens on that lot. mobile.js and
+// mobile_styles.css carry it.
+const CACHE_NAME = 'erp-mobile-shell-v113';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so
