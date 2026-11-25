@@ -602,7 +602,10 @@
 // opens the whole photo. A photo is shrunk without decoding it at full size
 // on the main thread, and the inspection checklist takes one photo at a
 // time. core.js, items.js, inspection.js and stock.js are precached.
-const CACHE_NAME = 'erp-shell-v126';
+// v127: the inspection checklist reads in the dark theme -- a ticked row's
+// item name was near-white on a pale green fill -- and its empty boxes, the
+// progress track and helper text are visible. styles.css is precached.
+const CACHE_NAME = 'erp-shell-v127';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
