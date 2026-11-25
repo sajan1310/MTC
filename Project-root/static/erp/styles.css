@@ -580,6 +580,36 @@
     border-color: var(--border-color) !important;
   }
 
+  /* Same story for .table-success, the ticked rows of the inspection
+     checklist (inspection.js _itemRow): the pale #d1e7dd fill stayed, the
+     item name -- a <label>, near-white here -- vanished into it, and the
+     block of light rows glared on the dark dialog (owner photo,
+     2026-11-25). A green tint on the dark card, near-white text: 11:1. */
+  [data-theme="dark"] .table-success {
+    --bs-table-bg: rgb(52 211 153 / 12%) !important;
+    --bs-table-color: var(--text-primary) !important;
+
+    border-color: var(--border-color) !important;
+  }
+
+  /* Helper text under a field (.form-text) and a progress bar's track keep
+     Bootstrap's light-theme colours too: near-black text, and a #e9ecef
+     track that read as a white bar across the dark card. */
+  [data-theme="dark"] .form-text {
+    color: var(--text-muted);
+  }
+
+  [data-theme="dark"] .progress {
+    --bs-progress-bg: var(--bg-muted);
+  }
+
+  /* Bootstrap's #6c757d is 3.7:1 on the dark card, under AA for the small
+     labels these buttons carry ("Add photo" and the like). */
+  [data-theme="dark"] .btn-outline-secondary {
+    --bs-btn-color: var(--text-secondary);
+    --bs-btn-border-color: #475569;
+  }
+
   /* Bootstrap's own dark mode keys off data-bs-theme, which this app never
      sets, so three of its controls kept their light-theme colours here:
      placeholders stayed near-black on the dark field (every search box lost
@@ -766,9 +796,12 @@
     border-color: transparent transparent var(--text-secondary) transparent !important;
   }
 
+  /* The border is what shows an empty box: --border-color (#253044) on the
+     card was about 1.3:1 and unticked boxes all but disappeared. Slate-500
+     is 3.6:1, over the 3:1 a control's edge needs. */
   [data-theme="dark"] .form-check-input {
     background-color: var(--bg-light) !important;
-    border-color: var(--border-color) !important;
+    border-color: #64748b !important;
   }
 
   [data-theme="dark"] .form-check-input:checked {
@@ -5159,6 +5192,33 @@
 }
 
 .insp-list { grid-area: list; min-width: 0; }
+
+/* A checklist row (inspection.js _itemRow). The item name is the row's
+   <label>: the global label rule makes it a block with a bottom margin,
+   which sat it above the other cells' text; inline, and bold, so the name
+   is what the eye finds first. */
+#inspectionDetailBody td > .form-check-label {
+  display: inline;
+  margin: 0;
+  font-weight: 600;
+}
+
+/* An empty box has to be findable on a long list: Bootstrap's #dee2e6 edge
+   is 1.3:1 on white. Slate-500 is 4.8:1; the dark theme sets its own. */
+#inspectionDetailBody .form-check-input:not(:checked) {
+  border: 2px solid #64748b;
+}
+
+/* A ticked row also carries a green edge, as the phone's does
+   (.mb-insp-row.is-ticked), so done and not done read apart at a glance in
+   either theme. An inset shadow rather than a border keeps the grid
+   aligned; Bootstrap's own 9999px state shadow is repeated after it, as on
+   .low-stock-row, because that is what paints the row's fill. */
+#inspectionDetailBody tr.table-success > td:first-child {
+  box-shadow:
+    inset 4px 0 0 var(--success-color),
+    inset 0 0 0 9999px var(--bs-table-bg-state, var(--bs-table-bg-type, var(--bs-table-accent-bg)));
+}
 .insp-review { grid-area: review; }
 .insp-review-open.border { border-top: 4px solid var(--bs-warning) !important; }
 
