@@ -621,7 +621,7 @@ App.Item = {
           </td>
           <td class="d-flex align-items-center gap-2 item-cell-name" style="cursor:pointer;" title="Click to edit item">
             ${item.image
-              ? `<img src="${escapeHtml(App.Utils.photoThumbUrl(item.image))}" alt="" class="item-thumb" width="32" height="32" loading="lazy" decoding="async">`
+              ? `<button type="button" class="item-photo-btn" aria-label="View photo of ${escapeHtml(this._photoTitle(item))}" title="View photo"><img src="${escapeHtml(App.Utils.photoThumbUrl(item.image))}" alt="" class="item-thumb" width="32" height="32" loading="lazy" decoding="async"></button>`
               : `<span class="item-thumb item-thumb-placeholder" aria-hidden="true"><i class="bi bi-image"></i></span>`}
             <strong class="text-primary">${escapeHtml(item.name || '')}</strong>
           </td>
@@ -2156,13 +2156,32 @@ App.Item = {
     const placeholder = document.getElementById('itemPhotoPreviewPlaceholder');
     const hidden = document.getElementById('formItemImage');
     const removeBtn = document.getElementById('itemPhotoRemoveBtn');
+    const viewBtn = document.getElementById('itemPhotoViewBtn');
     if (hidden) hidden.value = dataUrl || '';
-    if (img) {
-      img.src = dataUrl || '';
-      img.style.display = dataUrl ? '' : 'none';
-    }
+    if (img) img.src = dataUrl || '';
+    if (viewBtn) viewBtn.style.display = dataUrl ? '' : 'none';
     if (placeholder) placeholder.style.display = dataUrl ? 'none' : '';
     if (removeBtn) removeBtn.style.display = dataUrl ? '' : 'none';
+  },
+
+  // An item's photo filling the window (App.PhotoViewer), as the phone's
+  // Items list and item form show it: from the list's thumbnail, and from
+  // the dialog's preview -- a photo just chosen too, before it is saved.
+  // The list's copy is the small one (photoThumbUrl); this is the whole.
+  viewPhoto(name, size) {
+    const item = App.Utils.findItemRecord(name, size);
+    if (item && item.image) App.PhotoViewer.open(item.image, this._photoTitle(item));
+  },
+
+  viewFormPhoto() {
+    const src = document.getElementById('formItemImage')?.value || '';
+    const name = document.getElementById('formItemName')?.value.trim() || 'New item';
+    const size = document.getElementById('formItemSize')?.value.trim() || '';
+    App.PhotoViewer.open(src, this._photoTitle({ name, size }));
+  },
+
+  _photoTitle(item) {
+    return item.size ? `${item.name} · ${item.size}` : item.name;
   },
 
   handlePhotoFile(file) {
@@ -2193,13 +2212,18 @@ App.Item = {
 // Item row click -> per-cell action instead of one blanket row handler:
 // the checkbox cell toggles selection, the name cell opens the Edit
 // dialog, and the metadata/vendor (and size) cells open the Item Ledger.
-// The narration cell is intentionally left out so its text stays
-// selectable/copyable, and clicks on the row's own buttons/checkbox
-// input are left to their native/existing handlers.
+// The photo in the name cell opens the photo instead. The narration cell
+// is intentionally left out so its text stays selectable/copyable, and
+// clicks on the row's own buttons/checkbox input are left to their
+// native/existing handlers.
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('itemTableBody')?.addEventListener('click', e => {
-    if (e.target.closest('button, input, a')) return;
     const row = e.target.closest('.item-row-clickable');
+    if (row && e.target.closest('.item-photo-btn')) {
+      App.Item.viewPhoto(decodeURIComponent(row.dataset.rowName || ''), decodeURIComponent(row.dataset.rowSize || ''));
+      return;
+    }
+    if (e.target.closest('button, input, a')) return;
     if (!row) return;
 
     if (e.target.closest('.item-cell-check')) {
@@ -2233,6 +2257,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('itemPhotoRemoveBtn')?.addEventListener('click', () => {
     App.Item.setPhotoPreview('');
+  });
+  document.getElementById('itemPhotoViewBtn')?.addEventListener('click', () => {
+    App.Item.viewFormPhoto();
   });
 
   const itemForm = document.getElementById('itemForm');

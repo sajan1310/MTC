@@ -605,7 +605,10 @@
 // v127: the inspection checklist reads in the dark theme -- a ticked row's
 // item name was near-white on a pale green fill -- and its empty boxes, the
 // progress track and helper text are visible. styles.css is precached.
-const CACHE_NAME = 'erp-shell-v127';
+// v128: an item's photo opens filling the window on the desktop too, from
+// the Items list's thumbnail and from the item dialog's preview, as on the
+// phone. items.js and styles.css are precached.
+const CACHE_NAME = 'erp-shell-v128';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
