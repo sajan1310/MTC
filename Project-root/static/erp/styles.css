@@ -2235,6 +2235,31 @@
     font-size: 28px;
   }
 
+  /* An item's photo as a button (items.js viewPhoto / viewFormPhoto): the
+     list's thumbnail and the dialog's preview open it filling the window.
+     The global button rule's padding and gap are undone so the photo keeps
+     its size; the edge lights up under the pointer to say it opens. */
+  .item-photo-btn {
+    flex-shrink: 0;
+    gap: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    line-height: 0;
+    border-radius: var(--border-radius-sm);
+    cursor: zoom-in;
+  }
+
+  .item-photo-btn:hover .item-thumb,
+  .item-photo-btn:hover .item-photo-preview {
+    border-color: var(--primary-color);
+  }
+
+  .item-photo-btn:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+  }
+
   /* ── "This Month" metric strip ─────────────────────────────────────────
      The four period metrics (Open POs, Bills, Returns, Wastage) that used to
      sit in the headline row at the same visual weight as the operational
